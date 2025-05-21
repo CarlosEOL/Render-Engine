@@ -17,6 +17,19 @@ public:
     void Update();
     bool isClosed();
 
+    static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
+    static void MouseCallback(GLFWwindow* window, double& xPos, double& yPos);
+    static void ScrollCallback(GLFWwindow* window, double xoffset, double yoffset);
+    static void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
+    static void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
+    static void MouseCursorCallback(GLFWwindow* window, double xpos, double ypos);
+    static void MouseScrollCallback(GLFWwindow* window, double xoffset, double yoffset);
+    static void WindowCloseCallback(GLFWwindow* window);
+    static void WindowRefreshCallback(GLFWwindow* window);
+    static void WindowFocusCallback(GLFWwindow* window, int focused);
+
+    static bool isFocused;
+    static double mouseX, mouseY;
     static unsigned int shaderProgram;
     static unsigned int VAO, VBO, EBO;
     static float verticeDistance;

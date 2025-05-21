@@ -5,7 +5,30 @@
 
 using namespace std;
 
-void framebuffer_size_callback(GLFWwindow* window, int width, int height);
+void WindowManager::FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
+    glViewport(0, 0, width, height);
+}
+
+void WindowManager::MouseCallback(GLFWwindow* window, double& xPos, double& yPos)
+{
+    
+}
+
+void WindowManager::WindowFocusCallback(GLFWwindow* window, int focused)
+{
+    isFocused = focused;
+
+    if (focused)
+    {
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        std::cout << "[Focus] Mouse locked\n";
+    }
+    else
+    {
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        std::cout << "[Focus] Mouse unlocked\n";
+    }
+}
 
 unsigned int WindowManager::shaderProgram = 0;
 unsigned int WindowManager::VAO, WindowManager::VBO, WindowManager::EBO;
@@ -121,9 +144,10 @@ void WindowManager::Update()
     glfwSwapBuffers(window);
     glfwPollEvents();
 
-    //Handles Mouse Input
-    double mouseX, mouseY;
-    glfwGetCursorPos(window, &mouseX, &mouseY);
+    glfwSetWindowFocusCallback(window, WindowFocusCallback);
+
+    if (isFocused)
+        MouseCallback(window, mouseX, mouseY);
 
     //Get Window Size
     int windowWidth, windowHeight;
@@ -168,7 +192,7 @@ void WindowManager::MakeNewWindow(int WIDTH, int HEIGHT)
     }
 
     glViewport(0, 0, WIDTH, HEIGHT);
-    glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+    glfwSetFramebufferSizeCallback(window, FramebufferSizeCallback);
 
     glMatrixMode(GL_PROJECTION); //We learned this in Computer Graphics, it "flattens" the camera perspective to orthographics.
     

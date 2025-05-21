@@ -5,7 +5,7 @@
 
 #include "WindowManager.h"
 
-const unsigned int WIDTH = 1000, HEIGHT = 1000; //Window Size
+const unsigned int WIDTH = 1980, HEIGHT = 1080; //Window Size
 
 using namespace std;
 namespace Functions
