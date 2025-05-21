@@ -9,23 +9,18 @@
 
 #include "GLFW/glfw3.h"
 
+const unsigned int WIDTH = 1980, HEIGHT = 1080; //Window Size
+
 class WindowManager
 {
 public:
     void InitializeGLFW();
-    void MakeNewWindow(int, int);
-    void Update();
+    void MakeNewWindow();
+    void Update(float&);
     bool isClosed();
 
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
-    static void MouseCallback(GLFWwindow* window, double& xPos, double& yPos);
-    static void ScrollCallback(GLFWwindow* window, double xoffset, double yoffset);
-    static void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
-    static void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
-    static void MouseCursorCallback(GLFWwindow* window, double xpos, double ypos);
-    static void MouseScrollCallback(GLFWwindow* window, double xoffset, double yoffset);
-    static void WindowCloseCallback(GLFWwindow* window);
-    static void WindowRefreshCallback(GLFWwindow* window);
+    static void MouseCallback(GLFWwindow* window, double xPos, double yPos);
     static void WindowFocusCallback(GLFWwindow* window, int focused);
 
     static bool isFocused;
@@ -33,6 +28,10 @@ public:
     static unsigned int shaderProgram;
     static unsigned int VAO, VBO, EBO;
     static float verticeDistance;
+
+    static glm::vec3 cameraPos;
+    static glm::vec3 cameraFront;
+    static glm::vec3 cameraUp;
     
     //Public Constructor to Call when new window is created
     WindowManager()
@@ -40,21 +39,7 @@ public:
         InitializeGLFW();
     }
 
-    static void processInput(GLFWwindow* window)
-    {
-        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
-            // move forward
-        }
-        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
-            // move backward
-        }
-        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
-            // strafe left
-        }
-        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
-            // strafe right
-        }  
-    }
+    static void ProcessCamera(GLFWwindow*, const float&);
 
 private:
     GLFWwindow* window;
