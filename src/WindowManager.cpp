@@ -1,5 +1,6 @@
 #include "glad/glad.h"
 #include "WindowManager.h"
+#include "ObjectLoader.h"
 
 #include <iostream>
 using namespace std;
@@ -81,7 +82,7 @@ float WindowManager::verticeDistance = 3.0f;
 
 const char* vertexShaderSource = R"(
 #version 330 core
-layout (location = 0) in vec2 aPos;
+layout (location = 0) in vec3 aPos;
 layout (location = 1) in vec2 aTexCoord;
 
 uniform mat4 model;
@@ -91,7 +92,7 @@ uniform mat4 projection;
 out vec2 TexCoord;
 
 void main() {
-    gl_Position = projection * view * model * vec4(aPos, 0.0, 1.0);
+    gl_Position = projection * view * model * vec4(aPos, 1.0);
     TexCoord = aTexCoord;
 })";
 
@@ -100,10 +101,8 @@ const char* fragmentShaderSource = R"(
 out vec4 FragColor;
 in vec2 TexCoord;
 
-uniform sampler2D texture1;
-
 void main() {
-    FragColor = texture(texture1, TexCoord);
+    FragColor = vec4(1.0); // pure white
 })";
 
 float vertices[] = {
@@ -175,7 +174,7 @@ void WindowManager::Update(float& dT) {
     glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
     glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
 
-    glClear(GL_COLOR_BUFFER_BIT);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     
     glUseProgram(shaderProgram);
     glBindVertexArray(VAO);
@@ -255,10 +254,9 @@ void WindowManager::MakeNewWindow() {
     glBindBuffer(GL_ARRAY_BUFFER, VBO);
     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
 
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
-    glEnableVertexAttribArray(1);
+    
     glBindVertexArray(0);
 
     glEnable(GL_BLEND);
