@@ -12,6 +12,7 @@ double WindowManager::mouseY = 0.0;
 glm::vec3 WindowManager::cameraPos   = glm::vec3(0.0f, 0.0f, 3.0f);
 glm::vec3 WindowManager::cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
 glm::vec3 WindowManager::cameraUp    = glm::vec3(0.0f, 1.0f, 0.0f);
+std::vector<float> WindowManager::currentModelVertices;
 
 namespace {
     bool firstMouse = true;
@@ -70,15 +71,18 @@ void WindowManager::WindowFocusCallback(GLFWwindow* window, int focused) {
     std::cout << (focused ? "[Focus] Mouse locked\n" : "[Focus] Mouse unlocked\n");
 }
 ///*
-void WindowManager::DropCallback(GLFWwindow* window, int count, const char** paths) {
-    for (int i = 0; i < count; ++i) {
-        std::string path(paths[i]);
-        std::cout << "[Drop] File dropped: " << path << std::endl;
-
-        if (path.empty()) {
+void WindowManager::DropCallback(GLFWwindow* window, int count, const char** paths)
+{
+    for (int i = 0; i < count; ++i)
+    {
+        if (!paths || count <= 0)
+        {
             std::cerr << "[Drop] Ignored empty path\n";
             return;
         }
+        
+        std::string path(paths[i]);
+        std::cout << "[Drop] File dropped: " << path << std::endl;
 
         glm::vec3 center; //Object center
         std::vector<float> modelVertices; //Store Loaded Vertices
@@ -88,6 +92,14 @@ void WindowManager::DropCallback(GLFWwindow* window, int count, const char** pat
             if (ObjectLoader::LoadOBJ(path, modelVertices, center))
             {
                 cout << "[Drop] OBJ loaded successfully" << endl;
+
+                currentModelVertices = std::move(modelVertices);
+
+                glBindBuffer(GL_ARRAY_BUFFER, VBO);
+                glBufferData(GL_ARRAY_BUFFER, currentModelVertices.size() * sizeof(float), currentModelVertices.data(), GL_STATIC_DRAW);
+                glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+                std::cout << "[Drop] Updated model buffer with " << currentModelVertices.size() / 6 << " vertices." << std::endl;
             }
             else
             {
@@ -99,6 +111,14 @@ void WindowManager::DropCallback(GLFWwindow* window, int count, const char** pat
             if (ObjectLoader::LoadFBX(path, modelVertices, center))
             {
                 cout << "[Drop] FBX loaded successfully" << endl;
+                
+                currentModelVertices = std::move(modelVertices);
+
+                glBindBuffer(GL_ARRAY_BUFFER, VBO);
+                glBufferData(GL_ARRAY_BUFFER, currentModelVertices.size() * sizeof(float), currentModelVertices.data(), GL_STATIC_DRAW);
+                glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+                std::cout << "[Drop] Updated model buffer with " << currentModelVertices.size() / 6 << " vertices." << std::endl;
             }
             else
             {
@@ -116,6 +136,9 @@ void WindowManager::ProcessCamera(GLFWwindow* window, const float& deltaTime) {
     float speed = 2.5f * deltaTime;
     glm::vec3 right = glm::normalize(glm::cross(cameraFront, cameraUp));
 
+    if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS)
+        speed *= 5.0f;
+        
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
         cameraPos += speed * cameraFront;
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
@@ -124,81 +147,146 @@ void WindowManager::ProcessCamera(GLFWwindow* window, const float& deltaTime) {
         cameraPos -= right * speed;
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
         cameraPos += right * speed;
+
+    static bool togglePressed = false;
+    if (glfwGetKey(window, GLFW_KEY_F1) == GLFW_PRESS && !togglePressed) {
+        showWireframe = !showWireframe;
+        togglePressed = true;
+        glPolygonMode(GL_FRONT_AND_BACK, showWireframe ? GL_LINE : GL_FILL);
+        shaderProgram = showWireframe ? flatShader : phongShader;
+    }
+    if (glfwGetKey(window, GLFW_KEY_F1) == GLFW_RELEASE) {
+        togglePressed = false;
+    }
 }
 
-unsigned int WindowManager::shaderProgram = 0;
+unsigned int WindowManager::shaderProgram = 0, WindowManager::flatShader = 0, WindowManager::phongShader = 0;
 unsigned int WindowManager::VAO, WindowManager::VBO, WindowManager::EBO;
 float WindowManager::verticeDistance = 3.0f;
 
-const char* vertexShaderSource = R"(
+const char* phongVertextSrc = R"(
 #version 330 core
 layout (location = 0) in vec3 aPos;
-layout (location = 1) in vec2 aTexCoord;
+layout (location = 1) in vec3 aNormal;
+
+out vec3 FragPos;
+out vec3 Normal;
 
 uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
 
-out vec2 TexCoord;
+void main()
+{
+    FragPos = vec3(model * vec4(aPos, 1.0));
+    Normal = mat3(transpose(inverse(model))) * aNormal;
+    gl_Position = projection * view * vec4(FragPos, 1.0);
+}
+)";
+
+const char* phongFragmentSrc = R"(
+#version 330 core
+in vec3 FragPos;
+in vec3 Normal;
+
+out vec4 FragColor;
+
+uniform vec3 lightPos;
+uniform vec3 viewPos;
+uniform vec3 lightColor;
+uniform vec3 objectColor;
+
+void main()
+{
+    vec3 norm = normalize(Normal);
+    vec3 lightDir = normalize(lightPos - FragPos);
+    vec3 viewDir = normalize(viewPos - FragPos);
+    vec3 halfwayDir = normalize(lightDir + viewDir);
+
+    float diff = max(dot(norm, lightDir), 0.0);
+    float spec = pow(max(dot(norm, halfwayDir), 0.0), 32.0);
+
+    vec3 ambient = 0.1 * lightColor;
+    vec3 diffuse = diff * lightColor * 1.2;
+    vec3 specular = spec * lightColor * 2.5;
+
+    vec3 result = (ambient + diffuse + specular) * objectColor;
+    FragColor = vec4(result, 1.0);
+}
+)";
+
+const char* flatVertexSrc = R"(
+#version 330 core
+layout (location = 0) in vec3 aPos;
+
+uniform mat4 model;
+uniform mat4 view;
+uniform mat4 projection;
 
 void main() {
     gl_Position = projection * view * model * vec4(aPos, 1.0);
-    TexCoord = aTexCoord;
-})";
+}
+)";
 
-const char* fragmentShaderSource = R"(
+const char* flatFragmentSrc = R"(
 #version 330 core
 out vec4 FragColor;
-in vec2 TexCoord;
 
 void main() {
-    FragColor = vec4(1.0); // pure white
-})";
+    FragColor = vec4(1.0);
+}
+)";
 
 float vertices[] = {
-    // positions       
-    -0.5f, -0.5f, -0.5f,
-     0.5f, -0.5f, -0.5f, 
-     0.5f,  0.5f, -0.5f, 
-     0.5f,  0.5f, -0.5f, 
-    -0.5f,  0.5f, -0.5f, 
-    -0.5f, -0.5f, -0.5f,
+    // Back face (0, 0, -1)
+    -0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,
+     0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,
+     0.5f,  0.5f, -0.5f,  0.0f,  0.0f, -1.0f,
+     0.5f,  0.5f, -0.5f,  0.0f,  0.0f, -1.0f,
+    -0.5f,  0.5f, -0.5f,  0.0f,  0.0f, -1.0f,
+    -0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,
 
-    -0.5f, -0.5f,  0.5f, 
-     0.5f, -0.5f,  0.5f, 
-     0.5f,  0.5f,  0.5f, 
-     0.5f,  0.5f,  0.5f, 
-    -0.5f,  0.5f,  0.5f, 
-    -0.5f, -0.5f,  0.5f,
+    // Front face (0, 0, 1)
+    -0.5f, -0.5f,  0.5f,  0.0f,  0.0f,  1.0f,
+     0.5f, -0.5f,  0.5f,  0.0f,  0.0f,  1.0f,
+     0.5f,  0.5f,  0.5f,  0.0f,  0.0f,  1.0f,
+     0.5f,  0.5f,  0.5f,  0.0f,  0.0f,  1.0f,
+    -0.5f,  0.5f,  0.5f,  0.0f,  0.0f,  1.0f,
+    -0.5f, -0.5f,  0.5f,  0.0f,  0.0f,  1.0f,
 
-    -0.5f,  0.5f,  0.5f, 
-    -0.5f,  0.5f, -0.5f, 
-    -0.5f, -0.5f, -0.5f, 
-    -0.5f, -0.5f, -0.5f, 
-    -0.5f, -0.5f,  0.5f, 
-    -0.5f,  0.5f,  0.5f,
+    // Left face (-1, 0, 0)
+    -0.5f,  0.5f,  0.5f, -1.0f,  0.0f,  0.0f,
+    -0.5f,  0.5f, -0.5f, -1.0f,  0.0f,  0.0f,
+    -0.5f, -0.5f, -0.5f, -1.0f,  0.0f,  0.0f,
+    -0.5f, -0.5f, -0.5f, -1.0f,  0.0f,  0.0f,
+    -0.5f, -0.5f,  0.5f, -1.0f,  0.0f,  0.0f,
+    -0.5f,  0.5f,  0.5f, -1.0f,  0.0f,  0.0f,
 
-     0.5f,  0.5f,  0.5f, 
-     0.5f,  0.5f, -0.5f, 
-     0.5f, -0.5f, -0.5f, 
-     0.5f, -0.5f, -0.5f, 
-     0.5f, -0.5f,  0.5f, 
-     0.5f,  0.5f,  0.5f,
+    // Right face (1, 0, 0)
+     0.5f,  0.5f,  0.5f,  1.0f,  0.0f,  0.0f,
+     0.5f,  0.5f, -0.5f,  1.0f,  0.0f,  0.0f,
+     0.5f, -0.5f, -0.5f,  1.0f,  0.0f,  0.0f,
+     0.5f, -0.5f, -0.5f,  1.0f,  0.0f,  0.0f,
+     0.5f, -0.5f,  0.5f,  1.0f,  0.0f,  0.0f,
+     0.5f,  0.5f,  0.5f,  1.0f,  0.0f,  0.0f,
 
-    -0.5f, -0.5f, -0.5f, 
-     0.5f, -0.5f, -0.5f, 
-     0.5f, -0.5f,  0.5f, 
-     0.5f, -0.5f,  0.5f, 
-    -0.5f, -0.5f,  0.5f, 
-    -0.5f, -0.5f, -0.5f,
+    // Bottom face (0, -1, 0)
+    -0.5f, -0.5f, -0.5f,  0.0f, -1.0f,  0.0f,
+     0.5f, -0.5f, -0.5f,  0.0f, -1.0f,  0.0f,
+     0.5f, -0.5f,  0.5f,  0.0f, -1.0f,  0.0f,
+     0.5f, -0.5f,  0.5f,  0.0f, -1.0f,  0.0f,
+    -0.5f, -0.5f,  0.5f,  0.0f, -1.0f,  0.0f,
+    -0.5f, -0.5f, -0.5f,  0.0f, -1.0f,  0.0f,
 
-    -0.5f,  0.5f, -0.5f, 
-     0.5f,  0.5f, -0.5f, 
-     0.5f,  0.5f,  0.5f, 
-     0.5f,  0.5f,  0.5f, 
-    -0.5f,  0.5f,  0.5f, 
-    -0.5f,  0.5f, -0.5f,
+    // Top face (0, 1, 0)
+    -0.5f,  0.5f, -0.5f,  0.0f,  1.0f,  0.0f,
+     0.5f,  0.5f, -0.5f,  0.0f,  1.0f,  0.0f,
+     0.5f,  0.5f,  0.5f,  0.0f,  1.0f,  0.0f,
+     0.5f,  0.5f,  0.5f,  0.0f,  1.0f,  0.0f,
+    -0.5f,  0.5f,  0.5f,  0.0f,  1.0f,  0.0f,
+    -0.5f,  0.5f, -0.5f,  0.0f,  1.0f,  0.0f
 };
+
 
 unsigned int createShader(GLenum type, const char* source) {
     unsigned int shader = glCreateShader(type);
@@ -215,20 +303,67 @@ unsigned int createShader(GLenum type, const char* source) {
     return shader;
 }
 
+unsigned int compileShaderProgram(const char* vertexSrc, const char* fragmentSrc) {
+    unsigned int vertexShader = createShader(GL_VERTEX_SHADER, vertexSrc);
+    unsigned int fragmentShader = createShader(GL_FRAGMENT_SHADER, fragmentSrc);
+
+    unsigned int program = glCreateProgram();
+    glAttachShader(program, vertexShader);
+    glAttachShader(program, fragmentShader);
+    glLinkProgram(program);
+
+    int success;
+    char infoLog[512];
+    glGetProgramiv(program, GL_LINK_STATUS, &success);
+    if (!success) {
+        glGetProgramInfoLog(program, 512, NULL, infoLog);
+        std::cerr << "SHADER LINK ERROR:\n" << infoLog << std::endl;
+    }
+
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
+
+    return program;
+}
+
+
 void WindowManager::Update(float& dT) {
     glm::mat4 model = glm::mat4(1.0f);
     glm::mat4 view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
     glm::mat4 projection = glm::perspective(glm::radians(45.0f), WIDTH / (float)HEIGHT, 0.1f, 100.0f);
 
-    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
-    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
-    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    
-    glUseProgram(shaderProgram);
+
+    //Apply Lighting When Out of Wireframe Mode
+    if (!showWireframe)
+    {
+        glUseProgram(phongShader);
+
+        glUniformMatrix4fv(glGetUniformLocation(phongShader, "model"), 1, GL_FALSE, glm::value_ptr(model));
+        glUniformMatrix4fv(glGetUniformLocation(phongShader, "view"), 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(glGetUniformLocation(phongShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+
+        glm::vec3 dynamicLight = cameraPos + glm::vec3(0, 0, -2);
+        glUniform3f(glGetUniformLocation(phongShader, "lightPos"), dynamicLight.x, dynamicLight.y, dynamicLight.z);
+        glUniform3f(glGetUniformLocation(phongShader, "viewPos"), cameraPos.x, cameraPos.y, cameraPos.z);
+        glUniform3f(glGetUniformLocation(phongShader, "lightColor"), 1.0f, 1.0f, 1.0f);
+        glUniform3f(glGetUniformLocation(phongShader, "objectColor"), 1.0f, 1.0f, 1.0f);
+    }
+    else
+    {
+        glUseProgram(flatShader);
+
+        glUniformMatrix4fv(glGetUniformLocation(flatShader, "model"), 1, GL_FALSE, glm::value_ptr(model));
+        glUniformMatrix4fv(glGetUniformLocation(flatShader, "view"), 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(glGetUniformLocation(flatShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+    }
+
     glBindVertexArray(VAO);
-    glDrawArrays(GL_TRIANGLES, 0, 36); // Draw the cube (36 vertices) //
+    
+    // Choose draw count from loaded vertices
+    GLsizei drawCount = currentModelVertices.empty() ? 36 : currentModelVertices.size() / 6;
+    glDrawArrays(GL_TRIANGLES, 0, drawCount);
+    
     glBindVertexArray(0);
     
     glfwSwapBuffers(window);
@@ -280,12 +415,14 @@ void WindowManager::MakeNewWindow() {
     glfwSetCursorPosCallback(window, MouseCallback); // Then read mouse input
     glfwSetDropCallback(window, DropCallback); // Then read dropped files
 
-    unsigned int vShader = createShader(GL_VERTEX_SHADER, vertexShaderSource);
-    unsigned int fShader = createShader(GL_FRAGMENT_SHADER, fragmentShaderSource);
-    shaderProgram = glCreateProgram();
-    glAttachShader(shaderProgram, vShader);
-    glAttachShader(shaderProgram, fShader);
-    glLinkProgram(shaderProgram);
+    flatShader = compileShaderProgram(flatVertexSrc, flatFragmentSrc);
+    phongShader = compileShaderProgram(phongVertextSrc, phongFragmentSrc);
+    shaderProgram = flatShader;
+
+    cout << "Flat Shader ID: " << flatShader << endl;
+
+    currentModelVertices.assign(std::begin(vertices), std::end(vertices));
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
 
     int success;
     char infoLog[512];
@@ -303,10 +440,15 @@ void WindowManager::MakeNewWindow() {
 
     glBindVertexArray(VAO);
     glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, currentModelVertices.size() * sizeof(float), currentModelVertices.data(), GL_STATIC_DRAW);
 
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    // Positions
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
+
+    // Normals
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
     
     glBindVertexArray(0);
 

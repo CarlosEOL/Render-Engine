@@ -50,6 +50,14 @@ bool ObjectLoader::LoadOBJ(const std::string& path, std::vector<float>& outVerti
             float vy = attrib.vertices[3 * index.vertex_index + 1];
             float vz = attrib.vertices[3 * index.vertex_index + 2];
 
+            float nx = 0, ny = 0, nz = 0;
+            if (index.normal_index >= 0)
+            {
+                nx = attrib.normals[3 * index.normal_index + 0];
+                ny = attrib.normals[3 * index.normal_index + 1];
+                nz = attrib.normals[3 * index.normal_index + 2];
+            }
+
             min.x = std::min(min.x, vx);
             min.y = std::min(min.y, vy);
             min.z = std::min(min.z, vz);
@@ -61,6 +69,9 @@ bool ObjectLoader::LoadOBJ(const std::string& path, std::vector<float>& outVerti
             outVertices.push_back(vx);
             outVertices.push_back(vy);
             outVertices.push_back(vz);
+            outVertices.push_back(nx);
+            outVertices.push_back(ny);
+            outVertices.push_back(nz);
         }
     }
 
@@ -74,7 +85,15 @@ bool ObjectLoader::LoadOBJ(const std::string& path, std::vector<float>& outVerti
 bool ObjectLoader::LoadFBX(const std::string& path, std::vector<float>& outVertices, glm::vec3& center) 
 {
     Assimp::Importer importer;
-    const aiScene* scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_FlipUVs);
+    const aiScene* scene = importer.ReadFile
+    (
+        path,
+        aiProcess_Triangulate |
+        aiProcess_GenSmoothNormals |
+        aiProcess_JoinIdenticalVertices |
+        aiProcess_CalcTangentSpace |
+        aiProcess_FlipUVs
+    );
 
     if (!scene || !scene->HasMeshes()) 
     {
@@ -88,19 +107,24 @@ bool ObjectLoader::LoadFBX(const std::string& path, std::vector<float>& outVerti
 
     for (unsigned int i = 0; i < mesh->mNumVertices; i++) 
     {
-        aiVector3D pos = mesh->mVertices[i];
+        const aiFace& face = mesh->mFaces[i];
+        for (unsigned int j = 0; j < face.mNumIndices; ++j) {
+            unsigned int index = face.mIndices[j];
+            aiVector3D pos = mesh->mVertices[index];
+            aiVector3D normal = mesh->HasNormals() ? mesh->mNormals[index] : aiVector3D(0, 1, 0);
 
-        min.x = std::min(min.x, pos.x);
-        min.y = std::min(min.y, pos.y);
-        min.z = std::min(min.z, pos.z);
+            if (normal.Length() < 1e-3f)
+                normal = aiVector3D(0, 1, 0);
+            else
+                normal = normal.NormalizeSafe(); // or manually normalize
 
-        max.x = std::max(max.x, pos.x);
-        max.y = std::max(max.y, pos.y);
-        max.z = std::max(max.z, pos.z);
-
-        outVertices.push_back(pos.x);
-        outVertices.push_back(pos.y);
-        outVertices.push_back(pos.z);
+            outVertices.push_back(pos.x);
+            outVertices.push_back(pos.y);
+            outVertices.push_back(pos.z);
+            outVertices.push_back(normal.x);
+            outVertices.push_back(normal.y);
+            outVertices.push_back(normal.z);
+        }
     }
 
     center = (min + max) * 0.5f;

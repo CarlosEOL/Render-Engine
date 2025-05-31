@@ -11,9 +11,13 @@
 
 const unsigned int WIDTH = 1980, HEIGHT = 1080; //Window Size
 
+using namespace std;
+
 class WindowManager
 {
 public:
+    inline static bool showWireframe = true;
+    
     void InitializeGLFW();
     void MakeNewWindow();
     void Update(float&);
@@ -26,13 +30,15 @@ public:
 
     static bool isFocused;
     static double mouseX, mouseY;
-    static unsigned int shaderProgram;
+    static unsigned int shaderProgram, flatShader, phongShader;
     static unsigned int VAO, VBO, EBO;
     static float verticeDistance;
 
     static glm::vec3 cameraPos;
     static glm::vec3 cameraFront;
     static glm::vec3 cameraUp;
+
+    static vector<float> currentModelVertices;
     
     //Public Constructor to Call when new window is created
     WindowManager()
