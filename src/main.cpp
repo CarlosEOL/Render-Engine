@@ -1,32 +1,11 @@
 #include <iostream>
 #include <chrono>
-#include <vector>
 
+#include "Utility.h"
 #include "WindowManager.h"
 
 using namespace std;
-
-namespace Functions {
-    // Converts an integer into a vector of its digits
-    vector<int> intToVector(int num) {
-        vector<int> resultArray(2, 0);
-        while (true) {
-            resultArray.insert(resultArray.begin(), num % 10);
-            num /= 10;
-            if (num == 0)
-                return resultArray;
-        }
-    }
-
-    // Reads an integer input from the user
-    int intUserInput() {
-        int _temp;
-        cin >> _temp;
-        return _temp;
-    }
-}
-
-using namespace Functions;
+using namespace UTILITY;
 
 int main() {
     using clock = chrono::steady_clock;
