@@ -1,11 +1,9 @@
 #include <iostream>
 #include <chrono>
 
-#include "Utility.h"
 #include "WindowManager.h"
 
 using namespace std;
-using namespace UTILITY;
 
 int main() {
     using clock = chrono::steady_clock;
