@@ -23,6 +23,14 @@ namespace {
     float timeSinceLastLog = 0.0f;
 }
 
+namespace _UTILITY_
+{
+    bool EndsWith(const std::string& str, const std::string& suffix) {
+        return str.size() >= suffix.size() &&
+               str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
+    }
+}
+
 void WindowManager::FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
     glViewport(0, 0, width, height);
 }
@@ -60,6 +68,37 @@ void WindowManager::WindowFocusCallback(GLFWwindow* window, int focused) {
     isFocused = focused;
     glfwSetInputMode(window, GLFW_CURSOR, focused ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
     std::cout << (focused ? "[Focus] Mouse locked\n" : "[Focus] Mouse unlocked\n");
+}
+
+void WindowManager::DropCallback(GLFWwindow* window, int count, const char** paths) {
+    for (int i = 0; i < count; ++i) {
+        std::string path(paths[i]);
+        std::cout << "[Drop] File dropped: " << path << std::endl;
+
+        if (EndsWith(path, ".obj")) {
+            std::vector<float> modelVertices; //Store Loaded Vertices
+            if (ObjectLoader::LoadOBJ(path, modelVertices))
+            {
+                cout << "[Drop] OBJ loaded successfully" << endl;
+            }
+            else
+            {
+                cout << "[Drop] OBJ failed to load" << endl;
+            }
+        } else if (EndsWith(path, ".fbx")) {
+            std::vector<float> modelVertices;
+            if (ObjectLoader::LoadFBX(path, modelVertices))
+            {
+                cout << "[Drop] FBX loaded successfully" << endl;
+            }
+            else
+            {
+                cout << "[Drop] FBX failed to load" << endl;
+            }
+        } else {
+            std::cerr << "[Drop] Unsupported file format: " << path << std::endl;
+        }
+    }
 }
 
 void WindowManager::ProcessCamera(GLFWwindow* window, const float& deltaTime) {
@@ -227,7 +266,8 @@ void WindowManager::MakeNewWindow() {
     glfwSetFramebufferSizeCallback(window, FramebufferSizeCallback);
     glfwSetWindowFocusCallback(window, WindowFocusCallback);
     WindowFocusCallback(window, 1); // Manually focus the mouse in the window //
-    glfwSetCursorPosCallback(window, MouseCallback); // Then read mouse input ??
+    glfwSetCursorPosCallback(window, MouseCallback); // Then read mouse input
+    glfwSetDropCallback(window, DropCallback); // Then read dropped files
 
     unsigned int vShader = createShader(GL_VERTEX_SHADER, vertexShaderSource);
     unsigned int fShader = createShader(GL_FRAGMENT_SHADER, fragmentShaderSource);

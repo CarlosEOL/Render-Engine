@@ -22,6 +22,7 @@ public:
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
     static void MouseCallback(GLFWwindow* window, double xPos, double yPos);
     static void WindowFocusCallback(GLFWwindow* window, int focused);
+    static void DropCallback(GLFWwindow* window, int count, const char** paths);
 
     static bool isFocused;
     static double mouseX, mouseY;
