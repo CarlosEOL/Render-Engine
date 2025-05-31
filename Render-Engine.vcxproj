@@ -163,6 +163,7 @@
     <ClCompile Include="src\glad.c" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\ObjectLoader.cpp" />
+    <ClCompile Include="src\TinyObjectLoaderImpl.cpp" />
     <ClCompile Include="src\WindowManager.cpp" />
   </ItemGroup>
   <ItemGroup>

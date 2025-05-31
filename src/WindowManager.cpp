@@ -69,16 +69,22 @@ void WindowManager::WindowFocusCallback(GLFWwindow* window, int focused) {
     glfwSetInputMode(window, GLFW_CURSOR, focused ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
     std::cout << (focused ? "[Focus] Mouse locked\n" : "[Focus] Mouse unlocked\n");
 }
-
+///*
 void WindowManager::DropCallback(GLFWwindow* window, int count, const char** paths) {
     for (int i = 0; i < count; ++i) {
         std::string path(paths[i]);
         std::cout << "[Drop] File dropped: " << path << std::endl;
 
-        glm::vec3 center = glm::vec3(0.0f, 0.0f, 0.0f);
+        if (path.empty()) {
+            std::cerr << "[Drop] Ignored empty path\n";
+            return;
+        }
+
+        glm::vec3 center; //Object center
+        std::vector<float> modelVertices; //Store Loaded Vertices
         
-        if (EndsWith(path, ".obj")) {
-            std::vector<float> modelVertices; //Store Loaded Vertices
+        if (_UTILITY_::EndsWith(path, ".obj"))
+        {
             if (ObjectLoader::LoadOBJ(path, modelVertices, center))
             {
                 cout << "[Drop] OBJ loaded successfully" << endl;
@@ -87,8 +93,9 @@ void WindowManager::DropCallback(GLFWwindow* window, int count, const char** pat
             {
                 cout << "[Drop] OBJ failed to load" << endl;
             }
-        } else if (EndsWith(path, ".fbx")) {
-            std::vector<float> modelVertices;
+        }
+        else if (_UTILITY_::EndsWith(path, ".fbx"))
+        {
             if (ObjectLoader::LoadFBX(path, modelVertices, center))
             {
                 cout << "[Drop] FBX loaded successfully" << endl;
@@ -97,12 +104,14 @@ void WindowManager::DropCallback(GLFWwindow* window, int count, const char** pat
             {
                 cout << "[Drop] FBX failed to load" << endl;
             }
-        } else {
+        }
+        else
+        {
             std::cerr << "[Drop] Unsupported file format: " << path << std::endl;
         }
     }
 }
-
+//*/
 void WindowManager::ProcessCamera(GLFWwindow* window, const float& deltaTime) {
     float speed = 2.5f * deltaTime;
     glm::vec3 right = glm::normalize(glm::cross(cameraFront, cameraUp));

@@ -1,12 +1,10 @@
 #include "ObjectLoader.h"
 
-// ModelLoader.cpp
 #include <iostream>
 #include <vector>
 
 // TinyObjLoader.CC (OBJ) // https://github.com/tinyobjloader/tinyobjloader/blob/release/tiny_obj_loader.cc
-#define TINYOBJLOADER_IMPLEMENTATION
-#define TINYOBJLOADER_USE_STREAM
+#include <fstream>
 #include "tiny_obj_loader.h"
 
 // Assimp (FBX)
