@@ -14,21 +14,6 @@
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
 
-using namespace tinyobj;
-
-bool LoadObj(
-    attrib_t* attrib,
-    std::vector<shape_t>* shapes,
-    std::vector<material_t>* materials,
-    std::string& warn,
-    std::string& err,
-    const char* filename,
-    const char* mtl_basedir = nullptr,
-    bool triangulate = true
-);
-
-using namespace std;
-
 bool ObjectLoader::LoadOBJ(const std::string& path, std::vector<float>& outVertices, glm::vec3& center) 
 {
     tinyobj::attrib_t attrib;
@@ -37,19 +22,20 @@ bool ObjectLoader::LoadOBJ(const std::string& path, std::vector<float>& outVerti
     std::string warn, err;
 
     std::ifstream objFile(path);
-    if (!objFile.is_open()) 
-    {
+    if (!objFile.is_open()) {
         std::cerr << "Failed to open file: " << path << std::endl;
         return false;
     }
-    
+
+    tinyobj::MaterialFileReader reader(".");
+
     bool ret = tinyobj::LoadObj(
         &attrib,
         &shapes,
         &materials,
-        &warn,
         &err,
-        path.c_str()
+        &objFile,
+        &reader
     );
 
     if (!warn.empty()) std::cout << "[tinyobj warning] " << warn << std::endl;
@@ -81,6 +67,7 @@ bool ObjectLoader::LoadOBJ(const std::string& path, std::vector<float>& outVerti
     }
 
     center = (min + max) * 0.5f;
+    
     return true;
 }
 

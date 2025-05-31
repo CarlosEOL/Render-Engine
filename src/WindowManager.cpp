@@ -75,9 +75,11 @@ void WindowManager::DropCallback(GLFWwindow* window, int count, const char** pat
         std::string path(paths[i]);
         std::cout << "[Drop] File dropped: " << path << std::endl;
 
+        glm::vec3 center = glm::vec3(0.0f, 0.0f, 0.0f);
+        
         if (EndsWith(path, ".obj")) {
             std::vector<float> modelVertices; //Store Loaded Vertices
-            if (ObjectLoader::LoadOBJ(path, modelVertices))
+            if (ObjectLoader::LoadOBJ(path, modelVertices, center))
             {
                 cout << "[Drop] OBJ loaded successfully" << endl;
             }
@@ -87,7 +89,7 @@ void WindowManager::DropCallback(GLFWwindow* window, int count, const char** pat
             }
         } else if (EndsWith(path, ".fbx")) {
             std::vector<float> modelVertices;
-            if (ObjectLoader::LoadFBX(path, modelVertices))
+            if (ObjectLoader::LoadFBX(path, modelVertices, center))
             {
                 cout << "[Drop] FBX loaded successfully" << endl;
             }
