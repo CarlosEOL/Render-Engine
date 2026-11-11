@@ -15,6 +15,16 @@ Use another folder with `msbuild Render-Engine.vcxproj /p:Configuration=Release 
 
 `Render-Engine.exe --benchmark` opens each scene with playback running and v-sync off, then prints the scene start time and frame-time statistics. It also saves the last frame of each scene as `benchmark-<scene>.ppm`.
 
+## Startup laboratories
+
+The app opens at a main menu. Choose **Planetorium** for either **Solar System - 1:1 scale** or the existing **Gargantua system**. Choose **Quantum Simulation** for 38 selectable examples: infinite-well states and superpositions, harmonic-oscillator states, coherent and squeezed states, free packets, hydrogen orbital slices, spin states, Bell states, and numerical tunneling/scattering experiments.
+
+**F10** returns to the main menu and pauses playback. **F2** toggles orbital trajectories, **F3** toggles the browser/information panel, and **F4** shows the selected system's overview. Select a body in the right-hand list and press **G**, double-click it, or click **Go to selection**. **F** follows it while time advances. The solar system uses physical AU distances, true mean radii, double-precision camera coordinates and camera-relative rendering; small selection markers remain visible in overview. The existing Gargantua demonstration retains its illustrative scale.
+
+The solar preset includes the Sun, eight planets, Pluto, Ceres, Vesta, Eris, a representative Halley orbit, seven moons, and 4,096 representative main-belt/Kuiper-belt markers. Planet positions use fixed J2000 Keplerian elements; surfaces are procedural illustrations. This is not a current-date ephemeris or a complete survey catalogue. Solar-system time can advance by seconds, minutes, hours, days, 30-day months, or Julian years per real second. Quantum examples use separate dimensionless time rates of 0.1x to 4x; **R** restarts the selected state.
+
+See [the detailed changes and reasons](docs/SIMULATION_CHANGES.md) for every changed component, equations, sources, accuracy boundaries, and validation instructions.
+
 ## Controls
 
 The window opens on the main menu. **Planetorium** leads to the Solar System and the Gargantua system, and **Quantum Simulation** leads to the state list. **F10** or **Main menu** returns to it from any scene.
@@ -29,7 +39,7 @@ Shared controls:
 - **< / >** (comma / period) change the time rate. Gargantua offers 1×, 60× and 3600×. Star systems go up to one year per second.
 - **WASD** fly, **Q / E** move down and up, and **Left Shift** gives a 5× boost. **[ / ]** halve or double flight speed.
 - **Right mouse button** toggles mouse look. **Esc** releases the cursor.
-- **Mouse wheel** zooms between 15° and 90° field of view.
+- **Mouse wheel** multiplies flight speed by 10 per notch, and a label in the view shows the new speed for a second. **Shift + right-drag** zooms the field of view and **middle click** resets it.
 - **Left-click** selects the body or star under the cursor. **G** or **Go to selection** goes to it. In the Gargantua view, G on a star enters that star's system.
 - **F** follows the selection. **L** lands on or lifts off the nearest surface. **F4** or **Home** shows the overview.
 - **F2** toggles orbit paths and **F6** toggles the photon view. **F7** switches between HDR tone mapping and pure exposure, and **- / =** step exposure. **View > Lens** applies calibrated camera lens profiles.
@@ -38,7 +48,7 @@ Gargantua only:
 
 - **Scene > Miller flyby** follows the ocean planet. **Scene > Spacecraft view** follows the ring spacecraft.
 - **B** fires the spacecraft's prograde booster and **R** restores its initial orbit and fuel.
-- **H** toggles free fall toward the black hole. The fall stops at 1.015 horizon radii.
+- **H** starts or stops a free fall toward the black hole. The fall runs in real time even while playback is paused, carries the camera through the event horizon, and stops close to the centre. WASD is off while falling; the mouse still aims.
 
 Quantum view:
 
@@ -46,7 +56,7 @@ Quantum view:
 
 Model viewer:
 
-- Drop an `.obj` or `.fbx` file on the window. **F1** switches between wireframe and shaded rendering. **Scene > Gargantua black hole** switches back.
+- Drop an `.obj` or `.fbx` file on the window. Models keep their original transforms. **F1** switches between wireframe and shaded rendering. **Scene > Gargantua black hole** switches back.
 
 The **World** clock is playback time. The **Local** clock applies approximate gravitational and velocity time dilation at the camera. **Craft light age** is how far into the spacecraft's past the received image looks.
 

@@ -14,9 +14,9 @@ unsigned int compileShaderProgram(const char*, const char*);
 
 const std::array<GalaxyBackground::Group, 3>& GalaxyBackground::Groups() {
     static const std::array<Group, 3> groups = {{
-        {{0, 12, -42}, 0.7f, 12.2f},
-        {{48, -8, -55}, 1.0f, 12.2f},
-        {{-45, 20, -65}, 1.3f, 12.2f}
+        {{0, 110, -560}, 0.7f, 52.0f},
+        {{300, -90, -700}, 1.0f, 48.0f},
+        {{-340, 170, -780}, 1.3f, 50.0f}
     }};
     return groups;
 }
@@ -29,9 +29,14 @@ bool GalaxyBackground::Initialize() {
     if (length > 0 && length < 32768)
         assetPath = std::filesystem::path(executable).parent_path() / assetPath;
 #endif
-    texture = AssetManager::LoadTexture(assetPath.string().c_str(), true);
+    texture = AssetManager::LoadTexture(assetPath.string().c_str(), false);
     if (!texture)
         return false;
+    // The sprites are now distant, so use the generated mip chain to avoid
+    // shimmering and losing the galaxy's brightness to point sampling.
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glBindTexture(GL_TEXTURE_2D, 0);
     const char* vertex = R"(
 #version 330 core
 uniform mat4 transform;
@@ -47,11 +52,12 @@ void main() {
     const char* fragment = R"(
 #version 330 core
 uniform sampler2D galaxy;
+uniform float opacity;
 in vec2 uv;
 out vec4 color;
 void main() {
     vec4 image = texture(galaxy, uv);
-    color = vec4(image.rgb * image.a * 0.8, 1);
+    color = vec4(image.rgb * image.a * 0.9 * opacity, 1);
 }
 )";
     program = compileShaderProgram(vertex, fragment);
@@ -67,10 +73,11 @@ void main() {
     glUseProgram(0);
     viewProjectionLocation = glGetUniformLocation(program, "viewProjection");
     transformLocation = glGetUniformLocation(program, "transform");
+    opacityLocation = glGetUniformLocation(program, "opacity");
     return true;
 }
 
-void GalaxyBackground::Render(const glm::mat4& viewProjection) const {
+void GalaxyBackground::Render(const glm::mat4& viewProjection, const glm::vec3& cameraPosition) const {
     if (!program || !texture)
         return;
     glUseProgram(program);
@@ -81,9 +88,16 @@ void GalaxyBackground::Render(const glm::mat4& viewProjection) const {
     glBlendFunc(GL_ONE, GL_ONE);
     glBindVertexArray(vao);
     for (const auto& group : Groups()) {
+        // A galaxy sprite is only a backdrop. Fade it out before the camera can
+        // reach the flat image, otherwise it fills the view as a giant PNG.
+        const float distance = glm::length(cameraPosition - group.center);
+        const float opacity = glm::smoothstep(group.radius * 1.25f, group.radius * 2.5f, distance);
+        if (opacity <= 0.001f)
+            continue;
         auto transform = glm::translate(glm::mat4(1), group.center);
         transform = glm::rotate(transform, group.tilt, glm::vec3(1,0,0));
         transform = glm::scale(transform, glm::vec3(group.radius));
+        glUniform1f(opacityLocation, opacity);
         glUniformMatrix4fv(transformLocation, 1, GL_FALSE, glm::value_ptr(transform));
         glDrawArrays(GL_TRIANGLES, 0, 6);
     }

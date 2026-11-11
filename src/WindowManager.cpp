@@ -28,6 +28,7 @@
 #include <fstream>
 #include <functional>
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <iomanip>
 #include <sstream>
@@ -59,65 +60,186 @@ namespace {
         return GetClassNameW(control, name, 16) && lstrcmpiW(name, L"Button") == 0;
     }
 
-    // Panel controls take keyboard focus away from the GLFW window, so scene shortcuts typed
-    // while a control is focused are forwarded as WM_COMMAND ids equal to their GLFW key codes.
-    int SceneShortcut(WPARAM key) {
-        if (key >= VK_F1 && key <= VK_F9) return GLFW_KEY_F1 + static_cast<int>(key - VK_F1);
-        if (key == VK_SPACE) return GLFW_KEY_SPACE;
-        if (key >= 'A' && key <= 'Z' && std::strchr("BFGHLR", static_cast<int>(key))) return static_cast<int>(key);
-        switch (key) {
-            case VK_OEM_COMMA: return GLFW_KEY_COMMA;
-            case VK_OEM_PERIOD: return GLFW_KEY_PERIOD;
-            case VK_OEM_4: return GLFW_KEY_LEFT_BRACKET;
-            case VK_OEM_6: return GLFW_KEY_RIGHT_BRACKET;
-            case VK_OEM_MINUS: return GLFW_KEY_MINUS;
-            case VK_OEM_PLUS: return GLFW_KEY_EQUAL;
-            default: return 0;
-        }
-    }
-
+    // Panel controls take keyboard focus away from the GLFW window. Keys that the control does not need are sent
+    // on to the GLFW window as the same key messages, so every scene shortcut works while the browser is focused.
     LRESULT CALLBACK InterfaceKeyProcedure(HWND control, UINT message, WPARAM key, LPARAM detail) {
         const auto previous = reinterpret_cast<WNDPROC>(GetPropW(control,L"RenderEnginePreviousControlProc"));
         const int id = GetDlgCtrlID(control);
         const HWND parent = GetParent(control);
+        const bool launcher = id>=3000;
         const bool searching = id==2100;
+        const bool listBox = id==2101 || id==2103;
+        const bool infoBox = id==2102;
+        const bool listNavigation = key==VK_UP || key==VK_DOWN || key==VK_PRIOR || key==VK_NEXT;
+        const bool textNavigation = listNavigation || key==VK_LEFT || key==VK_RIGHT
+            || key==VK_HOME || key==VK_END;
+
         if (message==WM_MOUSEMOVE || message==WM_MOUSELEAVE || message==WM_NCDESTROY)
             UiTheme::TrackHover(control, message);
-        if ((message==WM_SYSKEYDOWN || message==WM_SYSKEYUP) && key==VK_F10) {
-            if (message==WM_SYSKEYDOWN) SendMessageW(parent,WM_COMMAND,GLFW_KEY_F10,0);
-            return 0;
-        }
-        // Lists would otherwise treat shortcut letters as type-ahead and change the selection.
-        if (message==WM_CHAR && (id==2101 || id==2103 || id==3020)) return 0;
         // After a mouse pick in a scene list, hand the keyboard back to the 3D view for WASD flight.
-        if (message==WM_LBUTTONUP && (id==2101 || id==2103)) {
+        if (message==WM_LBUTTONUP && listBox) {
             const LRESULT result = CallWindowProcW(previous,control,message,key,detail);
             SetFocus(parent);
             return result;
         }
-        if (message == WM_KEYDOWN) {
+        if (message == WM_KEYDOWN || message == WM_SYSKEYDOWN) {
             if (key == VK_TAB) {
                 const HWND next = GetNextDlgTabItem(parent,control,GetKeyState(VK_SHIFT)<0);
                 if (next) SetFocus(next);
                 return 0;
             }
-            if (key == VK_RETURN && (id==3020 || id==2101 || id==2103 || IsButton(control))) {
-                SendMessageW(parent,WM_COMMAND,id==3020?3014:id==2101 || id==2103?2104:id,0);
+            if (searching) {
+                if (key == VK_RETURN) {
+                    SetFocus(GetDlgItem(parent,2101));
+                    return 0;
+                }
+                if (key == VK_ESCAPE) {
+                    SendMessageW(parent,message,key,detail);
+                    SetFocus(GetDlgItem(parent,2101));
+                    return 0;
+                }
+                if (key>=VK_F1 && key<=VK_F10)
+                    SendMessageW(parent,message,key,detail);
+                return CallWindowProcW(previous,control,message,key,detail);
+            }
+            if (launcher) {
+                if (key == VK_RETURN && (id==3020 || IsButton(control))) {
+                    SendMessageW(parent,WM_COMMAND,id==3020?3014:id,0);
+                    return 0;
+                }
+                if ((key>=VK_F1 && key<=VK_F10) || key==VK_ESCAPE)
+                    SendMessageW(parent,message,key,detail);
+                return CallWindowProcW(previous,control,message,key,detail);
+            }
+            if (key == VK_RETURN && (listBox || id==2104)) {
+                SendMessageW(parent,WM_COMMAND,2104,0);
                 return 0;
             }
             if (key == VK_ESCAPE) {
                 SetFocus(parent);
-                SendMessageW(parent,WM_COMMAND,GLFW_KEY_ESCAPE,0);
+                SendMessageW(parent,message,key,detail);
                 return 0;
             }
-            const bool launcher = id>=3000;
-            int command = SceneShortcut(key);
-            if (launcher || searching) command = key>=VK_F1 && key<=VK_F9 ? command : 0;
-            if ((key==VK_SPACE && IsButton(control)) || (GetKeyState(VK_CONTROL)<0 && !(key>=VK_F1 && key<=VK_F9)))
-                command = 0;
-            if (command) { SendMessageW(parent,WM_COMMAND,command,0); return 0; }
+            // Arrow/Page keys still drive the lists and the information box, and Space presses a focused button.
+            if ((listBox && listNavigation) || (infoBox && textNavigation) || (key == VK_SPACE && IsButton(control)))
+                return CallWindowProcW(previous,control,message,key,detail);
+            if (GetKeyState(VK_CONTROL)<0 || GetKeyState(VK_MENU)<0)
+                return CallWindowProcW(previous,control,message,key,detail);
+            SendMessageW(parent,message,key,detail);
+            return 0;
         }
+        if (message == WM_KEYUP || message == WM_SYSKEYUP) {
+            // F10's release would otherwise start keyboard menu mode and stall the render loop.
+            if (key != VK_F10)
+                SendMessageW(parent,message,key,detail);
+            return key == VK_F10 ? 0 : CallWindowProcW(previous,control,message,key,detail);
+        }
+        // Letters are global shortcuts here; the search field handles filtering, so suppress list type-ahead.
+        // Control characters still reach the info box so Ctrl+C copies.
+        if (message == WM_CHAR && (listBox || infoBox) && key >= 0x20)
+            return 0;
         return CallWindowProcW(previous,control,message,key,detail);
+    }
+    bool BuildToastTexture(const std::string& text, int dpi, int& width, int& height,
+                           std::vector<unsigned char>& pixels) {
+        const int wideLength = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
+        if (wideLength <= 1)
+            return false;
+        std::wstring wide(static_cast<size_t>(wideLength), L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, &wide[0], wideLength);
+        wide.resize(static_cast<size_t>(wideLength - 1));
+
+        HDC screen = GetDC(nullptr);
+        HDC dc = CreateCompatibleDC(screen);
+        ReleaseDC(nullptr, screen);
+        if (!dc)
+            return false;
+
+        const int fontSize = -MulDiv(30, dpi, 96);
+        HFONT font = CreateFontW(fontSize, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
+            DEFAULT_PITCH, L"Segoe UI");
+        HGDIOBJ oldFont = SelectObject(dc, font);
+
+        SIZE textSize = {};
+        GetTextExtentPoint32W(dc, wide.c_str(), static_cast<int>(wide.size()), &textSize);
+
+        const int paddingX = MulDiv(28, dpi, 96);
+        const int paddingY = MulDiv(12, dpi, 96);
+        width = textSize.cx + paddingX * 2;
+        height = textSize.cy + paddingY * 2;
+        if (width <= 0 || height <= 0) {
+            SelectObject(dc, oldFont);
+            DeleteObject(font);
+            DeleteDC(dc);
+            return false;
+        }
+
+        BITMAPINFO bmi = {};
+        bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth = width;
+        bmi.bmiHeader.biHeight = -height;
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biCompression = BI_RGB;
+
+        void* bits = nullptr;
+        HBITMAP bitmap = CreateDIBSection(dc, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
+        if (!bitmap || !bits) {
+            SelectObject(dc, oldFont);
+            DeleteObject(font);
+            DeleteDC(dc);
+            return false;
+        }
+        HGDIOBJ oldBitmap = SelectObject(dc, bitmap);
+        std::memset(bits, 0, static_cast<size_t>(width) * height * 4);
+
+        // Dark rounded panel behind the text so it stays readable over the scene.
+        const int radius = std::max(1, std::min(width, height) / 2);
+        const int limitX = std::max(radius, width - 1 - radius);
+        const int limitY = std::max(radius, height - 1 - radius);
+        std::vector<unsigned char> backgroundAlpha(static_cast<size_t>(width) * height, 0);
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                const int dx = x - std::clamp(x, radius, limitX);
+                const int dy = y - std::clamp(y, radius, limitY);
+                if (dx * dx + dy * dy <= radius * radius)
+                    backgroundAlpha[static_cast<size_t>(y) * width + x] = 190;
+            }
+        }
+
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, RGB(255, 255, 255));
+        RECT rect = { 0, 0, width, height };
+        DrawTextW(dc, wide.c_str(), static_cast<int>(wide.size()), &rect,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        const auto* source = static_cast<const unsigned char*>(bits);
+        pixels.resize(static_cast<size_t>(width) * height * 4);
+        for (size_t i = 0; i < static_cast<size_t>(width) * height; ++i) {
+            const unsigned char b = source[i * 4 + 0];
+            const unsigned char g = source[i * 4 + 1];
+            const unsigned char r = source[i * 4 + 2];
+            const unsigned char luminance = std::max(std::max(r, g), b);
+            if (luminance > 0) {
+                pixels[i * 4 + 0] = 255;
+                pixels[i * 4 + 1] = 255;
+                pixels[i * 4 + 2] = 255;
+                pixels[i * 4 + 3] = luminance;
+            } else {
+                pixels[i * 4 + 0] = 0;
+                pixels[i * 4 + 1] = 0;
+                pixels[i * 4 + 2] = 0;
+                pixels[i * 4 + 3] = backgroundAlpha[i];
+            }
+        }
+
+        SelectObject(dc, oldBitmap);
+        DeleteObject(bitmap);
+        SelectObject(dc, oldFont);
+        DeleteObject(font);
+        DeleteDC(dc);
+        return true;
     }
 #endif
 }
@@ -151,10 +273,17 @@ void WindowManager::UpdateLensAspect() {
 
 void WindowManager::ScrollCallback(GLFWwindow* window, double, double yOffset) {
     auto& manager = *static_cast<WindowManager*>(glfwGetWindowUserPointer(window));
-    if (manager.mainMenu.Visible() || manager.quantumMode)
+    if (yOffset == 0.0 || manager.mainMenu.Visible() || manager.quantumMode)
         return;
-    manager.fieldOfView = glm::clamp(manager.fieldOfView - 3.0f * static_cast<float>(yOffset),
-                                    manager.visionProfile > 0 ? 2.0f : 15.0f, 90.0f);
+    const double factor = yOffset > 0.0 ? 10.0 : 0.1;
+    if (manager.inStarSystem) {
+        manager.starSystem.speedAu = glm::clamp(manager.starSystem.speedAu * factor, 1e-15, 1e6);
+        manager.ShowSpeedToast(static_cast<float>(manager.starSystem.speedAu), true);
+    } else {
+        manager.cameraSpeed = glm::clamp(manager.cameraSpeed * static_cast<float>(factor), 0.001f, 100000.0f);
+        manager.ShowSpeedToast(manager.cameraSpeed, false);
+    }
+    manager.UpdateTitle();
 }
 
 void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, int) {
@@ -195,17 +324,17 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
         }
     }
     if (manager.inStarSystem) {
+        bool handled = true;
         if (key==GLFW_KEY_L) manager.starSystem.ToggleLanding(manager.simulationTime,cameraFront,cameraUp);
         else if (key==GLFW_KEY_F) manager.starSystem.ToggleFollow(manager.simulationTime);
         else if (key==GLFW_KEY_HOME) manager.starSystem.Overview(cameraFront,cameraUp);
-        else if (key==GLFW_KEY_LEFT_BRACKET) manager.starSystem.speedAu=glm::max(1e-12,manager.starSystem.speedAu*.5);
-        else if (key==GLFW_KEY_RIGHT_BRACKET) manager.starSystem.speedAu=glm::min(1e6,manager.starSystem.speedAu*2);
+        else if (key==GLFW_KEY_LEFT_BRACKET) { manager.starSystem.speedAu=glm::max(1e-12,manager.starSystem.speedAu*.5); manager.ShowSpeedToast(static_cast<float>(manager.starSystem.speedAu),true); }
+        else if (key==GLFW_KEY_RIGHT_BRACKET) { manager.starSystem.speedAu=glm::min(1e6,manager.starSystem.speedAu*2); manager.ShowSpeedToast(static_cast<float>(manager.starSystem.speedAu),true); }
         else if (key==GLFW_KEY_N) { /* Catalogued solar surfaces retain their seed. */ }
         else if (key==GLFW_KEY_H || key==GLFW_KEY_B || key==GLFW_KEY_R) return;
-        else goto sharedControls;
-        manager.SyncCameraAngles(); manager.RefreshPanel(); return;
+        else handled = false;
+        if (handled) { manager.SyncCameraAngles(); manager.RefreshPanel(); return; }
     }
-sharedControls:
     if (key >= 1000 && key <= 1006) {
         manager.ApplyVisionProfile(key - 1000);
     } else if (key >= 1100 && key <= 1108) {
@@ -221,9 +350,13 @@ sharedControls:
         manager.simulationPlaying = !manager.simulationPlaying;
     } else if (key == 700 && manager.blackHoleReady) {
         manager.inStarSystem=false;
+        manager.pendingSystemTarget=0;
+        manager.simulationTime=manager.localTime=0; manager.timeRateIndex=0;
+        manager.blackHole.ResetSpacecraft(0);
         manager.showBlackHole = !manager.showBlackHole;
         manager.ResetView();
     } else if (key == 701 && manager.blackHoleReady) {
+        if (manager.inStarSystem) { manager.simulationTime=manager.localTime=0; manager.timeRateIndex=0; manager.blackHole.ResetSpacecraft(0); }
         manager.inStarSystem=false;
         manager.pendingSystemTarget=0;
         manager.ClearObserverModes();
@@ -237,8 +370,10 @@ sharedControls:
         cameraFront = -approach;
         manager.SyncCameraAngles();
         manager.cameraSpeed = 0.05f;
+        manager.ShowSpeedToast(manager.cameraSpeed, false);
         manager.ApplyVisionProfile(manager.visionProfile);
     } else if (key == 702 && manager.blackHoleReady) {
+        if (manager.inStarSystem) { manager.simulationTime=manager.localTime=0; manager.timeRateIndex=0; manager.blackHole.ResetSpacecraft(0); }
         manager.inStarSystem=false;
         manager.pendingSystemTarget=0;
         manager.ClearObserverModes();
@@ -251,6 +386,7 @@ sharedControls:
         cameraFront = glm::normalize(manager.lastSpacecraftPosition - cameraPos);
         manager.SyncCameraAngles();
         manager.cameraSpeed = 0.05f;
+        manager.ShowSpeedToast(manager.cameraSpeed, false);
         manager.ApplyVisionProfile(manager.visionProfile);
     } else if (key == GLFW_KEY_B && manager.blackHoleReady) {
         manager.blackHole.Update(manager.simulationTime);
@@ -272,6 +408,7 @@ sharedControls:
         cameraFront = glm::normalize(target.position - cameraPos);
         manager.SyncCameraAngles();
         manager.cameraSpeed = 0.05f;
+        manager.ShowSpeedToast(manager.cameraSpeed, false);
     } else if (key == GLFW_KEY_H && manager.blackHoleReady) {
         const bool falling = !manager.observerGravity;
         manager.ClearObserverModes();
@@ -281,6 +418,7 @@ sharedControls:
     } else if (key == GLFW_KEY_F6 && manager.blackHoleReady) {
         manager.showBlackHole = !manager.inStarSystem;
         manager.photonView = !manager.photonView;
+        if (manager.inStarSystem && manager.photonView) manager.starSystem.SetPhotonDetector();
         manager.blackHole.SetPhotonView(manager.photonView, cameraPos);
     } else if (key == GLFW_KEY_F && manager.blackHoleReady && manager.selectedTarget >= 0) {
         manager.followSelected = !manager.followSelected || manager.followingTarget != manager.selectedTarget;
@@ -294,13 +432,21 @@ sharedControls:
         manager.ResetView();
     } else if (key == GLFW_KEY_LEFT_BRACKET) {
         manager.cameraSpeed = glm::max(0.005f, manager.cameraSpeed * 0.5f);
+        manager.ShowSpeedToast(manager.cameraSpeed, false);
     } else if (key == GLFW_KEY_RIGHT_BRACKET) {
         manager.cameraSpeed = glm::min(50.0f, manager.cameraSpeed * 2.0f);
+        manager.ShowSpeedToast(manager.cameraSpeed, false);
     } else if (key == GLFW_KEY_COMMA) {
         manager.timeRateIndex = glm::max(0, manager.timeRateIndex - 1);
     } else if (key == GLFW_KEY_PERIOD) {
         manager.timeRateIndex = glm::min(manager.inStarSystem?5:2, manager.timeRateIndex + 1);
     } else if (key == GLFW_KEY_ESCAPE) {
+        if (manager.zoomDragging) {
+#ifdef _WIN32
+            ReleaseCapture();
+#endif
+        }
+        manager.zoomDragging = false;
         manager.SetMouseCaptured(false);
     }
     manager.UpdateTitle();
@@ -320,6 +466,7 @@ void WindowManager::ResetView() {
     pitch = 0.0f;
     ApplyVisionProfile(visionProfile);
     cameraSpeed = 1.0f;
+    ShowSpeedToast(cameraSpeed, false);
     firstMouse = true;
 }
 
@@ -355,6 +502,7 @@ void WindowManager::ToggleLanding() {
         }
         cameraFront = glm::normalize(tangent);
         cameraSpeed = 0.005f;
+        ShowSpeedToast(cameraSpeed, false);
     } else {
         cameraPos += cameraUp * 0.004f;
         cameraUp = glm::vec3(0, 1, 0);
@@ -364,7 +512,7 @@ void WindowManager::ToggleLanding() {
     firstMouse = true;
 }
 
-void WindowManager::UpdateObserver(double previousTime) {
+void WindowManager::UpdateObserver(double previousTime, float realSeconds) {
     if (landed) {
         const auto center = BlackHole::PlanetPosition(simulationTime, landedPlanet);
         const auto rotation = BlackHole::PlanetRotation(simulationTime)
@@ -377,25 +525,44 @@ void WindowManager::UpdateObserver(double previousTime) {
     if (!observerGravity)
         return;
     observer.position = glm::dvec3(cameraPos);
-    double remaining = simulationTime - previousTime;
-    const double boundary = BlackHole::HorizonRadius() * 1.015;
-    while (remaining > 0.0) {
+    // The fall is driven by the observer's proper time, not the playback clock,
+    // so pressing H always plunges the camera even while the simulation is paused.
+    double remainingProper = glm::max(0.0, static_cast<double>(realSeconds));
+    const double horizon = BlackHole::HorizonRadius();
+    const double boundary = horizon * 1.015;
+    const double innerLimit = horizon * 0.08;
+    while (remainingProper > 0.0 && observerGravity) {
         const double radius = glm::length(observer.position);
-        if (radius <= boundary) {
-            observer.position = glm::normalize(observer.position) * boundary;
+        if (radius <= innerLimit) {
+            observer.position = glm::normalize(observer.position) * innerLimit;
             observerGravity = false;
             horizonReached = true;
-            simulationPlaying = false;
-            simulationTime -= remaining;
             UpdateTitle();
             break;
         }
-        const double interval = glm::min(remaining,
-            0.01 * std::sqrt(radius * radius * radius / BlackHole::GravityParameter()));
-        localTime += interval * OrbitalMechanics::ObserverClockRate(radius,
-            glm::length(observer.velocity), BlackHole::GravityParameter(), BlackHole::HorizonRadius());
+        if (radius <= boundary)
+            horizonReached = true;
+        const double properStep = glm::min(remainingProper, 0.02);
+        double interval = 0.002;
+        if (radius > horizon) {
+            const double clockRate = glm::max(OrbitalMechanics::ObserverClockRate(radius,
+                glm::length(observer.velocity), BlackHole::GravityParameter(), horizon), 0.02);
+            interval = glm::clamp(properStep / clockRate, 0.0001, 0.08);
+        } else {
+            // Do not let one step jump across the singularity and out the far side.
+            const double speed = glm::max(glm::length(observer.velocity), 0.001);
+            interval = glm::min(0.002, 0.3 * radius / speed);
+        }
         OrbitalMechanics::AdvanceParticle(observer, BlackHole::GravityParameter(), 0.0, interval);
-        remaining -= interval;
+        localTime += radius > horizon ? properStep : interval;
+        remainingProper -= properStep;
+        if (glm::length(observer.position) <= innerLimit) {
+            observer.position = glm::normalize(observer.position) * innerLimit;
+            observerGravity = false;
+            horizonReached = true;
+            UpdateTitle();
+            break;
+        }
     }
     cameraPos = glm::vec3(observer.position);
 }
@@ -585,7 +752,7 @@ void WindowManager::RefreshPanel() {
         auto info=system.Information(simulationTime);
         if (system.IsSolarSystem()) info+="\n1:1 physical radii and distances\nJ2000 frozen Keplerian elements\n4096 representative belt/KBO markers\nPlanet surfaces are procedural illustrations.\n";
         info+=inStarSystem && activeSystemTarget==pendingSystemTarget
-            ? "\nControls\nWASD QE  fly, [ ] speed\nRight mouse  look around\nLeft click  select a body\nG  go to selection\nF  follow selection\nL  land / lift off\nF4 or Home  system overview\n"
+            ? "\nControls\nWASD QE  fly\nWheel or [ ]  flight speed\nRight mouse  look around\nShift + right drag  zoom,  middle click  reset zoom\nLeft click  select a body\nG  go to selection\nF  follow selection\nL  land / lift off\nF4 or Home  system overview\n"
             : "\nG or double-click enters this system.\n";
         scenePanel.SetInformation(info);
     } else {
@@ -598,8 +765,10 @@ void WindowManager::RefreshPanel() {
             "Scaled demonstration system with ocean-only planets and a force-integrated spacecraft.\n\n"
             "Controls\n"
             "Space  play / pause,  < >  time rate\n"
-            "WASD QE  fly,  Shift  boost,  [ ]  speed\n"
+            "WASD QE  fly,  Shift  boost\n"
+            "Wheel or [ ]  flight speed\n"
             "Right mouse  look around\n"
+            "Shift + right drag  zoom,  middle click  reset\n"
             "Left click  select,  G  go,  F  follow\n"
             "L  land / lift off,  H  free fall\n"
             "B  boost craft,  R  reset craft\n"
@@ -680,7 +849,8 @@ void WindowManager::UpdateStatus() {
            << (inStarSystem ? " AU/s" : " units/s");
     const char* mode = followPlanet ? "Following Miller's planet" : followSpacecraft ? "Following the spacecraft"
         : followSelected ? "Following the selection" : landed ? "Landed, surface free-cam"
-        : observerGravity ? "Falling toward the black hole" : horizonReached ? "Stopped at the horizon limit" : nullptr;
+        : observerGravity ? "Falling toward the black hole" : horizonReached ? (glm::length(cameraPos) < BlackHole::HorizonRadius() ? "Inside the event horizon" : "Horizon crossed")
+        : nullptr;
     if (mode) status << '\n' << mode;
     if (showBlackHole) {
         status << "\nCraft: " << blackHole.SpacecraftStatus() << "\nCraft light age " << std::setprecision(2)
@@ -750,17 +920,37 @@ void WindowManager::SetMouseCaptured(bool captured) {
 }
 
 void WindowManager::MouseButtonCallback(GLFWwindow* window, int button, int action, int) {
-    auto& state=*static_cast<WindowManager*>(glfwGetWindowUserPointer(window));
-    if (state.mainMenu.Visible()) return;
+    auto& manager=*static_cast<WindowManager*>(glfwGetWindowUserPointer(window));
+    if (manager.mainMenu.Visible()) return;
     // A click on the scene takes keyboard focus back from the side panel so WASD and shortcuts reach GLFW.
-    if (action == GLFW_PRESS) state.FocusScene();
-    if (state.quantumMode) return;
-    if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS) {
-        auto& manager = *static_cast<WindowManager*>(glfwGetWindowUserPointer(window));
-        manager.SetMouseCaptured(!manager.mouseCaptured);
+    if (action == GLFW_PRESS) manager.FocusScene();
+    if (manager.quantumMode) return;
+    if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+        if (action == GLFW_PRESS) {
+            const bool shift = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS
+                || glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+            if (shift) {
+                manager.zoomDragging = true;
+                firstMouse = true;
+#ifdef _WIN32
+                SetCapture(glfwGetWin32Window(window));
+#endif
+            } else {
+                manager.SetMouseCaptured(!manager.mouseCaptured);
+            }
+        } else if (action == GLFW_RELEASE) {
+            if (manager.zoomDragging) {
+#ifdef _WIN32
+                ReleaseCapture();
+#endif
+                manager.zoomDragging = false;
+            }
+        }
+    }
+    if (button == GLFW_MOUSE_BUTTON_MIDDLE && action == GLFW_PRESS) {
+        manager.fieldOfView = CameraOptics::FieldOfView(manager.visionProfile, manager.lensAspect);
     }
     if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
-        auto& manager = *static_cast<WindowManager*>(glfwGetWindowUserPointer(window));
         if ((!manager.showBlackHole && !manager.inStarSystem) || manager.mouseCaptured)
             return;
         double x, y;
@@ -793,8 +983,24 @@ void WindowManager::MouseButtonCallback(GLFWwindow* window, int button, int acti
 }
 
 void WindowManager::MouseCallback(GLFWwindow* window, double xpos, double ypos) {
-    const auto& manager = *static_cast<WindowManager*>(glfwGetWindowUserPointer(window));
-    if (!isFocused || !manager.mouseCaptured)
+    auto& manager = *static_cast<WindowManager*>(glfwGetWindowUserPointer(window));
+    if (!isFocused)
+        return;
+    if (manager.zoomDragging) {
+        if (firstMouse) {
+            lastX = xpos;
+            lastY = ypos;
+            firstMouse = false;
+            return;
+        }
+        const float delta = static_cast<float>(lastY - ypos);
+        lastX = xpos;
+        lastY = ypos;
+        manager.fieldOfView = glm::clamp(manager.fieldOfView - delta * 0.1f,
+            manager.visionProfile > 0 ? 2.0f : 15.0f, 90.0f);
+        return;
+    }
+    if (!manager.mouseCaptured)
         return;
     if (firstMouse) {
         lastX = xpos;
@@ -838,6 +1044,12 @@ void WindowManager::MouseCallback(GLFWwindow* window, double xpos, double ypos) 
 void WindowManager::WindowFocusCallback(GLFWwindow* window, int focused) {
     isFocused = focused;
     auto& manager = *static_cast<WindowManager*>(glfwGetWindowUserPointer(window));
+    if (manager.zoomDragging) {
+#ifdef _WIN32
+        ReleaseCapture();
+#endif
+    }
+    manager.zoomDragging = false;
     manager.SetMouseCaptured(false);
 }
 void WindowManager::DropCallback(GLFWwindow* window, int count, const char** paths)
@@ -895,19 +1107,22 @@ void WindowManager::ProcessCamera(GLFWwindow* window, const float& deltaTime) {
 
     if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS)
         speed *= 5.0f;
-        
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-        cameraPos += speed * cameraFront;
-    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-        cameraPos -= speed * cameraFront;
-    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-        cameraPos -= right * speed;
-    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-        cameraPos += right * speed;
-    if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS)
-        cameraPos -= cameraUp * speed;
-    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)
-        cameraPos += cameraUp * speed;
+
+    // During a free fall gravity owns the trajectory; the mouse still aims the view.
+    if (!manager.observerGravity) {
+        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+            cameraPos += speed * cameraFront;
+        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+            cameraPos -= speed * cameraFront;
+        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+            cameraPos -= right * speed;
+        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+            cameraPos += right * speed;
+        if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS)
+            cameraPos -= cameraUp * speed;
+        if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)
+            cameraPos += cameraUp * speed;
+    }
 
     // The redshift observer model uses static exterior Schwarzschild observers.
     if (manager.landed) {
@@ -924,7 +1139,7 @@ void WindowManager::ProcessCamera(GLFWwindow* window, const float& deltaTime) {
         if (distance < surface)
             cameraPos = planetCenter + radial * surface;
         const float minimumRadius = manager.observerGravity || manager.horizonReached
-            ? BlackHole::HorizonRadius() * 1.015f : 0.26f;
+            ? BlackHole::HorizonRadius() * 0.005f : 0.26f;
         if (glm::length(cameraPos) < minimumRadius)
             cameraPos = glm::normalize(cameraPos + glm::vec3(0.0f, 0.0f, 0.0001f)) * minimumRadius;
     }
@@ -1096,6 +1311,141 @@ unsigned int compileShaderProgram(const char* vertexSrc, const char* fragmentSrc
     return program;
 }
 
+void WindowManager::InitializeOverlay() {
+#ifdef _WIN32
+    const char* vertex = R"(
+#version 330 core
+layout (location = 0) in vec2 aPos;
+layout (location = 1) in vec2 aUv;
+out vec2 vUv;
+uniform vec4 bounds;
+void main() {
+    vUv = vec2(aUv.x, 1.0 - aUv.y);
+    gl_Position = vec4(bounds.xy + aPos * bounds.zw, 0.0, 1.0);
+}
+)";
+    const char* fragment = R"(
+#version 330 core
+in vec2 vUv;
+out vec4 fragColor;
+uniform sampler2D overlay;
+uniform float opacity;
+void main() {
+    vec4 texel = texture(overlay, vUv);
+    fragColor = vec4(texel.rgb, texel.a * opacity);
+}
+)";
+    overlayProgram = compileShaderProgram(vertex, fragment);
+    if (!overlayProgram)
+        return;
+    const float vertices[] = {
+        -1.0f, -1.0f, 0.0f, 0.0f,
+         1.0f, -1.0f, 1.0f, 0.0f,
+         1.0f,  1.0f, 1.0f, 1.0f,
+        -1.0f, -1.0f, 0.0f, 0.0f,
+         1.0f,  1.0f, 1.0f, 1.0f,
+        -1.0f,  1.0f, 0.0f, 1.0f
+    };
+    glGenVertexArrays(1, &overlayVao);
+    glGenBuffers(1, &overlayVbo);
+    glBindVertexArray(overlayVao);
+    glBindBuffer(GL_ARRAY_BUFFER, overlayVbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), reinterpret_cast<void*>(0));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), reinterpret_cast<void*>(2 * sizeof(float)));
+    glBindVertexArray(0);
+    glGenTextures(1, &overlayTexture);
+    glBindTexture(GL_TEXTURE_2D, overlayTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+#endif
+}
+
+void WindowManager::ReleaseOverlay() {
+    if (overlayProgram) { glDeleteProgram(overlayProgram); overlayProgram = 0; }
+    if (overlayVao) { glDeleteVertexArrays(1, &overlayVao); overlayVao = 0; }
+    if (overlayVbo) { glDeleteBuffers(1, &overlayVbo); overlayVbo = 0; }
+    if (overlayTexture) { glDeleteTextures(1, &overlayTexture); overlayTexture = 0; }
+    overlayWidth = overlayHeight = 0;
+}
+
+void WindowManager::ShowSpeedToast(float speed, bool starSystem) {
+    std::ostringstream text;
+    text << "Flight speed ";
+    if (starSystem) {
+        if (std::abs(speed) >= 1e-3f)
+            text << std::fixed << std::setprecision(4) << speed << " AU/s";
+        else
+            text << std::scientific << std::setprecision(2) << speed << " AU/s";
+    } else {
+        if (std::abs(speed - std::round(speed)) < 0.001f)
+            text << std::fixed << std::setprecision(0) << speed << "x";
+        else if (speed >= 1.0f)
+            text << std::fixed << std::setprecision(1) << speed << "x";
+        else
+            text << std::fixed << std::setprecision(2) << speed << "x";
+    }
+    speedToastUntil = glfwGetTime() + 1.0;
+#ifdef _WIN32
+    if (!overlayProgram || !overlayTexture)
+        return;
+    int dpi = 96;
+    if (window)
+        dpi = static_cast<int>(GetDpiForWindow(glfwGetWin32Window(window)));
+    int width = 0, height = 0;
+    std::vector<unsigned char> pixels;
+    if (!BuildToastTexture(text.str(), dpi, width, height, pixels))
+        return;
+    glBindTexture(GL_TEXTURE_2D, overlayTexture);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    glBindTexture(GL_TEXTURE_2D, 0);
+    overlayWidth = width;
+    overlayHeight = height;
+#else
+    (void)speed;
+    (void)starSystem;
+#endif
+}
+
+void WindowManager::RenderSpeedToast() {
+    if (!overlayProgram || !overlayTexture || overlayWidth <= 0 || overlayHeight <= 0)
+        return;
+    const double remaining = speedToastUntil - glfwGetTime();
+    if (remaining <= 0.0)
+        return;
+    const float opacity = static_cast<float>(glm::clamp(remaining / 0.2, 0.0, 1.0));
+    int viewport[4] = {};
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    if (viewport[2] <= 0 || viewport[3] <= 0)
+        return;
+    const float halfWidth = static_cast<float>(overlayWidth) / viewport[2];
+    const float halfHeight = static_cast<float>(overlayHeight) / viewport[3];
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glUseProgram(overlayProgram);
+    glUniform4f(glGetUniformLocation(overlayProgram, "bounds"), 0.0f, 0.0f, halfWidth, halfHeight);
+    glUniform1f(glGetUniformLocation(overlayProgram, "opacity"), opacity);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, overlayTexture);
+    glUniform1i(glGetUniformLocation(overlayProgram, "overlay"), 0);
+    glBindVertexArray(overlayVao);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindVertexArray(0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glUseProgram(0);
+    glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+}
+
 
 void WindowManager::Update(float& dT) {
     // Window drags and menu tracking block this loop; one long frame must not advance the simulation by hours.
@@ -1133,7 +1483,7 @@ void WindowManager::Update(float& dT) {
     }
 
     const bool falling = observerGravity;
-    if (!inStarSystem) UpdateObserver(previousTime);
+    if (!inStarSystem) UpdateObserver(previousTime, dT);
     if (!falling && simulationTime > previousTime) {
         double speed = 0.0;
         if (landed) {
@@ -1225,6 +1575,7 @@ void WindowManager::Update(float& dT) {
     }
     
     optics.Render(visionProfile, fieldOfView, exposureEv, hdrMode);
+    RenderSpeedToast();
     glfwSwapBuffers(window);
 }
 
@@ -1274,6 +1625,7 @@ bool WindowManager::MakeNewWindow() {
     phongShader = compileShaderProgram(phongVertextSrc, phongFragmentSrc);
     blackHoleReady = blackHole.Initialize();
     optics.Initialize();
+    InitializeOverlay();
     starSystemReady = starSystem.Initialize();
     quantumReady = quantum.Initialize();
     shaderProgram = flatShader;
@@ -1367,6 +1719,8 @@ bool WindowManager::MakeNewWindow() {
                 return 0;
             }
             if (message==WM_SIZE && manager) manager->ResizeInterface();
+            // F10's release would otherwise start keyboard menu mode, a modal loop that stalls rendering.
+            if (message==WM_SYSKEYUP && wParam==VK_F10) return 0;
             if ((message==WM_CTLCOLORSTATIC || message==WM_CTLCOLOREDIT || message==WM_CTLCOLORLISTBOX
                  || message==WM_CTLCOLORBTN) && manager) {
                 const int id=GetDlgCtrlID(reinterpret_cast<HWND>(lParam));
@@ -1418,6 +1772,7 @@ void WindowManager::ReleaseGraphics() {
     quantum.Release();
     starSystem.Release();
     optics.Release();
+    ReleaseOverlay();
     blackHole.Release();
     glDeleteVertexArrays(1, &VAO);
     glDeleteBuffers(1, &VBO);

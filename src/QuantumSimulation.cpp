@@ -28,6 +28,7 @@ uniform float phase;
 uniform vec3 bloch;
 uniform vec4 probabilities;
 uniform int barCount;
+uniform bool showPotential;
 vec3 hue(float a) { return .55+.45*cos(a+vec3(0,2.094,4.189)); }
 float line(float a,float b,float width) { return 1-smoothstep(width,width*2,abs(a-b)); }
 float segment(vec2 p,vec2 a,vec2 b) {
@@ -53,7 +54,7 @@ void main() {
             float ellipse=sqrt(p.x*p.x+pow(p.y/.28,2));
             result+=vec3(.04,.10,.14)*line(ellipse,.65,.004);
             result+=vec3(.05,.10,.15)*max(line(p.x,0,.003),line(p.y,0,.003))*step(radius,.65);
-            vec2 endpoint=vec2(bloch.x,bloch.z)*.65;
+            vec2 endpoint=vec2(.866*bloch.x-.5*bloch.y,.25*bloch.x+.433*bloch.y+.866*bloch.z)*.65;
             float arrow=1-smoothstep(.009,.017,segment(p,vec2(0),endpoint));
             result+=arrow*vec3(.15,.8,1.2);
             result+=vec3(.8,.4,.1)*(1-smoothstep(.025,.04,length(p-endpoint)));
@@ -81,6 +82,7 @@ void main() {
             result+=vec3(.8,.9,1.1)*line(y,density*.95,.008);
             result+=vec3(.95,.19,.17)*line(y,.35+psi.x/sqrt(max(peakDensity,1e-12))*.27,.007);
             result+=vec3(.15,.5,1)*line(y,.35+psi.y/sqrt(max(peakDensity,1e-12))*.27,.007);
+            if (showPotential) result+=vec3(.85,.45,.08)*line(y,texture(wave,vec2(uv.x,.5)).b/4.0,.006);
         }
     }
     color=vec4(result,1);
@@ -149,7 +151,7 @@ void QuantumSimulation::Upload()
                                        : QuantumStates::Evaluate(example, coordinate,
                                                                  hydrogen ? -extent + 2 * extent * y / (height - 1) : 0,
                                                                  hydrogen ? 0 : time);
-            pixels[y * width + x] = glm::vec2(psi.real(), psi.imag());
+            pixels[y * width + x] = glm::vec4(psi.real(), psi.imag(), numerical ? solver.Potential()[x] : 0.0, 0.0);
             const double density = std::norm(psi);
             peakDensity = std::max(peakDensity, density);
             if (!hydrogen)
@@ -170,10 +172,10 @@ void QuantumSimulation::Upload()
     {
         textureWidth = width;
         textureHeight = height;
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RG32F, width, height, 0, GL_RG, GL_FLOAT, pixels.data());
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, width, height, 0, GL_RGBA, GL_FLOAT, pixels.data());
     }
     else
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RG, GL_FLOAT, pixels.data());
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_FLOAT, pixels.data());
 }
 void QuantumSimulation::Render(float aspect) const
 {
@@ -190,6 +192,7 @@ void QuantumSimulation::Render(float aspect) const
     glBindTexture(GL_TEXTURE_2D, texture);
     glUniform1i(glGetUniformLocation(program, "wave"), 0);
     glUniform1i(glGetUniformLocation(program, "mode"), mode);
+    glUniform1i(glGetUniformLocation(program,"showPotential"),example.family==Family::Numerical);
     glUniform1f(glGetUniformLocation(program, "aspect"), aspect);
     glUniform1f(glGetUniformLocation(program, "peakDensity"), static_cast<float>(peakDensity));
     const double energy = example.state == 0 ? -.5 : example.state < 4 ? -.125 : -1.0 / 18;
@@ -235,7 +238,7 @@ std::string QuantumSimulation::Information() const
         for (int i = 0; i < static_cast<int>(probabilities.size()); ++i)
             text << (probabilities.size() == 2 ? qubit[i] : joint[i]) << "  " << probabilities[i] << "\r\n";
         if (example.family == QuantumStates::Family::Spin)
-            text << "\r\nSphere: horizontal X, vertical Z, depth Y. +Y and -Y point out of/into the screen.\r\n";
+            text << "\r\nBloch sphere in an oblique view: Z upward, X lower-right, Y upper-left.\r\n";
         else
             text << "\r\nBars left to right: 00, 01, 10, 11.\r\n";
     }
@@ -249,6 +252,8 @@ std::string QuantumSimulation::Information() const
     else
         text << "\r\nCentral x-z slice, equal axes. Display brightness is scaled to this orbital's peak. Not a "
                 "normalized 2D probability distribution.\r\n";
+    if (example.family==QuantumStates::Family::Numerical)
+        text<<"\r\nAmber curve: potential V (vertical chart span = 4 energy units).\r\n";
     text << "\r\nSpace  Play / pause\r\n< >  Time rate\r\nR  Restart selected state\r\nF3  Information panel\r\nF10  "
             "Main menu\r\n";
     return text.str();

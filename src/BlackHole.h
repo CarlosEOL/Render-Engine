@@ -51,7 +51,7 @@ private:
             surface, bodyColor, velocityBeta, temperature, photonSeconds, photonDetector;
     } bodyUniforms = {};
     struct LensUniforms {
-        int observerBeta, inverseViewProjection, viewProjection, cameraPosition, diskPhase;
+        int observerBeta, inverseViewProjection, viewProjection, cameraPosition, diskPhase, plasmaTime;
     } lensUniforms = {};
     unsigned int screenVao = 0;
     Mesh sphere;

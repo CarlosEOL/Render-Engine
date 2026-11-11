@@ -173,6 +173,14 @@ void ScenePanel::SetCatalogue(const std::vector<std::pair<int, std::string>> &it
     lowercaseNames.reserve(catalogue.size());
     for (const auto &item : catalogue)
         lowercaseNames.push_back(Lowercase(item.second));
+#ifdef _WIN32
+    // A filter typed for the previous catalogue would hide the new one; clearing it triggers Filter via EN_CHANGE.
+    if (parent && GetWindowTextLengthW(GetDlgItem(static_cast<HWND>(parent), 2100)) > 0)
+    {
+        SetDlgItemTextA(static_cast<HWND>(parent), 2100, "");
+        return;
+    }
+#endif
     Filter();
 }
 

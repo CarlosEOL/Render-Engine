@@ -194,6 +194,40 @@ uniform vec3 cameraPosition;
 uniform vec3 diskAxis;
 uniform vec2 diskRadii;
 uniform float diskPhase;
+uniform float plasmaTime;
+
+float hash13(vec3 p) {
+    p = fract(p * 0.1031);
+    p += dot(p, p.yzx + 33.33);
+    return fract((p.x + p.y) * p.z);
+}
+
+float valueNoise(vec3 p) {
+    vec3 cell = floor(p);
+    vec3 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float n000 = hash13(cell + vec3(0.0, 0.0, 0.0));
+    float n100 = hash13(cell + vec3(1.0, 0.0, 0.0));
+    float n010 = hash13(cell + vec3(0.0, 1.0, 0.0));
+    float n110 = hash13(cell + vec3(1.0, 1.0, 0.0));
+    float n001 = hash13(cell + vec3(0.0, 0.0, 1.0));
+    float n101 = hash13(cell + vec3(1.0, 0.0, 1.0));
+    float n011 = hash13(cell + vec3(0.0, 1.0, 1.0));
+    float n111 = hash13(cell + vec3(1.0, 1.0, 1.0));
+    return mix(mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y),
+               mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y), f.z);
+}
+
+float fbm(vec3 p) {
+    float value = 0.0;
+    float amplitude = 0.55;
+    for (int octave = 0; octave < 4; ++octave) {
+        value += amplitude * valueNoise(p);
+        p = p * 2.07 + vec3(11.3, 7.7, 5.1);
+        amplitude *= 0.48;
+    }
+    return value;
+}
 
 // photonAcceleration with the radius passed in and r^-5 as multiplies instead of pow().
 vec3 lensAcceleration(vec3 position, float radius, float angularMomentumSquared) {
@@ -207,15 +241,18 @@ void main() {
     vec3 cameraDirection = normalize(farPoint.xyz / farPoint.w - cameraPosition);
     vec3 direction = observerRayDirection(cameraDirection);
     float observerRadius = length(cameraPosition);
-    // A Schwarzschild ray with impact parameter b turns at r = b * sqrt(1 - rs / r), so it never gets inside
-    // the outer disk radius R when b > R / sqrt(1 - rs / R). |position x direction| equals b * sqrt(1 - rs / r0)
-    // for an observer at r0, hence never exceeds b, so comparing it with that bound (plus 2% margin for the
-    // integrator) can only discard rays that miss the disk and the horizon. Outgoing rays from outside R never
-    // return inside it.
-    if (dot(cameraPosition, direction) > 0.0 && observerRadius > diskRadii.y)
-        discard;
-    if (length(cross(cameraPosition, direction)) > 1.02 * diskRadii.y / sqrt(1.0 - horizonRadius / diskRadii.y))
-        discard;
+    bool insideHorizon = observerRadius < horizonRadius;
+    // Outside the horizon, a Schwarzschild ray with impact parameter b turns at r = b * sqrt(1 - rs / r), so it never
+    // gets inside the outer disk radius R (where all disk and plasma emission lies) when b > R / sqrt(1 - rs / R).
+    // |position x direction| equals b * sqrt(1 - rs / r0) for an observer at r0, hence never exceeds b, so comparing
+    // it with that bound (plus 2% margin for the integrator) only discards rays that miss the disk and the horizon.
+    // Outgoing rays from outside R never return inside it.
+    if (!insideHorizon) {
+        if (dot(cameraPosition, direction) > 0.0 && observerRadius > diskRadii.y)
+            discard;
+        if (length(cross(cameraPosition, direction)) > 1.02 * diskRadii.y / sqrt(1.0 - horizonRadius / diskRadii.y))
+            discard;
+    }
 
     vec3 position = cameraPosition;
     vec3 tangent = photonInitialTangent(position, direction);
@@ -224,23 +261,66 @@ void main() {
     float travelled = 0.0;
     bool hit = false;
     vec3 radiance = vec3(0.0);
+    vec3 plasma = vec3(0.0);
     float radius = length(position);
     vec3 acceleration = lensAcceleration(position, radius, angularMomentumSquared);
 
-    for (int step = 0; step < 240; ++step) {
-        if (radius < horizonRadius * 1.015) {
+    for (int step = 0; step < 360; ++step) {
+        if (!insideHorizon && radius < horizonRadius * 1.015) {
+            hit = true;
+            break;
+        }
+        if (insideHorizon && radius < horizonRadius * 0.012) {
             hit = true;
             break;
         }
         if (radius > max(observerRadius, 3.0) + 4.0 && dot(position, tangent) > 0.0)
             break;
 
-        float interval = clamp(radius * 0.065, 0.004, 0.6);
+        float interval = clamp(radius * 0.055, 0.003, 0.45);
+        float diskFraction = (radius - diskRadii.x) / (diskRadii.y - diskRadii.x);
+        float planeDistance = abs(dot(position, diskAxis));
+        // Resolve the vertical plasma structure with fine steps through the slab.
+        if (diskFraction > -0.08 && diskFraction < 1.12)
+            interval = min(interval, max(0.0025, planeDistance * 0.35 + 0.0025));
+
         vec3 nextPosition = position + interval * tangent + 0.5 * interval * interval * acceleration;
         float nextRadius = length(nextPosition);
         // The end-of-step acceleration is the next step's start, so each step evaluates it once.
         vec3 nextAcceleration = lensAcceleration(nextPosition, nextRadius, angularMomentumSquared);
         vec3 nextTangent = tangent + 0.5 * interval * (acceleration + nextAcceleration);
+
+        vec3 segment = nextPosition - position;
+        float segmentLength = length(segment);
+        vec3 midpoint = position + 0.5 * segment;
+        float midRadius = length(midpoint);
+        float midFraction = (midRadius - diskRadii.x) / (diskRadii.y - diskRadii.x);
+        float midPlane = dot(midpoint, diskAxis);
+
+        // Volumetric plasma clouds above and below the thin disk.
+        if (midFraction > 0.0 && midFraction < 1.0) {
+            float flare = 0.012 + 0.065 * pow(midFraction, 1.35);
+            float vertical = exp(-0.5 * midPlane * midPlane / (flare * flare));
+            if (vertical > 0.02) {
+                vec3 diskPosition = (inverseDiskOrientation * vec4(midpoint, 1.0)).xyz;
+                float cloudAngle = diskPhase * 0.35;
+                float cloudCos = cos(cloudAngle);
+                float cloudSin = sin(cloudAngle);
+                vec2 rotated = vec2(cloudCos * diskPosition.x - cloudSin * diskPosition.y,
+                                    cloudSin * diskPosition.x + cloudCos * diskPosition.y);
+                vec3 cloudPosition = vec3(rotated * 7.5, diskPosition.z * 26.0)
+                    + vec3(0.0, 0.0, plasmaTime * 0.3);
+                float turbulence = fbm(cloudPosition);
+                float clumps = smoothstep(0.30, 0.78, turbulence);
+                float density = vertical * (0.20 + 1.8 * clumps);
+                vec3 toObserver = -localPhotonDirection(midpoint, tangent);
+                float shift = clamp(frequencyRatio(midRadius, observerRadius,
+                    circularVelocityBeta(midpoint, diskAxis), toObserver), 0.05, 6.0);
+                float temperature = 5200.0 * pow(max(midRadius / diskRadii.x, 1.0), -0.75);
+                float beaming = pow(shift, 3.2);
+                plasma += blackbody(temperature * shift) * beaming * density * segmentLength * 0.55;
+            }
+        }
 
         float planeBefore = dot(position, diskAxis);
         float planeAfter = dot(nextPosition, diskAxis);
@@ -249,34 +329,37 @@ void main() {
             vec3 intersection = mix(position, nextPosition, fraction);
             float diskRadius = length(intersection);
             float radial = (diskRadius - diskRadii.x) / (diskRadii.y - diskRadii.x);
-            float edge = smoothstep(0.0, 0.06, radial) * (1.0 - smoothstep(0.8, 1.0, radial));
+            float edge = smoothstep(0.0, 0.06, radial) * (1.0 - smoothstep(0.82, 1.0, radial));
             // Where the fade has reached zero the disk is absent: stopping here would write opaque black
             // and depth over the fringe, hiding the galaxies and every later image of the disk.
             if (diskRadius > diskRadii.x && diskRadius < diskRadii.y && edge > 0.001) {
                 vec3 diskPosition = (inverseDiskOrientation * vec4(intersection, 1.0)).xyz;
                 float angle = atan(diskPosition.y, diskPosition.x) - diskPhase;
-                float bands = 0.6 + 0.4 * sin(65.0 * radial + 1.5 * sin(3.0 * angle));
-                float spiral = 0.6 + 0.4 * cos(5.0 * angle + 22.0 * radial);
+                float bands = 0.6 + 0.4 * sin(120.0 * radial + 2.2 * sin(4.0 * angle));
+                float fineBands = 0.72 + 0.28 * sin(260.0 * radial + 4.0 * sin(6.0 * angle));
+                float spiral = 0.6 + 0.4 * cos(9.0 * angle + 34.0 * radial);
                 vec3 toObserver = -localPhotonDirection(intersection, mix(tangent, nextTangent, fraction));
-                float shift = frequencyRatio(diskRadius, observerRadius,
-                    circularVelocityBeta(intersection, diskAxis), toObserver);
+                float shift = clamp(frequencyRatio(diskRadius, observerRadius,
+                    circularVelocityBeta(intersection, diskAxis), toObserver), 0.05, 6.0);
                 float temperature = 5200.0 * pow(diskRadius / diskRadii.x, -0.75);
-                radiance = 4.0 * blackbody(temperature * shift) * edge * (0.4 + 0.3 * bands + 0.3 * spiral);
+                float beaming = pow(shift, 3.6);
+                radiance = 3.2 * blackbody(temperature * shift) * beaming * edge
+                    * (0.4 + 0.3 * bands + 0.3 * spiral) * fineBands;
                 travelled += length(intersection - position);
                 hit = true;
                 break;
             }
         }
-        travelled += length(nextPosition - position);
+        travelled += segmentLength;
         position = nextPosition;
         tangent = nextTangent;
         radius = nextRadius;
         acceleration = nextAcceleration;
     }
-    if (!hit)
+    if (!hit && max(max(plasma.r, plasma.g), plasma.b) < 0.002)
         discard;
 
-    fragColor = vec4(radiance, 1.0);
+    fragColor = vec4(radiance + plasma, 1.0);
     // Approximate depth allows the rasterized orbiting bodies to cross the lensed disk.
     vec4 clip = viewProjection * vec4(cameraPosition + cameraDirection * travelled, 1.0);
     gl_FragDepth = clamp(clip.z / clip.w * 0.5 + 0.5, 0.0, 0.99999);
@@ -358,7 +441,7 @@ bool BlackHole::Initialize() {
     lensUniforms = {.observerBeta = lensLocation("observerBeta"),
         .inverseViewProjection = lensLocation("inverseViewProjection"),
         .viewProjection = lensLocation("viewProjection"), .cameraPosition = lensLocation("cameraPosition"),
-        .diskPhase = lensLocation("diskPhase")};
+        .diskPhase = lensLocation("diskPhase"), .plasmaTime = lensLocation("plasmaTime")};
     glUseProgram(program);
     glUniform1i(bodyLocation("oceanWorld"), true);
     glUniform1f(bodyLocation("seaLevel"), 0.035f);
@@ -433,13 +516,15 @@ bool BlackHole::Initialize() {
     // Each cluster has a spiral disk, a finite thickness, and a compact bulge.
     std::uniform_real_distribution<float> unit(0.0f, 1.0f);
     for (int galaxy = 0; galaxy < 3; ++galaxy) {
+        const auto& group = GalaxyBackground::Groups()[galaxy];
+        const float diskRadius = group.radius * GalaxyBackground::StarDiskRadiusFraction;
         for (int star = 0; star < 1800; ++star) {
-            const float radius = 11.0f * std::sqrt(unit(random));
+            const float radius = diskRadius * std::sqrt(unit(random));
             const float arm = glm::two_pi<float>() * (star % 3) / 3.0f;
-            const float angle = arm + radius * 0.55f + (unit(random) - 0.5f) * 0.65f;
-            const float thickness = (unit(random) - 0.5f) * (0.4f + 1.2f * std::exp(-radius));
+            const float angle = arm + radius / diskRadius * 6.0f + (unit(random) - 0.5f) * 0.65f;
+            const float thickness = (unit(random) - 0.5f)
+                * (0.4f + 1.2f * std::exp(-radius / diskRadius)) * (group.radius / 12.2f);
             const auto local = glm::vec3(radius * std::cos(angle), thickness, radius * std::sin(angle));
-            const auto& group = GalaxyBackground::Groups()[galaxy];
             const auto tilt = glm::rotate(glm::mat4(1), group.tilt, glm::vec3(1, 0, 0));
             stars.push_back(group.center + glm::vec3(tilt * glm::vec4(local, 0)));
         }
@@ -740,6 +825,11 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::vec3& cameraP
     glDrawArrays(GL_POINTS, 0, backgroundStars.vertexCount);
     glDepthMask(GL_TRUE);
 
+    // Background galaxies are drawn before the lens pass so the black hole's
+    // shadow and disk correctly occlude them instead of showing the PNG on top.
+    glBindVertexArray(0);
+    galaxies.Render(viewProjection, cameraPosition);
+
     glUseProgram(lensProgram);
     glUniform3fv(lensUniforms.observerBeta, 1, glm::value_ptr(observerBeta));
     const auto inverseViewProjection = glm::inverse(viewProjection);
@@ -747,6 +837,7 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::vec3& cameraP
     glUniformMatrix4fv(lensUniforms.viewProjection, 1, GL_FALSE, glm::value_ptr(viewProjection));
     glUniform3fv(lensUniforms.cameraPosition, 1, glm::value_ptr(cameraPosition));
     glUniform1f(lensUniforms.diskPhase, diskPhase);
+    glUniform1f(lensUniforms.plasmaTime, static_cast<float>(seconds));
     glBindVertexArray(screenVao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
 
@@ -850,7 +941,6 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::vec3& cameraP
         }
     }
     glBindVertexArray(0);
-    galaxies.Render(viewProjection);
     if (trajectories && orbitGuides.vao) {
         glUseProgram(program);
         glUniform1i(surfaceLocation,4);
