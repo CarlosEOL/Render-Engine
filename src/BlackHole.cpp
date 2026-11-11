@@ -713,8 +713,15 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::vec3& cameraP
         ++bodyIndex;
     }
     glUniform3f(glGetUniformLocation(program, "velocityBeta"), 0, 0, 0);
+    // Half-widths of a sphere's footprint in clip space, for culling nearby stars against the side planes.
+    const float extentW = glm::length(glm::vec3(viewProjection[0][3], viewProjection[1][3], viewProjection[2][3]));
+    const float extentX = extentW + glm::length(glm::vec3(viewProjection[0][0], viewProjection[1][0], viewProjection[2][0]));
+    const float extentY = extentW + focal;
     for (int star = 0; star < static_cast<int>(destinations.size()); ++star) {
         if (glm::length(cameraPosition - destinations[star]) < 3.0f) {
+            const glm::vec4 clip = viewProjection * glm::vec4(destinations[star], 1.0f);
+            if (std::abs(clip.x) > clip.w + 0.012f * extentX || std::abs(clip.y) > clip.w + 0.012f * extentY)
+                continue;
             glUniform1f(glGetUniformLocation(program, "temperature"), 3500.0f + (star * 7919 % 6500));
             drawSphere(destinations[star], 0.012f, Star, glm::vec3(1));
         }
