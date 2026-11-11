@@ -179,10 +179,17 @@ void main() {
         return false;
     }
     glGenVertexArrays(1, &vao);
-    glGenTextures(1, &sceneTexture);
     glGenFramebuffers(1, &framebuffer);
     glGenTextures(1, &sceneColor);
     glGenRenderbuffers(1, &sceneDepth);
+    const auto locate = [&](const char* name) { return glGetUniformLocation(program, name); };
+    uniforms = {.profile = locate("profile"), .distortionModel = locate("distortionModel"),
+        .distortion = locate("distortion"), .redTca = locate("redTca"), .blueTca = locate("blueTca"),
+        .vignetting = locate("vignetting"), .sensorScale = locate("sensorScale"), .texel = locate("texel"),
+        .exposureGain = locate("exposureGain"), .hdrMode = locate("hdrMode")};
+    glUseProgram(program);
+    glUniform1i(locate("scene"), 0);
+    glUseProgram(0);
     return true;
 }
 
@@ -192,55 +199,53 @@ void CameraOptics::BeginFrame() {
     int viewport[4];
     glGetIntegerv(GL_VIEWPORT, viewport);
     if (viewport[2] <= 0 || viewport[3] <= 0) return;
-    glActiveTexture(GL_TEXTURE0);
     if (width != viewport[2] || height != viewport[3]) {
         width = viewport[2];
         height = viewport[3];
-        for (const auto texture : {sceneTexture, sceneColor}) {
-            glBindTexture(GL_TEXTURE_2D, texture);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, nullptr);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        }
+        // The scene is rendered straight into sceneColor and sampled (with mipmaps) from it, so the
+        // attachments and the completeness check are only needed when the size changes.
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, sceneColor);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glBindRenderbuffer(GL_RENDERBUFFER, sceneDepth);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
+        glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sceneColor, 0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, sceneDepth);
+        framebufferComplete = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glBindRenderbuffer(GL_RENDERBUFFER, 0);
     }
-    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sceneColor, 0);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, sceneDepth);
-    frameActive = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
-    if (!frameActive)
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glBindTexture(GL_TEXTURE_2D, 0);
-    glBindRenderbuffer(GL_RENDERBUFFER, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, framebufferComplete ? framebuffer : 0);
+    frameActive = framebufferComplete;
 }
 
 void CameraOptics::Render(int profile, float fieldOfView, float exposureEv, bool hdrMode) const {
     if (!program || !frameActive) return;
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, sceneTexture);
-    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, width, height);
-    glGenerateMipmap(GL_TEXTURE_2D);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    // Leave the scene framebuffer first: its colour attachment is the texture sampled below.
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, sceneColor);
+    glGenerateMipmap(GL_TEXTURE_2D);
     glUseProgram(program);
-    glUniform1i(glGetUniformLocation(program, "scene"), 0);
-    glUniform1i(glGetUniformLocation(program, "profile"), profile);
+    glUniform1i(uniforms.profile, profile);
     const auto& lens = profiles[profile];
-    glUniform1i(glGetUniformLocation(program, "distortionModel"), lens.distortionModel);
-    glUniform3fv(glGetUniformLocation(program, "distortion"), 1, glm::value_ptr(lens.distortion));
-    glUniform3fv(glGetUniformLocation(program, "redTca"), 1, glm::value_ptr(lens.redTca));
-    glUniform3fv(glGetUniformLocation(program, "blueTca"), 1, glm::value_ptr(lens.blueTca));
-    glUniform3fv(glGetUniformLocation(program, "vignetting"), 1, glm::value_ptr(lens.vignetting));
+    glUniform1i(uniforms.distortionModel, lens.distortionModel);
+    glUniform3fv(uniforms.distortion, 1, glm::value_ptr(lens.distortion));
+    glUniform3fv(uniforms.redTca, 1, glm::value_ptr(lens.redTca));
+    glUniform3fv(uniforms.blueTca, 1, glm::value_ptr(lens.blueTca));
+    glUniform3fv(uniforms.vignetting, 1, glm::value_ptr(lens.vignetting));
     const float aspect = static_cast<float>(width) / height;
     const float zoom = std::tan(glm::radians(fieldOfView * 0.5f))
         / std::tan(glm::radians(FieldOfView(profile, aspect) * 0.5f));
-    glUniform2f(glGetUniformLocation(program, "sensorScale"), 1.5f * zoom, 1.5f * zoom / aspect);
-    glUniform1f(glGetUniformLocation(program, "exposureGain"), std::exp2(exposureEv));
-    glUniform1i(glGetUniformLocation(program, "hdrMode"), hdrMode);
-    glUniform2f(glGetUniformLocation(program, "texel"), 1.0f / width, 1.0f / height);
+    glUniform2f(uniforms.sensorScale, 1.5f * zoom, 1.5f * zoom / aspect);
+    glUniform1f(uniforms.exposureGain, std::exp2(exposureEv));
+    glUniform1i(uniforms.hdrMode, hdrMode);
+    glUniform2f(uniforms.texel, 1.0f / width, 1.0f / height);
     glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
@@ -255,11 +260,10 @@ void CameraOptics::Render(int profile, float fieldOfView, float exposureEv, bool
 void CameraOptics::Release() {
     if (program) glDeleteProgram(program);
     if (vao) glDeleteVertexArrays(1, &vao);
-    if (sceneTexture) glDeleteTextures(1, &sceneTexture);
     if (sceneColor) glDeleteTextures(1, &sceneColor);
     if (sceneDepth) glDeleteRenderbuffers(1, &sceneDepth);
     if (framebuffer) glDeleteFramebuffers(1, &framebuffer);
-    program = vao = sceneTexture = sceneColor = sceneDepth = framebuffer = 0;
-    frameActive = false;
+    program = vao = sceneColor = sceneDepth = framebuffer = 0;
+    frameActive = framebufferComplete = false;
     width = height = 0;
 }

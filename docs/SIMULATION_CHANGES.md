@@ -47,6 +47,6 @@ The GPU draws wavefunction charts and photographic postprocessing. The small 1D 
 
 ## Reproducible validation
 
-Build Debug x64 with Visual Studio 2022, then run `tests\RunSimulationChecks.cmd` from the project folder. It compiles a CPU-only test executable using the installed Community C++ toolchain. It checks integrated normalization at several times, qubit probability sums, numerical norm conservation, nonzero barrier reflection/transmission, Earth radius/year and orbit closure, Moon-Earth distance, body counts and deterministic generated systems. Rendering still requires a GPU supporting OpenGL 3.3.
+Build Debug x64 with Visual Studio 2022, then run `tests\RunSimulationChecks.cmd` from the project folder. It compiles a CPU-only test executable with the newest installed Visual Studio C++ toolchain, found with vswhere. It checks integrated normalization at several times, qubit probability sums, numerical norm conservation, nonzero barrier reflection/transmission, Earth radius/year and orbit closure, Moon-Earth distance, body counts and deterministic generated systems. Rendering still requires a GPU supporting OpenGL 3.3.
 
 The preview build is `build/menu-preview/bin/Render-Engine.exe`. Startup and scene navigation are also checked in the native app, because a successful C++ build alone does not validate GLSL shaders or native-control layout.

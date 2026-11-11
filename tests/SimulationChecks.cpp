@@ -1,7 +1,9 @@
 #include "QuantumStates.h"
 #include "StarSystem.h"
 #include "Astronomy.h"
+#include <algorithm>
 #include <cmath>
+#include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
 #include <stdexcept>
 
@@ -63,5 +65,79 @@ int main() {
     Require(a.Planets()[0].seed==b.Planets()[0].seed && a.Planets()[0].seed!=c.Planets()[0].seed,"Planet seeds not deterministic and distinct");
     for (int i=0;i<static_cast<int>(a.Planets().size());++i)
         Require(glm::length(a.Position(i,12345)-b.Position(i,12345))<1e-12,"Generated positions not deterministic");
+    {
+        StarSystem follow; follow.LoadSolarSystem();
+        glm::vec3 front(0,0,-1),up(0,1,0);
+        follow.SelectPlanet(2); follow.ToggleFollow(0);
+        follow.Update(3600,front,up);
+        const auto before=follow.camera;
+        follow.Pick(glm::vec3(glm::normalize(follow.Position(3,3600)-follow.camera)),3600);
+        Require(follow.Selected()==3,"Pick did not select the planet it was aimed at");
+        follow.Update(7200,front,up);
+        Require(glm::length(follow.camera-before)<1e-12,"Changing the selection while following moved the camera");
+    }
+    {
+        StarSystem land; land.LoadSolarSystem();
+        glm::vec3 front(0,0,-1),up(0,1,0);
+        land.SelectPlanet(2); land.GoToSelected(0,front,up); land.ToggleLanding(0,front,up);
+        Require(land.IsLanded(),"Could not land on Earth");
+        const auto& body=land.Planets()[2];
+        // The planet is drawn with a float rotation; a landed camera must stay fixed in that frame.
+        const auto bodyDirection=[&](double t) {
+            auto spin=glm::rotate(glm::mat4(1),body.tilt,glm::vec3(1,0,0));
+            spin=glm::rotate(spin,static_cast<float>(std::remainder(t/body.daySeconds,1.0)*6.283185307179586),glm::vec3(0,1,0));
+            return glm::normalize(glm::transpose(glm::dmat3(glm::mat3(spin)))*(land.camera-land.Position(2,t)));
+        };
+        const auto start=bodyDirection(0);
+        double drift=0;
+        for (int frame=1;frame<=6000;++frame) {
+            const double t=frame*0.5;
+            land.Update(t,front,up);
+            drift=std::max(drift,glm::length(bodyDirection(t)-start));
+        }
+        std::cout<<"landed drift "<<drift*6371e3<<" m"<<std::endl;
+        Require(drift*6371e3<1,"Landed camera drifted along the surface");
+    }
+    {
+        StarSystem pole; pole.LoadSolarSystem();
+        glm::vec3 front(0,0,-1),up(0,1,0);
+        pole.SelectPlanet(2);
+        pole.camera=pole.Position(2,0)+glm::dvec3(0,1e-3,0);
+        pole.GoToSelected(0,front,up);
+        Require(glm::length(glm::cross(front,up))>.1f,"GoToSelected left the view direction parallel to up");
+        StarSystem core; core.LoadSolarSystem();
+        core.SelectPlanet(2);
+        core.camera=core.Position(2,0);
+        core.ToggleLanding(0,front,up);
+        Require(std::isfinite(core.camera.x+core.camera.y+core.camera.z),"Landing with the camera at the planet centre produced NaN");
+    }
+    {
+        // Recover the eccentric anomaly from the orbit position and compare it with a bisection run to double precision.
+        constexpr double pi=3.141592653589793;
+        const auto reference=[&](double mean,double e) {
+            double lower=-pi,upper=pi;
+            for (int i=0;i<200;++i) {
+                const double middle=.5*(lower+upper);
+                if (middle-e*std::sin(middle)<mean) lower=middle; else upper=middle;
+            }
+            return .5*(lower+upper);
+        };
+        std::vector<double> means={-pi,pi,0,1e-12,-1e-12,1e-9,1e-6,-1e-6,1e-3,pi-1e-9,-pi+1e-9};
+        for (int i=0;i<=720;++i) means.push_back(-pi+i*(2*pi/720)+.001);
+        double worst=0;
+        for (double e:{0.0,.1,.5,.9,.967,.99,.999}) {
+            for (double mean:means) {
+                if (mean>pi || mean<-pi) continue;
+                const auto p=OrbitalMechanics::PositionAtTimeDouble({1,e,0,0,mean,0},1.0,0.0);
+                const double anomaly=std::atan2(p.y/std::sqrt(1-e*e),p.x+e);
+                const double error=std::abs(std::remainder(anomaly-reference(mean,e),2*pi));
+                const double residual=std::abs(std::remainder(anomaly-e*std::sin(anomaly)-mean,2*pi));
+                worst=std::max(worst,std::max(error,residual));
+                if (error>=1e-12 || residual>=1e-12) std::cerr<<"e="<<e<<" M="<<mean<<" error="<<error<<" residual="<<residual<<"\n";
+                Require(error<1e-12 && residual<1e-12,"Kepler solver disagrees with bisection");
+            }
+        }
+        std::cout<<"Kepler solver worst error "<<worst<<" rad"<<std::endl;
+    }
     std::cout<<Examples().size()<<" quantum presets checked; solar scale, hierarchy and generation checks passed.\n";
 }

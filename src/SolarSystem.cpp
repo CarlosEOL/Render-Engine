@@ -11,6 +11,7 @@ void StarSystem::LoadSolarSystem()
     solarSystem = true;
     planets.clear();
     asteroids.clear();
+    orbitPaths.clear();
     star = {0, "Sun / Solar System", "G2 V main-sequence star", 1, 1, 5772, 1, 4.57};
     struct Data
     {

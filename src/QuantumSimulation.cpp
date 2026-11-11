@@ -131,12 +131,15 @@ void QuantumSimulation::Upload()
     if (!texture)
         return;
     const auto &example = QuantumStates::Examples()[selected];
+    // The qubit displays are drawn from probabilities alone and never sample the texture.
+    if (example.family == QuantumStates::Family::Spin || example.family == QuantumStates::Family::Bell)
+        return;
     const bool hydrogen = example.family == QuantumStates::Family::Hydrogen;
     const bool numerical = example.family == QuantumStates::Family::Numerical;
     const int width = hydrogen ? 256 : QuantumStates::Solver::size;
     const int height = hydrogen ? 256 : 1;
     const double extent = hydrogen ? (example.state == 0 ? 6 : example.state < 4 ? 16 : 30) : 12;
-    std::vector<glm::vec4> data(width * height);
+    pixels.resize(static_cast<size_t>(width) * height);
     peakDensity = 1e-15;
     visibleNorm = mean = deviation = 0;
     double secondMoment = 0;
@@ -148,7 +151,7 @@ void QuantumSimulation::Upload()
                                        : QuantumStates::Evaluate(example, coordinate,
                                                                  hydrogen ? -extent + 2 * extent * y / (height - 1) : 0,
                                                                  hydrogen ? 0 : time);
-            data[y * width + x] = glm::vec4(psi.real(), psi.imag(),numerical?solver.Potential()[x]:0,0);
+            pixels[y * width + x] = glm::vec4(psi.real(), psi.imag(), numerical ? solver.Potential()[x] : 0.0, 0.0);
             const double density = std::norm(psi);
             peakDensity = std::max(peakDensity, density);
             if (!hydrogen)
@@ -165,7 +168,14 @@ void QuantumSimulation::Upload()
         deviation = std::sqrt(std::max(0.0, secondMoment / visibleNorm - mean * mean));
     }
     glBindTexture(GL_TEXTURE_2D, texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, width, height, 0, GL_RGBA, GL_FLOAT, data.data());
+    if (width != textureWidth || height != textureHeight)
+    {
+        textureWidth = width;
+        textureHeight = height;
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, width, height, 0, GL_RGBA, GL_FLOAT, pixels.data());
+    }
+    else
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_FLOAT, pixels.data());
 }
 void QuantumSimulation::Render(float aspect) const
 {
@@ -257,4 +267,5 @@ void QuantumSimulation::Release()
     if (texture)
         glDeleteTextures(1, &texture);
     program = vao = texture = 0;
+    textureWidth = textureHeight = 0;
 }

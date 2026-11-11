@@ -17,7 +17,8 @@
 
 #include "GLFW/glfw3.h"
 
-const unsigned int WIDTH = 1980, HEIGHT = 1080; //Window Size
+// Preferred client size; MakeNewWindow shrinks it to fit the monitor's work area.
+const unsigned int WIDTH = 1600, HEIGHT = 900;
 
 using namespace std;
 
@@ -27,10 +28,11 @@ public:
     inline static bool showWireframe = true;
     
     void InitializeGLFW();
-    void MakeNewWindow();
+    bool MakeNewWindow();
     void Update(float&);
     bool isClosed();
     void ReleaseGraphics();
+    int RunBenchmark();
     double GetSimulationTime() const { return simulationTime; }
 
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
@@ -72,6 +74,16 @@ private:
     void ShowSpeedToast(float speed, bool starSystem);
     void RenderSpeedToast();
     void ApplyVisionProfile(int profile);
+    float SceneAspect() const;
+    void UpdateLensAspect();
+    void ClearObserverModes();
+    void SyncMenu();
+    void UpdateStatus();
+    void ShowScene();
+    void FocusScene();
+    void LoadModel(const std::string& path);
+    const std::vector<std::pair<int, std::string>>& StarCatalogue();
+    std::vector<std::pair<int, std::string>> starCatalogue;
     void AlignCameraUp(const glm::vec3& up);
     void HandleInterfaceCommand(int id, int notification);
     void OpenMainMenu();
@@ -130,6 +142,7 @@ private:
     bool simulationPlaying = false;
     int timeRateIndex = 0;
     float titleUpdateElapsed = 0.0f;
+    std::string lastTitle;
     bool showingDefaultCube = true;
     unsigned int overlayProgram = 0;
     unsigned int overlayVao = 0;

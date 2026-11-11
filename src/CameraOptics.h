@@ -13,11 +13,14 @@ public:
 private:
     unsigned int program = 0;
     unsigned int vao = 0;
-    unsigned int sceneTexture = 0;
     unsigned int framebuffer = 0;
     unsigned int sceneColor = 0;
     unsigned int sceneDepth = 0;
+    struct Uniforms {
+        int profile, distortionModel, distortion, redTca, blueTca, vignetting, sensorScale, texel, exposureGain, hdrMode;
+    } uniforms = {};
     bool frameActive = false;
+    bool framebufferComplete = false;
     mutable int width = 0;
     mutable int height = 0;
 };

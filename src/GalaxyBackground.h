@@ -19,4 +19,7 @@ private:
     unsigned int program = 0;
     unsigned int vao = 0;
     unsigned int texture = 0;
+    int viewProjectionLocation = -1;
+    int transformLocation = -1;
+    int opacityLocation = -1;
 };

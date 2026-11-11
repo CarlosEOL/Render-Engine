@@ -1,5 +1,7 @@
 #pragma once
 #include "QuantumStates.h"
+#include <glm/vec4.hpp>
+#include <vector>
 
 class QuantumSimulation
 {
@@ -28,5 +30,7 @@ class QuantumSimulation
     double peakDensity = 1;
     unsigned int program = 0, vao = 0, texture = 0;
     QuantumStates::Solver solver;
+    std::vector<glm::vec4> pixels; // reused upload buffer
+    int textureWidth = 0, textureHeight = 0;
     void Upload();
 };

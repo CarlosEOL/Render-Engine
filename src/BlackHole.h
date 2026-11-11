@@ -9,6 +9,8 @@
 
 class BlackHole {
 public:
+    // The craft's flight history is CPU-only state that queries read even if GPU setup failed.
+    BlackHole() { ResetSpacecraft(0.0); }
     bool Initialize();
     static glm::vec3 PlanetPosition(double seconds, int planet = 0);
     float PlanetSurfaceRadius(const glm::vec3& worldDirection, double seconds, int planet = 0) const;
@@ -30,7 +32,7 @@ public:
     glm::vec3 SpacecraftPosition() const { return glm::vec3(spacecraft.position); }
     const char* SpacecraftStatus() const;
     double SpacecraftLightAge(const glm::vec3& camera, double seconds) const;
-    void SetPhotonView(bool enabled, const glm::vec3& detector) { photonView = enabled; photonDetector = detector; }
+    void SetPhotonView(bool enabled, const glm::vec3& detector);
     void Render(const glm::mat4& viewProjection, const glm::vec3& cameraPosition, double seconds,
                 const glm::vec3& observerVelocity = glm::vec3(0.0f), bool trajectories = true, int selected = -1) const;
     void Release();
@@ -44,13 +46,23 @@ private:
 
     unsigned int program = 0;
     unsigned int lensProgram = 0;
+    struct BodyUniforms {
+        int observerBeta, terrainSeed, cameraPosition, wavePhase, viewProjection, model, normalMatrix,
+            surface, bodyColor, velocityBeta, temperature, photonSeconds, photonDetector;
+    } bodyUniforms = {};
+    struct LensUniforms {
+        int observerBeta, inverseViewProjection, viewProjection, cameraPosition, diskPhase, plasmaTime;
+    } lensUniforms = {};
     unsigned int screenVao = 0;
     Mesh sphere;
+    Mesh sphereLow;
     Mesh backgroundStars;
     Mesh craftRing;
     Mesh craftTrail;
     Mesh photonPackets;
+    Mesh photonStatic;
     Mesh guides;
+    Mesh orbitGuides;
     bool photonView = false;
     glm::vec3 photonDetector = glm::vec3(0);
     struct PhotonPacket {
@@ -58,6 +70,14 @@ private:
         glm::vec3 color;
     };
     mutable std::vector<PhotonPacket> packetCache;
+    // Packets of emitters that never move: the vertex shader slides them along their path.
+    struct PhotonStream {
+        glm::vec3 emitter;
+        glm::vec3 color;
+        float inverseDelay;
+        float phase;
+    };
+    void BuildPhotonStreams();
     OrbitalMechanics::ParticleState spacecraft = {};
     std::vector<glm::vec3> trail;
     double spacecraftTime = 0.0;

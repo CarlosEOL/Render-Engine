@@ -30,6 +30,39 @@ void AlignUp(glm::vec3 &front, glm::vec3 &up, const glm::vec3 &nextUp)
             glm::rotate(glm::mat4(1), std::atan2(sine, glm::dot(up, nextUp)), axis / sine) * glm::vec4(front, 0)));
     up = nextUp;
 }
+
+// cross(front, up) vanishes when the two are parallel, which would turn every direction built from it into NaN.
+glm::vec3 RightOf(const glm::vec3 &front, const glm::vec3 &up)
+{
+    auto right = glm::cross(front, up);
+    if (glm::length(right) < 1e-3f)
+        right = glm::cross(front, std::abs(front.y) < .9f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0));
+    return glm::normalize(right);
+}
+
+// The atmosphere pass changes a pixel only when the ray through its centre meets the planet's shell, and it copies
+// the whole framebuffer to find out. A shell that is off screen, behind the camera or smaller than the gap between
+// pixel centres leaves the frame untouched, so such a planet can skip the pass. The shell is bounded conservatively:
+// a point on a sphere of radius r at view depth d projects within r / (d - r) * (1 + |offset| / d) of the centre.
+bool ShellReachesPixel(const glm::mat4 &projection, const glm::mat4 &view, const glm::vec3 &center, float radius,
+                       int width, int height)
+{
+    const double shell = radius * 1.03; // the shader's shell is 1.025 times the radius
+    const glm::dvec3 c = glm::dvec3(view * glm::vec4(center, 1));
+    const double depth = -c.z;
+    if (depth <= 2 * shell)
+        return true;
+    const double spread = shell / (depth - shell);
+    const auto reaches = [&](double offset, double scale, int pixels) {
+        const double middle = scale * offset / depth;
+        const double half = scale * spread * (1 + std::abs(offset) / depth) * 1.01 + 0.1 / pixels; // 0.1 / pixels is 0.05 px
+        // Pixel i is centred at NDC (i + 0.5) * 2 / pixels - 1.
+        const double low = std::ceil((middle - half + 1) * 0.5 * pixels - 0.5);
+        const double high = std::floor((middle + half + 1) * 0.5 * pixels - 0.5);
+        return std::max(low, 0.0) <= std::min(high, pixels - 1.0);
+    };
+    return reaches(c.x, projection[0][0], width) && reaches(c.y, projection[1][1], height);
+}
 } // namespace
 
 StarSystem::Star StarSystem::DescribeStar(int id, const std::string &name)
@@ -93,6 +126,7 @@ void StarSystem::Generate(int id, const std::string &name)
 {
     solarSystem = false;
     asteroids.clear();
+    orbitPaths.clear();
     star = DescribeStar(id, name);
     std::mt19937_64 random(0x4f6cdd1dULL + static_cast<unsigned long long>(id) * 104729ULL);
     const int count = 4 + static_cast<int>(random() % 7);
@@ -193,19 +227,28 @@ void StarSystem::ConstrainSurface(double seconds, glm::vec3 &front, glm::vec3 &u
     if (landedPlanet < 0)
         return;
     const auto center = Position(landedPlanet, seconds);
-    const auto radial = glm::normalize(camera - center);
+    const auto offset = camera - center;
+    const auto radial = glm::length(offset) > 0 ? glm::normalize(offset) : glm::dvec3(up);
     AlignUp(front, up, glm::vec3(radial));
     camera = center + radial * (SurfaceRadius(landedPlanet, radial, seconds) + 2.0 / Astronomy::metresPerAu);
+}
+
+void StarSystem::StoreLandedDirection(double seconds)
+{
+    const auto spin = glm::dmat3(glm::mat3(Rotation(landedPlanet, seconds)));
+    landedDirection = glm::normalize(glm::transpose(spin) * (camera - Position(landedPlanet, seconds)));
 }
 
 void StarSystem::Update(double seconds, glm::vec3 &front, glm::vec3 &up)
 {
     if (landed)
     {
-        const auto centerBefore = Position(landedPlanet, lastTime);
         const auto rotation = Rotation(landedPlanet, seconds) * glm::transpose(Rotation(landedPlanet, lastTime));
-        camera =
-            Position(landedPlanet, seconds) + glm::dvec3(rotation * glm::vec4(glm::vec3(camera - centerBefore), 0));
+        // Rebuilt from the stored planet-frame direction every frame: carrying camera through float matrices
+        // frame after frame let it drift along the surface by metres at Earth scale. This is the same matrix the
+        // planet is drawn with, so the ground stays fixed relative to the camera.
+        camera = Position(landedPlanet, seconds) +
+                 glm::dmat3(glm::mat3(Rotation(landedPlanet, seconds))) * landedDirection;
         front = glm::normalize(glm::vec3(rotation * glm::vec4(front, 0)));
         up = glm::normalize(glm::vec3(rotation * glm::vec4(up, 0)));
         ConstrainSurface(seconds, front, up);
@@ -224,7 +267,7 @@ void StarSystem::Move(GLFWwindow *window, float realSeconds, glm::vec3 &front, g
     double distance = speedAu * realSeconds;
     if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS)
         distance *= 5;
-    const auto right = glm::normalize(glm::cross(front, up));
+    const auto right = RightOf(front, up);
     glm::dvec3 movement(0);
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
         movement += glm::dvec3(front);
@@ -247,7 +290,10 @@ void StarSystem::Move(GLFWwindow *window, float realSeconds, glm::vec3 &front, g
         camera=(glm::length(camera)>0?glm::normalize(camera):glm::dvec3(0,0,1))
             *(hostRadius+2/Astronomy::metresPerAu);
     if (landed)
+    {
         ConstrainSurface(lastTime, front, up);
+        StoreLandedDirection(lastTime);
+    }
     else
     {
         for (int planet = 0; planet < static_cast<int>(planets.size()); ++planet)
@@ -275,7 +321,8 @@ void StarSystem::GoToSelected(double seconds, glm::vec3 &front, glm::vec3 &up)
         offset = glm::dvec3(0, 0, 1);
     camera = target + glm::normalize(offset) * radius * 5.0;
     front = glm::normalize(glm::vec3(target - camera));
-    up = glm::vec3(0, 1, 0);
+    // Looking straight along the pole would leave front parallel to up and the view matrix undefined.
+    up = std::abs(front.y) > .9999f ? glm::vec3(0, 0, -1) : glm::vec3(0, 1, 0);
     speedAu = radius * 0.5;
     lastTime = seconds;
 }
@@ -307,6 +354,7 @@ void StarSystem::ToggleLanding(double seconds, glm::vec3 &front, glm::vec3 &up)
     landed = true;
     following = false;
     ConstrainSurface(seconds, front, up);
+    StoreLandedDirection(seconds);
     auto horizon = glm::vec3(-Position(selected, seconds));
     horizon -= up * glm::dot(horizon, up);
     if (glm::length(horizon) < .000001f)
@@ -326,6 +374,7 @@ void StarSystem::ToggleFollow(double seconds)
 void StarSystem::Pick(const glm::vec3 &direction, double seconds)
 {
     double best = 1;
+    int picked = selected;
     for (int body = -1; body < static_cast<int>(planets.size()); ++body)
     {
         const auto offset = Position(body, seconds) - camera;
@@ -340,8 +389,14 @@ void StarSystem::Pick(const glm::vec3 &direction, double seconds)
         if (score < best)
         {
             best = score;
-            selected = body;
+            picked = body;
         }
+    }
+    if (picked != selected)
+    {
+        selected = picked;
+        // lastFollowPosition belongs to the old selection; keeping it would move the camera by the distance between the two bodies.
+        following = false;
     }
 }
 
@@ -385,18 +440,22 @@ uniform mat4 model;
 uniform mat4 viewProjection;
 uniform int bodyKind;
 uniform float phase;
+uniform bool patchDrawing;
+uniform mat3 patchFrame;
 out vec3 localPosition;
 out vec3 relativePosition;
 void main() {
-    localPosition = position;
+    // The surface patch is stored around +Z and turned to face the camera here instead of being rebuilt on the CPU.
+    vec3 local = bodyKind == 1 && patchDrawing ? patchFrame * position : position;
+    localPosition = local;
     if (bodyKind == 4) {
         relativePosition = vec3(0);
         gl_Position = vec4(position.xy,0,1);
         return;
     }
-    vec3 displaced = position;
+    vec3 displaced = local;
     if (bodyKind == 1)
-        displaced = planetSurface(normalize(position), terrainHeight(normalize(position)), phase);
+        displaced = planetSurface(normalize(local), terrainHeight(normalize(local)), phase);
     relativePosition = (model * vec4(displaced,1)).xyz;
     gl_Position = viewProjection * vec4(relativePosition,1);
 }
@@ -408,7 +467,7 @@ in vec3 localPosition;
 in vec3 relativePosition;
 out vec4 color;
 uniform int bodyKind;
-uniform mat4 model;
+uniform mat3 normalMatrix;
 uniform vec3 starPosition;
 uniform vec3 albedo;
 uniform float temperature;
@@ -454,7 +513,7 @@ void main() {
         float bands=.5+.5*sin(70.0*radial.y+7.0*terrainFbm(radial*5.0));
         material=mix(albedo*.4,min(vec3(1),albedo*1.5+vec3(.15)),bands);
     }
-    normal=normalize(mat3(transpose(inverse(model)))*normal);
+    normal=normalize(normalMatrix*normal);
     vec3 light=normalize(starPosition-relativePosition);
     vec3 view=normalize(-relativePosition);
     float diffuse=max(dot(normal,light),0.0);
@@ -470,6 +529,15 @@ void main() {
         Release();
         return false;
     }
+    const auto location = [&](const char *name) { return glGetUniformLocation(program, name); };
+    uniform = {location("viewProjection"), location("starPosition"), location("phase"),
+               location("model"),          location("normalMatrix"), location("bodyKind"),
+               location("terrainSeed"),    location("seaLevel"),     location("terrainRelief"),
+               location("waterWaveHeight"), location("albedo"),      location("temperature"),
+               location("patchEnabled"),   location("patchDrawing"), location("patchCenter"),
+               location("patchFrame")};
+    glUseProgram(program);
+    glUniform1f(uniform.terrainRelief, .003f);
     const auto upload = [](unsigned int &vao, unsigned int &buffer, const std::vector<glm::vec3> &vertices) {
         glGenVertexArrays(1, &vao);
         glGenBuffers(1, &buffer);
@@ -483,34 +551,35 @@ void main() {
     sphereCount = static_cast<int>(sphere.size());
     upload(sphereVao, sphereBuffer, sphere);
     upload(lineVao, lineBuffer, {{0, 0, 0}});
-    upload(patchVao, patchBuffer, {{0, 0, 0}});
+    // A patch of the sphere around +Z; the vertex shader rotates it to wherever the camera is.
+    constexpr int segments = 96;
+    const auto point = [&](int x, int y) {
+        return glm::normalize(glm::vec3(.025f * (2.0f * x / segments - 1.0f), .025f * (2.0f * y / segments - 1.0f), 1.0f));
+    };
+    std::vector<glm::vec3> patch;
+    patch.reserve(segments * segments * 6);
+    for (int row = 0; row < segments; ++row)
+        for (int col = 0; col < segments; ++col)
+            patch.insert(patch.end(), {point(col, row), point(col + 1, row), point(col + 1, row + 1), point(col, row),
+                                       point(col + 1, row + 1), point(col, row + 1)});
+    patchCount = static_cast<int>(patch.size());
+    upload(patchVao, patchBuffer, patch);
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     return atmosphere.Initialize();
 }
 
-void StarSystem::UpdatePatch(const glm::vec3 &direction)
+void StarSystem::BuildOrbitPaths()
 {
-    if (patchCount && glm::length(direction - patchDirection) < 0.00001f)
-        return;
-    patchDirection = direction;
-    const auto reference = std::abs(direction.y) < .9f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
-    const auto right = glm::normalize(glm::cross(reference, direction));
-    const auto up = glm::cross(direction, right);
-    constexpr int segments = 96;
-    const auto point = [&](int x, int y) {
-        return glm::normalize(direction + right * (.025f * (2.0f * x / segments - 1.0f)) +
-                              up * (.025f * (2.0f * y / segments - 1.0f)));
-    };
-    std::vector<glm::vec3> vertices;
-    vertices.reserve(segments * segments * 6);
-    for (int row = 0; row < segments; ++row)
-        for (int col = 0; col < segments; ++col)
-            vertices.insert(vertices.end(), {point(col, row), point(col + 1, row), point(col + 1, row + 1),
-                                             point(col, row), point(col + 1, row + 1), point(col, row + 1)});
-    patchCount = static_cast<int>(vertices.size());
-    glBindBuffer(GL_ARRAY_BUFFER, patchBuffer);
-    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(glm::vec3), vertices.data(), GL_DYNAMIC_DRAW);
+    orbitPaths.clear();
+    orbitPaths.reserve(planets.size() * orbitSamples);
+    for (int planet = 0; planet < static_cast<int>(planets.size()); ++planet)
+    {
+        const double period = glm::two_pi<double>() /
+                              OrbitalMechanics::MeanMotion(GravityFor(planet), planets[planet].orbit.semiMajorAxis);
+        for (int point = 0; point < orbitSamples; ++point)
+            orbitPaths.push_back(RelativePosition(planet, period * point / (orbitSamples - 1)));
+    }
 }
 
 void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front, const glm::vec3 &up, double seconds,
@@ -518,10 +587,20 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
 {
     if (!program || planets.empty())
         return;
-    double clearance = glm::length(camera) - star.radiusSolar * Astronomy::solarRadiusAu;
-    for (int planet = 0; planet < static_cast<int>(planets.size()); ++planet)
+    const int count = static_cast<int>(planets.size());
+    // Each Position() is a Kepler solve plus its parent's, and the passes below need every body several times
+    // over, so solve once per frame. A moon always comes after its parent in planets.
+    positions.resize(count);
+    for (int planet = 0; planet < count; ++planet)
     {
-        const auto delta = camera - Position(planet, seconds);
+        const int parent = planets[planet].parent;
+        positions[planet] = (parent < 0 ? glm::dvec3(0) : positions[parent]) + RelativePosition(planet, seconds);
+    }
+    const auto bodyPosition = [&](int body) { return body < 0 ? glm::dvec3(0) : positions[body]; };
+    double clearance = glm::length(camera) - star.radiusSolar * Astronomy::solarRadiusAu;
+    for (int planet = 0; planet < count; ++planet)
+    {
+        const auto delta = camera - positions[planet];
         const double distance = glm::length(delta);
         if (distance > 0)
             clearance = std::min(clearance, distance - SurfaceRadius(planet, delta / distance, seconds));
@@ -534,150 +613,165 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
     const auto vp = projection * view;
     glClear(GL_DEPTH_BUFFER_BIT);
     glUseProgram(program);
-    glUniformMatrix4fv(glGetUniformLocation(program, "viewProjection"), 1, GL_FALSE, glm::value_ptr(vp));
-    glUniform3fv(glGetUniformLocation(program, "starPosition"), 1, glm::value_ptr(glm::vec3(-camera)));
-    glUniform1f(glGetUniformLocation(program, "phase"),
-                static_cast<float>(std::remainder(seconds, glm::two_pi<double>())));
+    glUniformMatrix4fv(uniform.viewProjection, 1, GL_FALSE, glm::value_ptr(vp));
+    glUniform3fv(uniform.starPosition, 1, glm::value_ptr(glm::vec3(-camera)));
+    glUniform1f(uniform.phase, static_cast<float>(std::remainder(seconds, glm::two_pi<double>())));
     const auto setModel = [&](const glm::mat4 &model) {
-        glUniformMatrix4fv(glGetUniformLocation(program, "model"), 1, GL_FALSE, glm::value_ptr(model));
+        glUniformMatrix4fv(uniform.model, 1, GL_FALSE, glm::value_ptr(model));
     };
     auto model = glm::translate(glm::mat4(1), glm::vec3(-camera));
     model = glm::scale(model, glm::vec3(static_cast<float>(star.radiusSolar * Astronomy::solarRadiusAu)));
     setModel(model);
-    glUniform1i(glGetUniformLocation(program, "bodyKind"), 0);
-    glUniform1i(glGetUniformLocation(program, "patchEnabled"), false);
-    glUniform1f(glGetUniformLocation(program, "terrainSeed"), static_cast<float>(star.id % 10000));
-    glUniform1f(glGetUniformLocation(program, "temperature"), static_cast<float>(star.temperature));
+    glUniform1i(uniform.bodyKind, 0);
+    glUniform1i(uniform.patchEnabled, false);
+    glUniform1f(uniform.terrainSeed, static_cast<float>(star.id % 10000));
+    glUniform1f(uniform.temperature, static_cast<float>(star.temperature));
     glBindVertexArray(sphereVao);
     glDrawArrays(GL_TRIANGLES, 0, sphereCount);
-    for (int planet = 0; planet < static_cast<int>(planets.size()); ++planet)
+    for (int planet = 0; planet < count; ++planet)
     {
         const auto &body = planets[planet];
-        const auto center = Position(planet, seconds);
+        const auto &center = positions[planet];
         const double radius = body.radiusEarth * Astronomy::earthRadiusAu;
-        model = glm::translate(glm::mat4(1), glm::vec3(center - camera)) * Rotation(planet, seconds);
+        const auto rotation = Rotation(planet, seconds);
+        model = glm::translate(glm::mat4(1), glm::vec3(center - camera)) * rotation;
         model = glm::scale(model, glm::vec3(static_cast<float>(radius)));
         setModel(model);
-        glUniform1i(glGetUniformLocation(program, "bodyKind"), body.gas ? 2 : 1);
-        glUniform1f(glGetUniformLocation(program, "terrainSeed"), static_cast<float>(body.seed));
-        glUniform1f(glGetUniformLocation(program, "seaLevel"), body.seaLevel);
-        glUniform1f(glGetUniformLocation(program, "terrainRelief"), .003f);
-        glUniform1f(glGetUniformLocation(program, "waterWaveHeight"),
-                    static_cast<float>(2.0 / (body.radiusEarth * 6371000.0)));
-        glUniform3fv(glGetUniformLocation(program, "albedo"), 1, glm::value_ptr(body.color));
+        // The model is a rotation and a uniform scale, so its normal matrix is the rotation alone.
+        glUniformMatrix3fv(uniform.normalMatrix, 1, GL_FALSE, glm::value_ptr(glm::mat3(rotation)));
+        glUniform1i(uniform.bodyKind, body.gas ? 2 : 1);
+        glUniform1f(uniform.terrainSeed, static_cast<float>(body.seed));
+        glUniform1f(uniform.seaLevel, body.seaLevel);
+        glUniform1f(uniform.waterWaveHeight, static_cast<float>(2.0 / (body.radiusEarth * 6371000.0)));
+        glUniform3fv(uniform.albedo, 1, glm::value_ptr(body.color));
         const bool patch = !body.gas && glm::length(camera - center) < radius * 1.15;
-        glUniform1i(glGetUniformLocation(program, "patchEnabled"), patch);
-        glUniform1i(glGetUniformLocation(program, "patchDrawing"), false);
+        glUniform1i(uniform.patchEnabled, patch);
+        glUniform1i(uniform.patchDrawing, false);
         if (patch)
         {
-            const auto direction = glm::normalize(
-                glm::vec3(glm::transpose(Rotation(planet, seconds)) * glm::vec4(glm::vec3(camera - center), 0)));
-            UpdatePatch(direction);
-            glUniform3fv(glGetUniformLocation(program, "patchCenter"), 1, glm::value_ptr(patchDirection));
+            const auto direction =
+                glm::normalize(glm::vec3(glm::transpose(rotation) * glm::vec4(glm::vec3(camera - center), 0)));
+            const auto reference = std::abs(direction.y) < .9f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
+            const auto right = glm::normalize(glm::cross(reference, direction));
+            glUniform3fv(uniform.patchCenter, 1, glm::value_ptr(direction));
+            glUniformMatrix3fv(uniform.patchFrame, 1, GL_FALSE,
+                               glm::value_ptr(glm::mat3(right, glm::cross(direction, right), direction)));
         }
         glBindVertexArray(sphereVao);
         glDrawArrays(GL_TRIANGLES, 0, sphereCount);
         if (patch)
         {
-            glUniform1i(glGetUniformLocation(program, "patchDrawing"), true);
+            glUniform1i(uniform.patchDrawing, true);
             glBindVertexArray(patchVao);
             glDrawArrays(GL_TRIANGLES, 0, patchCount);
         }
     }
-    glUniform1i(glGetUniformLocation(program, "patchEnabled"), false);
-    glUniform1i(glGetUniformLocation(program, "bodyKind"), 3);
+    glUniform1i(uniform.patchEnabled, false);
+    glUniform1i(uniform.bodyKind, 3);
     setModel(glm::mat4(1));
-    const auto drawLines = [&](const std::vector<glm::vec3> &vertices, GLenum mode, const glm::vec3 &color,
-                               float size) {
-        glBindVertexArray(lineVao);
-        glBindBuffer(GL_ARRAY_BUFFER, lineBuffer);
-        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(glm::vec3), vertices.data(), GL_DYNAMIC_DRAW);
-        glUniform3fv(glGetUniformLocation(program, "albedo"), 1, glm::value_ptr(color));
-        glPointSize(size);
-        glDrawArrays(mode, 0, static_cast<int>(vertices.size()));
-    };
-    std::vector<glm::vec3> markers;
-    for (int planet = -1; planet < static_cast<int>(planets.size()); ++planet)
-        markers.push_back(glm::vec3(Position(planet, seconds) - camera));
-    drawLines(markers, GL_POINTS, glm::vec3(.15f, .45f, .65f), 3);
+
+    // Every point and line of the frame goes into one buffer upload. Orbits do not depend on time, so their
+    // polylines are built once and only translated by the parent's position and the camera here.
+    if (trajectories && orbitPaths.empty())
+        BuildOrbitPaths();
+    lineVertices.clear();
+    const auto mark = [&] { return static_cast<int>(lineVertices.size()); };
+    const int markerFirst = mark();
+    for (int body = -1; body < count; ++body)
+        lineVertices.push_back(glm::vec3(bodyPosition(body) - camera));
+    const int orbitFirst = mark();
     if (trajectories)
-    {
-        for (int planet = 0; planet < static_cast<int>(planets.size()); ++planet)
+        for (int planet = 0; planet < count; ++planet)
         {
-            std::vector<glm::vec3> path;
-            const double period = glm::two_pi<double>() /
-                                  OrbitalMechanics::MeanMotion(GravityFor(planet), planets[planet].orbit.semiMajorAxis);
-            for (int point = 0; point <= 256; ++point)
-                path.push_back(glm::vec3(RelativePosition(planet, period * point / 256.0) +
-                                         Position(planets[planet].parent, seconds) - camera));
-            drawLines(path, GL_LINE_STRIP, glm::vec3(.035f, .12f, .18f), 1);
+            const auto parent = bodyPosition(planets[planet].parent);
+            for (int point = 0; point < orbitSamples; ++point)
+                lineVertices.push_back(glm::vec3(orbitPaths[planet * orbitSamples + point] + parent - camera));
         }
-    }
-    if (!asteroids.empty())
+    const int asteroidFirst = mark();
+    for (const auto &orbit : asteroids)
     {
-        std::vector<glm::vec3> points;
-        points.reserve(asteroids.size());
-        for (const auto &orbit : asteroids)
-        {
-            const auto p = OrbitalMechanics::PositionAtTimeDouble(orbit, Astronomy::solarGravityAu, seconds);
-            points.push_back(glm::vec3(glm::dvec3(p.x, p.z, -p.y) - camera));
-        }
-        drawLines(points, GL_POINTS, glm::vec3(.13f, .10f, .07f), 1);
+        const auto p = OrbitalMechanics::PositionAtTimeDouble(orbit, Astronomy::solarGravityAu, seconds);
+        lineVertices.push_back(glm::vec3(glm::dvec3(p.x, p.z, -p.y) - camera));
     }
+    const int photonFirst = mark();
     if (photonView)
     {
-        std::vector<glm::vec3> packets;
-        for (int body = -1; body < static_cast<int>(planets.size()); ++body)
+        for (int body = -1; body < count; ++body)
         {
-            const auto source = Position(body, seconds);
+            const auto source = bodyPosition(body);
             const double duration = std::max(.001, glm::length(source - photonDetector) / Astronomy::lightSpeedAu);
             for (int point = 0; point < 8; ++point)
             {
                 const double fraction = std::fmod(seconds / duration + point / 8.0, 1.0);
-                packets.push_back(glm::vec3(glm::mix(source, photonDetector, fraction) - camera));
+                lineVertices.push_back(glm::vec3(glm::mix(source, photonDetector, fraction) - camera));
             }
         }
-        for (const auto& orbit:asteroids) {
-            const auto p=OrbitalMechanics::PositionAtTimeDouble(orbit,Astronomy::solarGravityAu,seconds);
-            const glm::dvec3 source(p.x,p.z,-p.y);
-            const double duration=std::max(.001,glm::length(source-photonDetector)/Astronomy::lightSpeedAu);
-            for (int point=0;point<4;++point) {
-                const double fraction=std::fmod(seconds/duration+point/4.0,1.0);
-                packets.push_back(glm::vec3(glm::mix(source,photonDetector,fraction)-camera));
+        for (const auto &orbit : asteroids)
+        {
+            const auto p = OrbitalMechanics::PositionAtTimeDouble(orbit, Astronomy::solarGravityAu, seconds);
+            const glm::dvec3 source(p.x, p.z, -p.y);
+            const double duration = std::max(.001, glm::length(source - photonDetector) / Astronomy::lightSpeedAu);
+            for (int point = 0; point < 4; ++point)
+            {
+                const double fraction = std::fmod(seconds / duration + point / 4.0, 1.0);
+                lineVertices.push_back(glm::vec3(glm::mix(source, photonDetector, fraction) - camera));
             }
         }
-        drawLines(packets, GL_POINTS, glm::vec3(.3f, .7f, 1), 3);
     }
+    const int crosshairFirst = mark();
+    const auto clip = vp * glm::vec4(glm::vec3(bodyPosition(selected) - camera), 1);
+    const auto crosshairAt = clip.w > 0 ? glm::vec2(clip) / clip.w : glm::vec2(2);
+    const bool crosshair = std::abs(crosshairAt.x) < 1 && std::abs(crosshairAt.y) < 1;
+    if (crosshair)
+        for (int sign : {-1, 1})
+        {
+            lineVertices.push_back({crosshairAt.x + sign * .006f, crosshairAt.y, 0});
+            lineVertices.push_back({crosshairAt.x + sign * .020f, crosshairAt.y, 0});
+            lineVertices.push_back({crosshairAt.x, crosshairAt.y + sign * .006f * aspect, 0});
+            lineVertices.push_back({crosshairAt.x, crosshairAt.y + sign * .020f * aspect, 0});
+        }
+    glBindVertexArray(lineVao);
+    glBindBuffer(GL_ARRAY_BUFFER, lineBuffer);
+    const size_t bytes = lineVertices.size() * sizeof(glm::vec3);
+    if (bytes > lineCapacity)
+        lineCapacity = bytes + bytes / 2;
+    // Re-specifying the storage lets the driver hand out fresh memory instead of waiting for last frame's draws.
+    glBufferData(GL_ARRAY_BUFFER, lineCapacity, nullptr, GL_DYNAMIC_DRAW);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, bytes, lineVertices.data());
+    const auto draw = [&](GLenum mode, int first, int vertices, const glm::vec3 &color, float size) {
+        glUniform3fv(uniform.albedo, 1, glm::value_ptr(color));
+        glPointSize(size);
+        glDrawArrays(mode, first, vertices);
+    };
+    draw(GL_POINTS, markerFirst, orbitFirst - markerFirst, glm::vec3(.15f, .45f, .65f), 3);
+    if (trajectories)
+        for (int planet = 0; planet < count; ++planet)
+            draw(GL_LINE_STRIP, orbitFirst + planet * orbitSamples, orbitSamples, glm::vec3(.035f, .12f, .18f), 1);
+    if (!asteroids.empty())
+        draw(GL_POINTS, asteroidFirst, photonFirst - asteroidFirst, glm::vec3(.13f, .10f, .07f), 1);
+    if (photonView)
+        draw(GL_POINTS, photonFirst, crosshairFirst - photonFirst, glm::vec3(.3f, .7f, 1), 3);
     glBindVertexArray(0);
-    for (int planet = 0; planet < static_cast<int>(planets.size()); ++planet)
+    int viewport[4];
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    for (int planet = 0; planet < count; ++planet)
     {
         if (!planets[planet].atmosphere)
             continue;
-        const auto center = glm::vec3(Position(planet, seconds) - camera);
-        atmosphere.Render(vp, glm::vec3(0), center,
-                          static_cast<float>(planets[planet].radiusEarth * Astronomy::earthRadiusAu), true,
-                          glm::vec3(-camera));
+        const auto center = glm::vec3(positions[planet] - camera);
+        const auto radius = static_cast<float>(planets[planet].radiusEarth * Astronomy::earthRadiusAu);
+        if (ShellReachesPixel(projection, view, center, radius, viewport[2], viewport[3]))
+            atmosphere.Render(vp, glm::vec3(0), center, radius, true, glm::vec3(-camera));
     }
-    const auto clip = vp * glm::vec4(glm::vec3(Position(selected, seconds) - camera), 1);
-    if (clip.w > 0)
+    if (crosshair)
     {
-        const auto position = glm::vec2(clip) / clip.w;
-        if (std::abs(position.x) < 1 && std::abs(position.y) < 1)
-        {
-            glUseProgram(program);
-            glUniform1i(glGetUniformLocation(program, "bodyKind"), 4);
-            glDisable(GL_DEPTH_TEST);
-            std::vector<glm::vec3> crosshair;
-            for (int sign : {-1, 1})
-            {
-                crosshair.push_back({position.x + sign * .006f, position.y, 0});
-                crosshair.push_back({position.x + sign * .020f, position.y, 0});
-                crosshair.push_back({position.x, position.y + sign * .006f * aspect, 0});
-                crosshair.push_back({position.x, position.y + sign * .020f * aspect, 0});
-            }
-            drawLines(crosshair, GL_LINES, glm::vec3(.2f, 1, .75f), 1);
-            glEnable(GL_DEPTH_TEST);
-        }
+        glUseProgram(program);
+        glUniform1i(uniform.bodyKind, 4);
+        glDisable(GL_DEPTH_TEST);
+        glBindVertexArray(lineVao);
+        glBindBuffer(GL_ARRAY_BUFFER, lineBuffer);
+        draw(GL_LINES, crosshairFirst, mark() - crosshairFirst, glm::vec3(.2f, 1, .75f), 1);
+        glEnable(GL_DEPTH_TEST);
     }
     glBindVertexArray(0);
 }
@@ -694,4 +788,6 @@ void StarSystem::Release()
         if (buffer)
             glDeleteBuffers(1, &buffer);
     program = sphereVao = sphereBuffer = lineVao = lineBuffer = patchVao = patchBuffer = 0;
+    sphereCount = patchCount = 0;
+    lineCapacity = 0;
 }
