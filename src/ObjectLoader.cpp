@@ -96,6 +96,7 @@ bool ObjectLoader::LoadFBX(const std::string& path, std::vector<float>& outVerti
     (
         path,
         aiProcess_Triangulate |
+        aiProcess_PreTransformVertices |
         aiProcess_GenSmoothNormals |
         aiProcess_JoinIdenticalVertices |
         aiProcess_CalcTangentSpace |
@@ -108,30 +109,46 @@ bool ObjectLoader::LoadFBX(const std::string& path, std::vector<float>& outVerti
         return false;
     }
 
-    const aiMesh* mesh = scene->mMeshes[0];
-
     glm::vec3 min(FLT_MAX), max(-FLT_MAX);
+    outVertices.clear();
 
-    for (unsigned int i = 0; i < mesh->mNumVertices; i++) 
+    // PreTransformVertices has baked the node transforms into the meshes, so every mesh is drawn as it sits in the scene.
+    for (unsigned int m = 0; m < scene->mNumMeshes; ++m)
     {
-        const aiFace& face = mesh->mFaces[i];
-        for (unsigned int j = 0; j < face.mNumIndices; ++j) {
-            unsigned int index = face.mIndices[j];
-            aiVector3D pos = mesh->mVertices[index];
-            aiVector3D normal = mesh->HasNormals() ? mesh->mNormals[index] : aiVector3D(0, 1, 0);
+        const aiMesh* mesh = scene->mMeshes[m];
+        for (unsigned int i = 0; i < mesh->mNumFaces; ++i)
+        {
+            const aiFace& face = mesh->mFaces[i];
+            if (face.mNumIndices != 3)
+                continue; // points and lines
+            for (unsigned int j = 0; j < face.mNumIndices; ++j)
+            {
+                unsigned int index = face.mIndices[j];
+                aiVector3D pos = mesh->mVertices[index];
+                aiVector3D normal = mesh->HasNormals() ? mesh->mNormals[index] : aiVector3D(0, 1, 0);
 
-            if (normal.Length() < 1e-3f)
-                normal = aiVector3D(0, 1, 0);
-            else
-                normal = normal.NormalizeSafe(); // or manually normalize
+                if (normal.Length() < 1e-3f)
+                    normal = aiVector3D(0, 1, 0);
+                else
+                    normal = normal.NormalizeSafe(); // or manually normalize
 
-            outVertices.push_back(pos.x);
-            outVertices.push_back(pos.y);
-            outVertices.push_back(pos.z);
-            outVertices.push_back(normal.x);
-            outVertices.push_back(normal.y);
-            outVertices.push_back(normal.z);
+                min = glm::min(min, glm::vec3(pos.x, pos.y, pos.z));
+                max = glm::max(max, glm::vec3(pos.x, pos.y, pos.z));
+
+                outVertices.push_back(pos.x);
+                outVertices.push_back(pos.y);
+                outVertices.push_back(pos.z);
+                outVertices.push_back(normal.x);
+                outVertices.push_back(normal.y);
+                outVertices.push_back(normal.z);
+            }
         }
+    }
+
+    if (outVertices.empty())
+    {
+        std::cerr << "[Assimp error] No triangles in: " << path << std::endl;
+        return false;
     }
 
     center = (min + max) * 0.5f;
