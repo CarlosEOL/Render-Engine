@@ -62,6 +62,11 @@ void main() {
         return false;
     }
     glGenVertexArrays(1, &vao);
+    glUseProgram(program);
+    glUniform1i(glGetUniformLocation(program, "galaxy"), 0);
+    glUseProgram(0);
+    viewProjectionLocation = glGetUniformLocation(program, "viewProjection");
+    transformLocation = glGetUniformLocation(program, "transform");
     return true;
 }
 
@@ -71,8 +76,7 @@ void GalaxyBackground::Render(const glm::mat4& viewProjection) const {
     glUseProgram(program);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texture);
-    glUniform1i(glGetUniformLocation(program, "galaxy"), 0);
-    glUniformMatrix4fv(glGetUniformLocation(program, "viewProjection"), 1, GL_FALSE, glm::value_ptr(viewProjection));
+    glUniformMatrix4fv(viewProjectionLocation, 1, GL_FALSE, glm::value_ptr(viewProjection));
     glDepthMask(GL_FALSE);
     glBlendFunc(GL_ONE, GL_ONE);
     glBindVertexArray(vao);
@@ -80,7 +84,7 @@ void GalaxyBackground::Render(const glm::mat4& viewProjection) const {
         auto transform = glm::translate(glm::mat4(1), group.center);
         transform = glm::rotate(transform, group.tilt, glm::vec3(1,0,0));
         transform = glm::scale(transform, glm::vec3(group.radius));
-        glUniformMatrix4fv(glGetUniformLocation(program, "transform"), 1, GL_FALSE, glm::value_ptr(transform));
+        glUniformMatrix4fv(transformLocation, 1, GL_FALSE, glm::value_ptr(transform));
         glDrawArrays(GL_TRIANGLES, 0, 6);
     }
     glBindVertexArray(0);
