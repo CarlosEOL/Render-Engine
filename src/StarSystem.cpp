@@ -412,18 +412,22 @@ uniform mat4 model;
 uniform mat4 viewProjection;
 uniform int bodyKind;
 uniform float phase;
+uniform bool patchDrawing;
+uniform mat3 patchFrame;
 out vec3 localPosition;
 out vec3 relativePosition;
 void main() {
-    localPosition = position;
+    // The surface patch is stored around +Z and turned to face the camera here instead of being rebuilt on the CPU.
+    vec3 local = bodyKind == 1 && patchDrawing ? patchFrame * position : position;
+    localPosition = local;
     if (bodyKind == 4) {
         relativePosition = vec3(0);
         gl_Position = vec4(position.xy,0,1);
         return;
     }
-    vec3 displaced = position;
+    vec3 displaced = local;
     if (bodyKind == 1)
-        displaced = planetSurface(normalize(position), terrainHeight(normalize(position)), phase);
+        displaced = planetSurface(normalize(local), terrainHeight(normalize(local)), phase);
     relativePosition = (model * vec4(displaced,1)).xyz;
     gl_Position = viewProjection * vec4(relativePosition,1);
 }
@@ -502,7 +506,8 @@ void main() {
                location("model"),          location("normalMatrix"), location("bodyKind"),
                location("terrainSeed"),    location("seaLevel"),     location("terrainRelief"),
                location("waterWaveHeight"), location("albedo"),      location("temperature"),
-               location("patchEnabled"),   location("patchDrawing"), location("patchCenter")};
+               location("patchEnabled"),   location("patchDrawing"), location("patchCenter"),
+               location("patchFrame")};
     glUseProgram(program);
     glUniform1f(uniform.terrainRelief, .003f);
     const auto upload = [](unsigned int &vao, unsigned int &buffer, const std::vector<glm::vec3> &vertices) {
@@ -518,34 +523,22 @@ void main() {
     sphereCount = static_cast<int>(sphere.size());
     upload(sphereVao, sphereBuffer, sphere);
     upload(lineVao, lineBuffer, {{0, 0, 0}});
-    upload(patchVao, patchBuffer, {{0, 0, 0}});
+    // A patch of the sphere around +Z; the vertex shader rotates it to wherever the camera is.
+    constexpr int segments = 96;
+    const auto point = [&](int x, int y) {
+        return glm::normalize(glm::vec3(.025f * (2.0f * x / segments - 1.0f), .025f * (2.0f * y / segments - 1.0f), 1.0f));
+    };
+    std::vector<glm::vec3> patch;
+    patch.reserve(segments * segments * 6);
+    for (int row = 0; row < segments; ++row)
+        for (int col = 0; col < segments; ++col)
+            patch.insert(patch.end(), {point(col, row), point(col + 1, row), point(col + 1, row + 1), point(col, row),
+                                       point(col + 1, row + 1), point(col, row + 1)});
+    patchCount = static_cast<int>(patch.size());
+    upload(patchVao, patchBuffer, patch);
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     return atmosphere.Initialize();
-}
-
-void StarSystem::UpdatePatch(const glm::vec3 &direction)
-{
-    if (patchCount && glm::length(direction - patchDirection) < 0.00001f)
-        return;
-    patchDirection = direction;
-    const auto reference = std::abs(direction.y) < .9f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
-    const auto right = glm::normalize(glm::cross(reference, direction));
-    const auto up = glm::cross(direction, right);
-    constexpr int segments = 96;
-    const auto point = [&](int x, int y) {
-        return glm::normalize(direction + right * (.025f * (2.0f * x / segments - 1.0f)) +
-                              up * (.025f * (2.0f * y / segments - 1.0f)));
-    };
-    std::vector<glm::vec3> vertices;
-    vertices.reserve(segments * segments * 6);
-    for (int row = 0; row < segments; ++row)
-        for (int col = 0; col < segments; ++col)
-            vertices.insert(vertices.end(), {point(col, row), point(col + 1, row), point(col + 1, row + 1),
-                                             point(col, row), point(col + 1, row + 1), point(col, row + 1)});
-    patchCount = static_cast<int>(vertices.size());
-    glBindBuffer(GL_ARRAY_BUFFER, patchBuffer);
-    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(glm::vec3), vertices.data(), GL_DYNAMIC_DRAW);
 }
 
 void StarSystem::BuildOrbitPaths()
@@ -630,8 +623,11 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
         {
             const auto direction =
                 glm::normalize(glm::vec3(glm::transpose(rotation) * glm::vec4(glm::vec3(camera - center), 0)));
-            UpdatePatch(direction);
-            glUniform3fv(uniform.patchCenter, 1, glm::value_ptr(patchDirection));
+            const auto reference = std::abs(direction.y) < .9f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
+            const auto right = glm::normalize(glm::cross(reference, direction));
+            glUniform3fv(uniform.patchCenter, 1, glm::value_ptr(direction));
+            glUniformMatrix3fv(uniform.patchFrame, 1, GL_FALSE,
+                               glm::value_ptr(glm::mat3(right, glm::cross(direction, right), direction)));
         }
         glBindVertexArray(sphereVao);
         glDrawArrays(GL_TRIANGLES, 0, sphereCount);
