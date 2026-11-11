@@ -631,7 +631,11 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::vec3& cameraP
     glUniform3f(colorLocation, 0.52f, 0.58f, 0.68f);
     glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(identity));
     glPointSize(1.5f);
+    // Most catalogue stars shade to near black. If they wrote depth, the ones sitting in front of a galaxy
+    // billboard would stop it drawing there and leave black speckles across its disk.
+    glDepthMask(GL_FALSE);
     glDrawArrays(GL_POINTS, 0, backgroundStars.vertexCount);
+    glDepthMask(GL_TRUE);
 
     glUseProgram(lensProgram);
     glUniform3fv(glGetUniformLocation(lensProgram, "observerBeta"), 1, glm::value_ptr(observerBeta));
