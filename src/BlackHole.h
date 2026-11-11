@@ -46,6 +46,13 @@ private:
 
     unsigned int program = 0;
     unsigned int lensProgram = 0;
+    struct BodyUniforms {
+        int observerBeta, terrainSeed, cameraPosition, wavePhase, viewProjection, model, normalMatrix,
+            surface, bodyColor, velocityBeta, temperature;
+    } bodyUniforms = {};
+    struct LensUniforms {
+        int observerBeta, inverseViewProjection, viewProjection, cameraPosition, diskPhase;
+    } lensUniforms = {};
     unsigned int screenVao = 0;
     Mesh sphere;
     Mesh sphereLow;

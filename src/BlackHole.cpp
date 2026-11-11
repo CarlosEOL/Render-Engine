@@ -100,7 +100,7 @@ uniform vec3 cameraPosition;
 uniform vec3 velocityBeta;
 uniform float temperature;
 uniform float wavePhase;
-uniform mat4 model;
+uniform mat3 normalMatrix;
 
 void main() {
     if (surface == 2) {
@@ -113,7 +113,7 @@ void main() {
         vec3 localNormal = normalize(cross(dFdx(surfacePosition), dFdy(surfacePosition)));
         if (dot(localNormal, radial) < 0.0)
             localNormal = -localNormal;
-        vec3 normal = normalize(mat3(transpose(inverse(model))) * localNormal);
+        vec3 normal = normalize(normalMatrix * localNormal);
         vec3 lightDirection = normalize(-worldPosition);
         vec3 viewDirection = normalize(cameraPosition - worldPosition);
         float light = max(dot(normal, lightDirection), 0.0);
@@ -157,7 +157,7 @@ void main() {
             * smoothstep(0.0, 0.1, dot(normal, lightDirection));
         fragColor = vec4(bodyColor * (0.22 + 0.78 * diffuse) + 0.5 * specular, 1.0);
     } else if (surface == 6) {
-        vec3 normal = normalize(mat3(transpose(inverse(model))) * localPosition);
+        vec3 normal = normalize(normalMatrix * localPosition);
         float facing = max(dot(normal, normalize(cameraPosition - worldPosition)), 0.0);
         float head = clamp(0.5 + 0.5 * localPosition.z, 0.0, 1.0);
         vec3 flame = mix(vec3(0.02, 0.12, 0.8), vec3(0.8, 0.95, 1.0), head);
@@ -338,6 +338,33 @@ bool BlackHole::Initialize() {
         Release();
         return false;
     }
+
+    // Locations are looked up once; uniforms that never change are also set once here.
+    const auto bodyLocation = [&](const char* name) { return glGetUniformLocation(program, name); };
+    const auto lensLocation = [&](const char* name) { return glGetUniformLocation(lensProgram, name); };
+    bodyUniforms = {.observerBeta = bodyLocation("observerBeta"), .terrainSeed = bodyLocation("terrainSeed"),
+        .cameraPosition = bodyLocation("cameraPosition"), .wavePhase = bodyLocation("wavePhase"),
+        .viewProjection = bodyLocation("viewProjection"), .model = bodyLocation("model"),
+        .normalMatrix = bodyLocation("normalMatrix"), .surface = bodyLocation("surface"),
+        .bodyColor = bodyLocation("bodyColor"), .velocityBeta = bodyLocation("velocityBeta"),
+        .temperature = bodyLocation("temperature")};
+    lensUniforms = {.observerBeta = lensLocation("observerBeta"),
+        .inverseViewProjection = lensLocation("inverseViewProjection"),
+        .viewProjection = lensLocation("viewProjection"), .cameraPosition = lensLocation("cameraPosition"),
+        .diskPhase = lensLocation("diskPhase")};
+    glUseProgram(program);
+    glUniform1i(bodyLocation("oceanWorld"), true);
+    glUniform1f(bodyLocation("seaLevel"), 0.035f);
+    glUniform1f(bodyLocation("terrainRelief"), 0.1f);
+    glUniform1f(bodyLocation("waterWaveHeight"), 0.0015f);
+    glUniform1f(bodyLocation("horizonRadius"), horizonRadius);
+    glUseProgram(lensProgram);
+    const auto diskTilt = DiskOrientation();
+    glUniform1f(lensLocation("horizonRadius"), horizonRadius);
+    glUniform2f(lensLocation("diskRadii"), innerDiskRadius, outerDiskRadius);
+    glUniform3fv(lensLocation("diskAxis"), 1, glm::value_ptr(glm::vec3(diskTilt * glm::vec4(0.0f, 0.0f, 1.0f, 0.0f))));
+    glUniformMatrix4fv(lensLocation("inverseDiskOrientation"), 1, GL_FALSE, glm::value_ptr(glm::inverse(diskTilt)));
+    glUseProgram(0);
 
     const auto upload = [](Mesh& mesh, const std::vector<glm::vec3>& vertices) {
         mesh.vertexCount = static_cast<int>(vertices.size());
@@ -637,20 +664,14 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::vec3& cameraP
         observerBeta = glm::normalize(observerBeta) * 0.99f;
 
     glUseProgram(program);
-    glUniform1i(glGetUniformLocation(program, "oceanWorld"), true);
-    glUniform1f(glGetUniformLocation(program, "seaLevel"), 0.035f);
-    glUniform1f(glGetUniformLocation(program, "terrainRelief"), 0.1f);
-    glUniform1f(glGetUniformLocation(program, "waterWaveHeight"), 0.0015f);
-    glUniform3fv(glGetUniformLocation(program, "observerBeta"), 1, glm::value_ptr(observerBeta));
-    glUniform1f(glGetUniformLocation(program, "terrainSeed"), static_cast<float>(terrainSeed));
-    glUniform3fv(glGetUniformLocation(program, "cameraPosition"), 1, glm::value_ptr(cameraPosition));
-    glUniform1f(glGetUniformLocation(program, "horizonRadius"), horizonRadius);
-    const auto diskAxis = glm::vec3(diskTilt * glm::vec4(0.0f, 0.0f, 1.0f, 0.0f));
-    glUniform1f(glGetUniformLocation(program, "wavePhase"), static_cast<float>(std::remainder(seconds, glm::two_pi<double>())));
-    glUniformMatrix4fv(glGetUniformLocation(program, "viewProjection"), 1, GL_FALSE, glm::value_ptr(viewProjection));
-    const int modelLocation = glGetUniformLocation(program, "model");
-    const int surfaceLocation = glGetUniformLocation(program, "surface");
-    const int colorLocation = glGetUniformLocation(program, "bodyColor");
+    glUniform3fv(bodyUniforms.observerBeta, 1, glm::value_ptr(observerBeta));
+    glUniform1f(bodyUniforms.terrainSeed, static_cast<float>(terrainSeed));
+    glUniform3fv(bodyUniforms.cameraPosition, 1, glm::value_ptr(cameraPosition));
+    glUniform1f(bodyUniforms.wavePhase, static_cast<float>(std::remainder(seconds, glm::two_pi<double>())));
+    glUniformMatrix4fv(bodyUniforms.viewProjection, 1, GL_FALSE, glm::value_ptr(viewProjection));
+    const int modelLocation = bodyUniforms.model;
+    const int surfaceLocation = bodyUniforms.surface;
+    const int colorLocation = bodyUniforms.bodyColor;
 
     glBindVertexArray(backgroundStars.vao);
     glUniform1i(surfaceLocation, 7);
@@ -664,17 +685,12 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::vec3& cameraP
     glDepthMask(GL_TRUE);
 
     glUseProgram(lensProgram);
-    glUniform3fv(glGetUniformLocation(lensProgram, "observerBeta"), 1, glm::value_ptr(observerBeta));
+    glUniform3fv(lensUniforms.observerBeta, 1, glm::value_ptr(observerBeta));
     const auto inverseViewProjection = glm::inverse(viewProjection);
-    const auto inverseDiskOrientation = glm::inverse(diskTilt);
-    glUniformMatrix4fv(glGetUniformLocation(lensProgram, "inverseViewProjection"), 1, GL_FALSE, glm::value_ptr(inverseViewProjection));
-    glUniformMatrix4fv(glGetUniformLocation(lensProgram, "viewProjection"), 1, GL_FALSE, glm::value_ptr(viewProjection));
-    glUniformMatrix4fv(glGetUniformLocation(lensProgram, "inverseDiskOrientation"), 1, GL_FALSE, glm::value_ptr(inverseDiskOrientation));
-    glUniform3fv(glGetUniformLocation(lensProgram, "cameraPosition"), 1, glm::value_ptr(cameraPosition));
-    glUniform3fv(glGetUniformLocation(lensProgram, "diskAxis"), 1, glm::value_ptr(diskAxis));
-    glUniform1f(glGetUniformLocation(lensProgram, "horizonRadius"), horizonRadius);
-    glUniform1f(glGetUniformLocation(lensProgram, "diskPhase"), diskPhase);
-    glUniform2f(glGetUniformLocation(lensProgram, "diskRadii"), innerDiskRadius, outerDiskRadius);
+    glUniformMatrix4fv(lensUniforms.inverseViewProjection, 1, GL_FALSE, glm::value_ptr(inverseViewProjection));
+    glUniformMatrix4fv(lensUniforms.viewProjection, 1, GL_FALSE, glm::value_ptr(viewProjection));
+    glUniform3fv(lensUniforms.cameraPosition, 1, glm::value_ptr(cameraPosition));
+    glUniform1f(lensUniforms.diskPhase, diskPhase);
     glBindVertexArray(screenVao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
 
@@ -692,6 +708,9 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::vec3& cameraP
             model *= PlanetRotation(seconds);
         model = glm::scale(model, glm::vec3(radius));
         glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(model));
+        if (surface == Planet)
+            glUniformMatrix3fv(bodyUniforms.normalMatrix, 1, GL_FALSE,
+                glm::value_ptr(glm::transpose(glm::inverse(glm::mat3(model)))));
         glUniform1i(surfaceLocation, surface);
         glUniform3fv(colorLocation, 1, glm::value_ptr(color));
         // Planets displace their vertices and are shaded per pixel from the mesh, so they keep the dense one.
@@ -701,18 +720,18 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::vec3& cameraP
     };
     int bodyIndex = 0;
     for (const auto& body : bodies) {
-        glUniform1f(glGetUniformLocation(program, "terrainSeed"), static_cast<float>((terrainSeed + bodyIndex * 137) % 10000));
+        glUniform1f(bodyUniforms.terrainSeed, static_cast<float>((terrainSeed + bodyIndex * 137) % 10000));
         const auto orbitalPosition = OrbitalMechanics::PositionAtTime(body.orbit, gravitationalParameter, seconds);
         const auto worldPosition = glm::vec3(diskTilt * glm::vec4(orbitalPosition, 1.0f));
         const auto velocity = glm::vec3(diskTilt * glm::vec4(
             OrbitalMechanics::VelocityAtTime(body.orbit, gravitationalParameter, seconds), 0.0f));
         const auto beta = velocity / static_cast<float>(std::sqrt(2.0 * gravitationalParameter / horizonRadius));
-        glUniform3fv(glGetUniformLocation(program, "velocityBeta"), 1, glm::value_ptr(beta));
-        glUniform1f(glGetUniformLocation(program, "temperature"), body.temperature);
+        glUniform3fv(bodyUniforms.velocityBeta, 1, glm::value_ptr(beta));
+        glUniform1f(bodyUniforms.temperature, body.temperature);
         drawSphere(worldPosition, body.radius, body.surface, body.color);
         ++bodyIndex;
     }
-    glUniform3f(glGetUniformLocation(program, "velocityBeta"), 0, 0, 0);
+    glUniform3f(bodyUniforms.velocityBeta, 0, 0, 0);
     // Half-widths of a sphere's footprint in clip space, for culling nearby stars against the side planes.
     const float extentW = glm::length(glm::vec3(viewProjection[0][3], viewProjection[1][3], viewProjection[2][3]));
     const float extentX = extentW + glm::length(glm::vec3(viewProjection[0][0], viewProjection[1][0], viewProjection[2][0]));
@@ -722,7 +741,7 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::vec3& cameraP
             const glm::vec4 clip = viewProjection * glm::vec4(destinations[star], 1.0f);
             if (std::abs(clip.x) > clip.w + 0.012f * extentX || std::abs(clip.y) > clip.w + 0.012f * extentY)
                 continue;
-            glUniform1f(glGetUniformLocation(program, "temperature"), 3500.0f + (star * 7919 % 6500));
+            glUniform1f(bodyUniforms.temperature, 3500.0f + (star * 7919 % 6500));
             drawSphere(destinations[star], 0.012f, Star, glm::vec3(1));
         }
     }
@@ -769,6 +788,8 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::vec3& cameraP
                 * AttitudeAlong(direction);
             exhaust = glm::scale(exhaust, glm::vec3(0.018f, 0.018f, 0.075f));
             glUniform3f(colorLocation, 0.25f, 0.65f, 1.0f);
+            glUniformMatrix3fv(bodyUniforms.normalMatrix, 1, GL_FALSE,
+                glm::value_ptr(glm::transpose(glm::inverse(glm::mat3(exhaust)))));
             drawPiece(exhaust, 0.075f);
         }
     }
