@@ -4,7 +4,7 @@
 #include <vector>
 
 // TinyObjLoader.CC (OBJ) // https://github.com/tinyobjloader/tinyobjloader/blob/release/tiny_obj_loader.cc
-#include <fstream>
+#include <filesystem>
 #include "tiny_obj_loader.h"
 
 // Assimp (FBX)
@@ -19,22 +19,8 @@ bool ObjectLoader::LoadOBJ(const std::string& path, std::vector<float>& outVerti
     std::vector<tinyobj::material_t> materials;
     std::string warn, err;
 
-    std::ifstream objFile(path);
-    if (!objFile.is_open()) {
-        std::cerr << "Failed to open file: " << path << std::endl;
-        return false;
-    }
-
-    tinyobj::MaterialFileReader reader(".");
-
-    bool ret = tinyobj::LoadObj(
-        &attrib,
-        &shapes,
-        &materials,
-        &err,
-        &objFile,
-        &reader
-    );
+    const std::string baseDir = std::filesystem::path(path).parent_path().string();
+    bool ret = tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, path.c_str(), baseDir.c_str());
 
     if (!warn.empty()) std::cout << "[tinyobj warning] " << warn << std::endl;
     if (!err.empty()) std::cerr << "[tinyobj error] " << err << std::endl;

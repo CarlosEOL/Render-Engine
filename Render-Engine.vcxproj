@@ -28,6 +28,7 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup>
     <PreferredToolArchitecture>x64</PreferredToolArchitecture>
+    <ExternalLibDir Condition="'$(ExternalLibDir)'==''">$(ProjectDir)..\External_Lib\</ExternalLibDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
@@ -109,14 +110,13 @@
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>"C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\include"</AdditionalIncludeDirectories>
-      <AdditionalUsingDirectories>"C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\include"</AdditionalUsingDirectories>
+      <AdditionalIncludeDirectories>$(ExternalLibDir)include</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>"C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\lib"</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>$(ExternalLibDir)lib</AdditionalLibraryDirectories>
       <AdditionalDependencies>$(CoreLibraryDependencies);%(AdditionalDependencies);glfw3.lib;opengl32.lib;assimp-vc143-mtd.lib;</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
@@ -150,12 +150,16 @@
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <AdditionalIncludeDirectories>$(ExternalLibDir)include</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(ExternalLibDir)lib</AdditionalLibraryDirectories>
+      <AdditionalDependencies>$(CoreLibraryDependencies);%(AdditionalDependencies);glfw3.lib;opengl32.lib;assimp-vc143-mt.lib;</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
