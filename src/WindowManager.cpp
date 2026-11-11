@@ -7,6 +7,7 @@
 #include "glad/glad.h"
 #include "WindowManager.h"
 #include "ObjectLoader.h"
+#include "Astronomy.h"
 #ifdef _WIN32
 #include <GLFW/glfw3native.h>
 #endif
@@ -35,9 +36,39 @@ namespace {
     double lastY = HEIGHT / 2.0;
 
     float timeSinceLastLog = 0.0f;
-    constexpr double timeRates[] = {1.0, 60.0, 3600.0};
+    constexpr double timeRates[] = {1.0, 60.0, 3600.0, 86400.0, 2592000.0, 31557600.0};
+    constexpr double quantumRates[] = {.1, .25, 1, 2, 4};
 #ifdef _WIN32
     WNDPROC originalWindowProcedure = nullptr;
+
+    LRESULT CALLBACK InterfaceKeyProcedure(HWND control, UINT message, WPARAM key, LPARAM detail) {
+        const auto previous = reinterpret_cast<WNDPROC>(GetPropW(control,L"RenderEnginePreviousControlProc"));
+        if (message == WM_KEYDOWN) {
+            const int id = GetDlgCtrlID(control);
+            const HWND parent = GetParent(control);
+            if (key == VK_TAB) {
+                const HWND next = GetNextDlgTabItem(parent,control,GetKeyState(VK_SHIFT)<0);
+                if (next) SetFocus(next);
+                return 0;
+            }
+            if (key == VK_RETURN && (id==3020 || id==2101 || id==2103)) {
+                SendMessageW(parent,WM_COMMAND,id==3020?3014:2104,0);
+                return 0;
+            }
+            const bool launcher = id>=3000;
+            const bool searching = id==2100;
+            int command = 0;
+            if (key>=VK_F1 && key<=VK_F10) command=GLFW_KEY_F1+static_cast<int>(key-VK_F1);
+            if (key==VK_ESCAPE) command=GLFW_KEY_ESCAPE;
+            if (!launcher && !searching) {
+                if (key==VK_SPACE || key=='G' || key=='F' || key=='L' || key=='R') command=static_cast<int>(key);
+                if (key==VK_OEM_COMMA) command=GLFW_KEY_COMMA;
+                if (key==VK_OEM_PERIOD) command=GLFW_KEY_PERIOD;
+            }
+            if (command) { SendMessageW(parent,WM_COMMAND,command,0); return 0; }
+        }
+        return CallWindowProcW(previous,control,message,key,detail);
+    }
 #endif
 }
 
@@ -52,6 +83,7 @@ namespace _UTILITY_
 void WindowManager::FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
     glViewport(0, 0, width, height);
     auto* manager = static_cast<WindowManager*>(glfwGetWindowUserPointer(window));
+    if (manager) manager->ResizeInterface();
     if (manager && manager->visionProfile > 0 && width > 0 && height > 0) {
         const float zoom = std::tan(glm::radians(manager->fieldOfView * 0.5f))
             / std::tan(glm::radians(CameraOptics::FieldOfView(manager->visionProfile, manager->lensAspect) * 0.5f));
@@ -71,6 +103,45 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
     if (action != GLFW_PRESS)
         return;
     auto& manager = *static_cast<WindowManager*>(glfwGetWindowUserPointer(window));
+    if (key == GLFW_KEY_F10 || key == 3030) { manager.OpenMainMenu(); return; }
+    if (manager.mainMenu.Visible()) return;
+    if (key == GLFW_KEY_F3) { manager.scenePanel.Toggle(); manager.ResizeInterface(); return; }
+    if (key == GLFW_KEY_F2) { manager.trajectories=!manager.trajectories; return; }
+    if (manager.quantumMode) {
+        if (key==GLFW_KEY_SPACE) manager.simulationPlaying=!manager.simulationPlaying;
+        else if (key==GLFW_KEY_R) manager.quantum.Select(manager.quantum.Selected());
+        else if (key==GLFW_KEY_COMMA) manager.quantumRateIndex=glm::max(0,manager.quantumRateIndex-1);
+        else if (key==GLFW_KEY_PERIOD) manager.quantumRateIndex=glm::min(4,manager.quantumRateIndex+1);
+        manager.UpdateTitle();
+        return;
+    }
+    if (key==GLFW_KEY_F4) {
+        if (manager.inStarSystem && manager.pendingSystemTarget==manager.activeSystemTarget)
+            manager.starSystem.Overview(cameraFront,cameraUp);
+        else if (manager.pendingSystemTarget!=0) manager.EnterSelectedSystem(true);
+        else { manager.showBlackHole=true; manager.ResetView(); }
+        manager.SyncCameraAngles(); return;
+    }
+    if (key==GLFW_KEY_G) {
+        if (manager.pendingSystemTarget!=0) { manager.EnterSelectedSystem(false); return; }
+        if (manager.inStarSystem) {
+            manager.inStarSystem=false; manager.showBlackHole=true;
+            manager.simulationTime=manager.localTime=0; manager.timeRateIndex=0;
+            manager.blackHole.ResetSpacecraft(0); manager.ResetView();
+        }
+    }
+    if (manager.inStarSystem) {
+        if (key==GLFW_KEY_L) manager.starSystem.ToggleLanding(manager.simulationTime,cameraFront,cameraUp);
+        else if (key==GLFW_KEY_F) manager.starSystem.ToggleFollow(manager.simulationTime);
+        else if (key==GLFW_KEY_HOME) manager.starSystem.Overview(cameraFront,cameraUp);
+        else if (key==GLFW_KEY_LEFT_BRACKET) manager.starSystem.speedAu=glm::max(1e-12,manager.starSystem.speedAu*.5);
+        else if (key==GLFW_KEY_RIGHT_BRACKET) manager.starSystem.speedAu=glm::min(1e6,manager.starSystem.speedAu*2);
+        else if (key==GLFW_KEY_N) { /* Catalogued solar surfaces retain their seed. */ }
+        else if (key==GLFW_KEY_H || key==GLFW_KEY_B || key==GLFW_KEY_R) return;
+        else goto sharedControls;
+        manager.SyncCameraAngles(); manager.RefreshPanel(); return;
+    }
+sharedControls:
     if (key >= 1000 && key <= 1006) {
         manager.ApplyVisionProfile(key - 1000);
     } else if (key >= 1100 && key <= 1108) {
@@ -84,10 +155,13 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
         manager.exposureEv = glm::max(-12.0f, manager.exposureEv - 1.0f);
     } else if (key == GLFW_KEY_SPACE) {
         manager.simulationPlaying = !manager.simulationPlaying;
-    } else if (key == GLFW_KEY_F2 && manager.blackHoleReady) {
+    } else if (key == 700 && manager.blackHoleReady) {
+        manager.inStarSystem=false;
         manager.showBlackHole = !manager.showBlackHole;
         manager.ResetView();
-    } else if (key == GLFW_KEY_F3 && manager.blackHoleReady) {
+    } else if (key == 701 && manager.blackHoleReady) {
+        manager.inStarSystem=false;
+        manager.pendingSystemTarget=0;
         manager.followSelected = false;
         manager.landed = false;
         manager.observerGravity = false;
@@ -107,7 +181,9 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
         manager.cameraSpeed = 0.05f;
         manager.ApplyVisionProfile(manager.visionProfile);
         firstMouse = true;
-    } else if (key == GLFW_KEY_F4 && manager.blackHoleReady) {
+    } else if (key == 702 && manager.blackHoleReady) {
+        manager.inStarSystem=false;
+        manager.pendingSystemTarget=0;
         manager.followSelected = false;
         manager.landed = false;
         manager.observerGravity = false;
@@ -158,7 +234,7 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
         manager.observer = {glm::dvec3(cameraPos), glm::dvec3(0.0)};
         cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
     } else if (key == GLFW_KEY_F6 && manager.blackHoleReady) {
-        manager.showBlackHole = true;
+        manager.showBlackHole = !manager.inStarSystem;
         manager.photonView = !manager.photonView;
         manager.blackHole.SetPhotonView(manager.photonView, cameraPos);
     } else if (key == GLFW_KEY_F && manager.blackHoleReady && manager.selectedTarget >= 0) {
@@ -178,7 +254,7 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
     } else if (key == GLFW_KEY_COMMA) {
         manager.timeRateIndex = glm::max(0, manager.timeRateIndex - 1);
     } else if (key == GLFW_KEY_PERIOD) {
-        manager.timeRateIndex = glm::min(2, manager.timeRateIndex + 1);
+        manager.timeRateIndex = glm::min(manager.inStarSystem?5:2, manager.timeRateIndex + 1);
     } else if (key == GLFW_KEY_ESCAPE) {
         manager.SetMouseCaptured(false);
     }
@@ -282,11 +358,200 @@ void WindowManager::UpdateObserver(double previousTime) {
     cameraPos = glm::vec3(observer.position);
 }
 
+void WindowManager::SyncCameraAngles() {
+    yaw=glm::degrees(std::atan2(cameraFront.z,cameraFront.x));
+    pitch=glm::degrees(std::asin(glm::clamp(cameraFront.y,-1.0f,1.0f)));
+    firstMouse=true;
+}
+
+void WindowManager::ResizeInterface() {
+    if (!window) return;
+    int width,height;
+    glfwGetWindowSize(window,&width,&height);
+    mainMenu.Resize(width,height);
+    scenePanel.Resize(width,height);
+}
+
+void WindowManager::OpenMainMenu() {
+    simulationPlaying=false;
+    SetMouseCaptured(false);
+    scenePanel.SetVisible(false);
+#ifdef _WIN32
+    SetMenu(glfwGetWin32Window(window),nullptr);
+    DrawMenuBar(glfwGetWin32Window(window));
+#endif
+    mainMenu.Show(AppMenu::Page::Home);
+    glfwSetWindowTitle(window,"Render-Engine | Main menu");
+}
+
+void WindowManager::StartSolarSystem() {
+    if (!starSystemReady) return;
+    inStarSystem=true; quantumMode=false; showBlackHole=false;
+    simulationPlaying=false; simulationTime=localTime=0; timeRateIndex=0;
+    pendingSystemTarget=activeSystemTarget=-2;
+    starSystem.LoadSolarSystem(); previewSystem.LoadSolarSystem();
+    mainMenu.Hide(); scenePanel.SetVisible(true);
+#ifdef _WIN32
+    SetMenu(glfwGetWin32Window(window),static_cast<HMENU>(nativeMenu));
+    DrawMenuBar(glfwGetWin32Window(window));
+#endif
+    scenePanel.SetTitle("Star / object browser");
+    std::vector<std::pair<int,std::string>> catalogue={{-2,"Sun / Solar System"},{0,"Gargantua / Black hole"}};
+    for (int id=4;id<7010;++id) {
+        if (id==9) continue;
+        catalogue.push_back({id,blackHole.ResolveTarget(id,simulationTime).name});
+    }
+    scenePanel.SetCatalogue(std::move(catalogue));
+    std::vector<std::string> bodies={"Sun"};
+    for (const auto& body:starSystem.Planets()) bodies.push_back(body.name);
+    scenePanel.SetPlanets(bodies);
+    starSystem.Overview(cameraFront,cameraUp);
+    fieldOfView=45; SyncCameraAngles(); ResizeInterface(); RefreshPanel(); UpdateTitle();
+#ifdef _WIN32
+    SetFocus(glfwGetWin32Window(window));
+#endif
+}
+
+void WindowManager::StartGargantua() {
+    if (!blackHoleReady) return;
+    inStarSystem=quantumMode=false; showBlackHole=true; pendingSystemTarget=0;
+    simulationPlaying=false; timeRateIndex=0; simulationTime=localTime=0;
+    blackHole.ResetSpacecraft(0);
+    mainMenu.Hide(); scenePanel.SetVisible(true); scenePanel.SetTitle("Star / object browser");
+#ifdef _WIN32
+    SetMenu(glfwGetWin32Window(window),static_cast<HMENU>(nativeMenu));
+    DrawMenuBar(glfwGetWin32Window(window));
+#endif
+    std::vector<std::pair<int,std::string>> catalogue={{-2,"Sun / Solar System"},{0,"Gargantua / Black hole"}};
+    for (int id=4;id<7010;++id) if (id!=9) catalogue.push_back({id,blackHole.ResolveTarget(id,simulationTime).name});
+    scenePanel.SetCatalogue(std::move(catalogue));
+    SelectCatalogue(0);
+    ResetView(); ResizeInterface(); UpdateTitle();
+#ifdef _WIN32
+    SetFocus(glfwGetWin32Window(window));
+#endif
+}
+
+void WindowManager::StartQuantum(int index) {
+    if (!quantumReady) return;
+    inStarSystem=false; showBlackHole=false; quantumMode=true;
+    simulationPlaying=false; quantum.Select(index);
+    SetMouseCaptured(false); mainMenu.Hide(); scenePanel.SetVisible(true);
+#ifdef _WIN32
+    SetMenu(glfwGetWin32Window(window),static_cast<HMENU>(nativeMenu));
+    DrawMenuBar(glfwGetWin32Window(window));
+#endif
+    scenePanel.SetTitle("Quantum state browser");
+    std::vector<std::pair<int,std::string>> catalogue;
+    const auto& examples=QuantumStates::Examples();
+    for (int i=0;i<static_cast<int>(examples.size());++i) catalogue.push_back({i,examples[i].name});
+    scenePanel.SetCatalogue(std::move(catalogue)); scenePanel.SetPlanets({});
+    ResizeInterface(); RefreshPanel(); UpdateTitle();
+#ifdef _WIN32
+    SetFocus(glfwGetWin32Window(window));
+#endif
+}
+
+void WindowManager::SelectCatalogue(int id) {
+    if (quantumMode) { quantum.Select(id); simulationPlaying=false; RefreshPanel(); return; }
+    pendingSystemTarget=id;
+    if (id==0) {
+        scenePanel.SetPlanets({"Gargantua","Miller's planet","Ocean planet 2","Ocean planet 3","Orbiting star 1","Orbiting star 2","Orbiting star 3","Orbiting star 4","Orbiting star 5","Spacecraft"});
+        selectedTarget=0;
+    } else {
+        if (id==-2) previewSystem.LoadSolarSystem();
+        else previewSystem.Generate(id,blackHole.ResolveTarget(id,simulationTime).name);
+        std::vector<std::string> names={previewSystem.Host().name};
+        for (const auto& planet:previewSystem.Planets()) names.push_back(planet.name);
+        scenePanel.SetPlanets(names);
+        selectedTarget=id>=0?id:-1;
+        if (showBlackHole && id>=0) {
+            cameraFront=glm::normalize(blackHole.ResolveTarget(id,simulationTime).position-cameraPos);
+            SyncCameraAngles();
+        }
+    }
+    RefreshPanel();
+}
+
+void WindowManager::EnterSelectedSystem(bool overview) {
+    if (!starSystemReady || pendingSystemTarget==0) return;
+    if (!inStarSystem || activeSystemTarget!=pendingSystemTarget) {
+        if (pendingSystemTarget==-2) starSystem.LoadSolarSystem();
+        else starSystem.Generate(pendingSystemTarget,previewSystem.Host().name);
+        starSystem.SelectPlanet(previewSystem.Selected());
+        activeSystemTarget=pendingSystemTarget;
+        inStarSystem=true; showBlackHole=false; observerGravity=landed=false;
+    }
+    if (overview) starSystem.Overview(cameraFront,cameraUp);
+    else starSystem.GoToSelected(simulationTime,cameraFront,cameraUp);
+    SyncCameraAngles(); RefreshPanel(); UpdateTitle();
+}
+
+void WindowManager::RefreshPanel() {
+    if (mainMenu.Visible()) return;
+    if (quantumMode) scenePanel.SetInformation(quantum.Information());
+    else if (pendingSystemTarget!=0) {
+        const auto& system=inStarSystem && activeSystemTarget==pendingSystemTarget?starSystem:previewSystem;
+        auto info=system.Information(simulationTime);
+        if (system.IsSolarSystem()) info+="\n1:1 physical radii and distances\nJ2000 frozen Keplerian elements\n4096 representative belt/KBO markers\nPlanet surfaces are procedural illustrations.\n";
+        scenePanel.SetInformation(info);
+    } else {
+        std::string info="GARGANTUA (inspired by Interstellar)\nSupermassive black hole\nClassification: Schwarzschild model\nMass / age: illustrative, not measured\nSpin and Kerr frame dragging: unmodeled\n\n";
+        if (selectedTarget>=0) info+="Selected: "+blackHole.ResolveTarget(selectedTarget,simulationTime).name+"\n";
+        info+="\nScaled demonstration system\nOcean-only black-hole planets\nForce-integrated spacecraft and boosters\n\nSpace  Play / pause\nF2  Orbit paths\nF3  Information panel\nF4  Overview\nF  Follow selected object\nG  Go to selected object\nL  Land / lift off\nF6  Photon view\nF10  Main menu\n";
+        scenePanel.SetInformation(info);
+    }
+}
+
+void WindowManager::HandleInterfaceCommand(int id,int notification) {
+#ifdef _WIN32
+    if (id==3010) mainMenu.Show(AppMenu::Page::Planetorium);
+    else if (id==3011) {
+        mainMenu.Show(AppMenu::Page::Quantum);
+        mainMenu.SetQuantumInformation(QuantumStates::Examples()[std::max(0,mainMenu.SelectedQuantum())].explanation);
+    } else if (id==3015) mainMenu.Show(AppMenu::Page::Home);
+    else if (id==3012) StartSolarSystem();
+    else if (id==3013) StartGargantua();
+    else if (id==3014) StartQuantum(mainMenu.SelectedQuantum());
+    else if (id==3020 && notification==LBN_SELCHANGE)
+        mainMenu.SetQuantumInformation(QuantumStates::Examples()[std::max(0,mainMenu.SelectedQuantum())].explanation);
+    else if (id==3020 && notification==LBN_DBLCLK) StartQuantum(mainMenu.SelectedQuantum());
+    else if (id==2100 && notification==EN_CHANGE) scenePanel.Filter();
+    else if (id==2101 && (notification==LBN_SELCHANGE || notification==LBN_DBLCLK)) {
+        const int choice=scenePanel.SelectedStar();
+        if (choice!=-1) SelectCatalogue(choice);
+        if (notification==LBN_DBLCLK && !quantumMode) HandleInterfaceCommand(2104,0);
+    } else if (id==2103 && (notification==LBN_SELCHANGE || notification==LBN_DBLCLK)) {
+        const int body=scenePanel.SelectedPlanet();
+        if (body>=0) {
+            if (pendingSystemTarget==0) selectedTarget=body;
+            else {
+                previewSystem.SelectPlanet(body-1);
+                if (inStarSystem && activeSystemTarget==pendingSystemTarget) starSystem.SelectPlanet(body-1);
+            }
+            RefreshPanel();
+        }
+        if (notification==LBN_DBLCLK) HandleInterfaceCommand(2104,0);
+    } else if (id==2104) {
+        KeyCallback(window,GLFW_KEY_G,0,GLFW_PRESS,0);
+        SetFocus(glfwGetWin32Window(window));
+    } else if (id<2100) KeyCallback(window,id,0,GLFW_PRESS,0);
+#endif
+}
+
 void WindowManager::UpdateTitle() {
+    if (mainMenu.Visible()) return;
+    if (quantumMode) {
+        std::ostringstream title;
+        title<<"Quantum Simulation | "<<QuantumStates::Examples()[quantum.Selected()].name
+            <<(simulationPlaying?" | Playing":" | Paused")<<" | t="<<std::fixed<<std::setprecision(3)
+            <<quantum.Time()<<" | "<<quantumRates[quantumRateIndex]<<"x | Space play/pause | R restart | F10 menu";
+        glfwSetWindowTitle(window,title.str().c_str()); return;
+    }
     std::ostringstream title;
     const auto seconds = static_cast<std::uint64_t>(localTime);
     const auto worldSeconds = static_cast<std::uint64_t>(simulationTime);
-    title << "Render-Engine | " << (showBlackHole ? "Gargantua-inspired" : "Model")
+    title << "Render-Engine | " << (inStarSystem ? starSystem.Host().name : showBlackHole ? "Gargantua-inspired" : "Model")
           << " | " << CameraOptics::Name(visionProfile)
           << (hdrMode ? " | HDR" : " | Pure exposure")
           << " | EV " << std::showpos << exposureEv << std::noshowpos
@@ -304,7 +569,8 @@ void WindowManager::UpdateTitle() {
           << " | World " << std::setw(2) << worldSeconds / 3600
           << ':' << std::setw(2) << worldSeconds / 60 % 60 << ':' << std::setw(2) << worldSeconds % 60
           << std::setfill(' ') << " | " << timeRates[timeRateIndex] << "x time"
-          << " | Speed " << std::fixed << std::setprecision(3) << cameraSpeed
+          << " | Speed " << std::fixed << std::setprecision(6) << (inStarSystem?starSystem.speedAu:cameraSpeed)
+          << (inStarSystem?" AU/s":" units/s")
           << (showBlackHole ? std::string(" | Craft ") + blackHole.SpacecraftStatus() : "")
           << (showBlackHole ? " | Light age " + std::to_string(
               blackHole.SpacecraftLightAge(cameraPos, simulationTime)) + " s" : "")
@@ -336,29 +602,43 @@ void WindowManager::SetMouseCaptured(bool captured) {
 }
 
 void WindowManager::MouseButtonCallback(GLFWwindow* window, int button, int action, int) {
+    auto& state=*static_cast<WindowManager*>(glfwGetWindowUserPointer(window));
+    if (state.mainMenu.Visible() || state.quantumMode) return;
     if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS) {
         auto& manager = *static_cast<WindowManager*>(glfwGetWindowUserPointer(window));
         manager.SetMouseCaptured(!manager.mouseCaptured);
     }
     if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
         auto& manager = *static_cast<WindowManager*>(glfwGetWindowUserPointer(window));
-        if (!manager.showBlackHole || manager.mouseCaptured)
+        if ((!manager.showBlackHole && !manager.inStarSystem) || manager.mouseCaptured)
             return;
         double x, y;
         int width, height;
         glfwGetCursorPos(window, &x, &y);
         glfwGetWindowSize(window, &width, &height);
+        width-=manager.scenePanel.Width();
         if (width <= 0 || height <= 0)
             return;
+        if (x>=width) return;
         const auto projection = glm::perspective(glm::radians(manager.fieldOfView),
             static_cast<float>(width) / height, 0.01f, 2000.0f);
-        const auto view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
+        const auto origin=manager.inStarSystem?glm::vec3(0):cameraPos;
+        const auto view = glm::lookAt(origin, origin + cameraFront, cameraUp);
         const auto screen = CameraOptics::MapScreen(manager.visionProfile,
             glm::vec2(2.0f * static_cast<float>(x) / width - 1.0f, 1.0f - 2.0f * static_cast<float>(y) / height),
             static_cast<float>(width) / height, manager.fieldOfView);
         const auto point = glm::inverse(projection * view) * glm::vec4(screen, 1.0f, 1.0f);
-        const auto direction = glm::normalize(glm::vec3(point) / point.w - cameraPos);
-        manager.selectedTarget = manager.blackHole.PickTarget(cameraPos, direction, manager.simulationTime);
+        const auto direction = glm::normalize(glm::vec3(point) / point.w - origin);
+        if (manager.inStarSystem) manager.starSystem.Pick(direction,manager.simulationTime);
+        else {
+            manager.selectedTarget = manager.blackHole.PickTarget(cameraPos, direction, manager.simulationTime);
+            if (manager.selectedTarget>=0) {
+                if (manager.selectedTarget>=10 || (manager.selectedTarget>=4 && manager.selectedTarget<=8))
+                    manager.SelectCatalogue(manager.selectedTarget);
+                else manager.pendingSystemTarget=0;
+            }
+        }
+        manager.RefreshPanel();
         manager.UpdateTitle();
     }
 }
@@ -383,7 +663,7 @@ void WindowManager::MouseCallback(GLFWwindow* window, double xpos, double ypos) 
     xoffset *= sensitivity;
     yoffset *= sensitivity;
 
-    if (manager.landed) {
+    if (manager.landed || (manager.inStarSystem && manager.starSystem.IsLanded())) {
         cameraFront = glm::vec3(glm::rotate(glm::mat4(1), glm::radians(-xoffset), cameraUp)
             * glm::vec4(cameraFront, 0));
         const auto right = glm::normalize(glm::cross(cameraFront, cameraUp));
@@ -488,6 +768,10 @@ void WindowManager::ProcessCamera(GLFWwindow* window, const float& deltaTime) {
         return;
     auto& manager = *static_cast<WindowManager*>(glfwGetWindowUserPointer(window));
     float speed = manager.cameraSpeed * deltaTime;
+    if (manager.inStarSystem) {
+        manager.starSystem.Move(window,deltaTime,cameraFront,cameraUp);
+        return;
+    }
     glm::vec3 right = glm::normalize(glm::cross(cameraFront, cameraUp));
 
     if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS)
@@ -706,6 +990,30 @@ unsigned int compileShaderProgram(const char* vertexSrc, const char* fragmentSrc
 
 
 void WindowManager::Update(float& dT) {
+    glfwPollEvents();
+    if (isClosed()) return;
+    int fullWidth,fullHeight,logicalWidth,logicalHeight;
+    glfwGetFramebufferSize(window,&fullWidth,&fullHeight);
+    glfwGetWindowSize(window,&logicalWidth,&logicalHeight);
+    if (fullWidth<=0 || fullHeight<=0 || logicalWidth<=0) return;
+    const int sceneWidth=fullWidth-scenePanel.Width()*fullWidth/logicalWidth;
+    glViewport(0,0,glm::max(1,sceneWidth),fullHeight);
+    if (mainMenu.Visible()) {
+        glBindFramebuffer(GL_FRAMEBUFFER,0);
+        glClearColor(.005f,.01f,.02f,1);
+        glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+        glfwSwapBuffers(window); return;
+    }
+    if (quantumMode) {
+        if (simulationPlaying) quantum.Advance(glm::min(static_cast<double>(dT),.1)*quantumRates[quantumRateIndex]);
+        titleUpdateElapsed+=dT;
+        if (titleUpdateElapsed>=.2f) { RefreshPanel(); UpdateTitle(); titleUpdateElapsed=0; }
+        glBindFramebuffer(GL_FRAMEBUFFER,0);
+        glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+        glPolygonMode(GL_FRONT_AND_BACK,GL_FILL);
+        quantum.Render(static_cast<float>(sceneWidth)/fullHeight);
+        glfwSwapBuffers(window); return;
+    }
     const double previousTime = simulationTime;
     if (simulationPlaying) {
         const double interval = static_cast<double>(dT) * timeRates[timeRateIndex];
@@ -714,15 +1022,12 @@ void WindowManager::Update(float& dT) {
     titleUpdateElapsed += dT;
     if (titleUpdateElapsed >= 0.2f) {
         UpdateTitle();
+        RefreshPanel();
         titleUpdateElapsed = 0.0f;
     }
 
-    glfwPollEvents();
-    if (isClosed()) {
-        return;
-    }
     const bool falling = observerGravity;
-    UpdateObserver(previousTime);
+    if (!inStarSystem) UpdateObserver(previousTime);
     if (!falling && simulationTime > previousTime) {
         double speed = 0.0;
         if (landed) {
@@ -733,8 +1038,9 @@ void WindowManager::Update(float& dT) {
             glm::max(static_cast<double>(glm::length(cameraPos)), BlackHole::HorizonRadius() * 1.015),
             speed, BlackHole::GravityParameter(), BlackHole::HorizonRadius()) : 1.0);
     }
-    if (blackHoleReady)
+    if (blackHoleReady && showBlackHole && !inStarSystem)
         blackHole.Update(simulationTime);
+    if (inStarSystem) starSystem.Update(simulationTime,cameraFront,cameraUp);
     if (showBlackHole && followPlanet) {
         const auto planetPosition = BlackHole::PlanetPosition(simulationTime);
         cameraPos += planetPosition - lastPlanetPosition;
@@ -754,6 +1060,7 @@ void WindowManager::Update(float& dT) {
 
     int framebufferWidth, framebufferHeight;
     glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
+    framebufferWidth=sceneWidth;
     if (framebufferWidth == 0 || framebufferHeight == 0) {
         return;
     }
@@ -771,10 +1078,13 @@ void WindowManager::Update(float& dT) {
     optics.BeginFrame();
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    if (showBlackHole && blackHoleReady) {
+    if (inStarSystem && starSystemReady) {
+        glPolygonMode(GL_FRONT_AND_BACK,GL_FILL);
+        starSystem.Render(fieldOfView,aspectRatio,cameraFront,cameraUp,simulationTime,trajectories,photonView);
+    } else if (showBlackHole && blackHoleReady) {
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
         blackHole.Render(projection * view, cameraPos, simulationTime,
-            observerGravity || horizonReached ? glm::vec3(observer.velocity) : glm::vec3(0.0f));
+            observerGravity || horizonReached ? glm::vec3(observer.velocity) : glm::vec3(0.0f),trajectories,selectedTarget);
         glPolygonMode(GL_FRONT_AND_BACK, showWireframe ? GL_LINE : GL_FILL);
     } else {
         //Apply Lighting When Out of Wireframe Mode
@@ -868,6 +1178,8 @@ void WindowManager::MakeNewWindow() {
     phongShader = compileShaderProgram(phongVertextSrc, phongFragmentSrc);
     blackHoleReady = blackHole.Initialize();
     optics.Initialize();
+    starSystemReady = starSystem.Initialize();
+    quantumReady = quantum.Initialize();
     shaderProgram = flatShader;
 
     cout << "Flat Shader ID: " << flatShader << endl;
@@ -911,15 +1223,20 @@ void WindowManager::MakeNewWindow() {
 #ifdef _WIN32
     const HWND nativeWindow = glfwGetWin32Window(window);
     const HMENU menu = CreateMenu();
-    AppendMenuW(menu, MF_STRING, GLFW_KEY_F2, L"Black hole / Model (F2)");
-    AppendMenuW(menu, MF_STRING, GLFW_KEY_F3, L"Miller flyby (F3)");
+    nativeMenu=menu;
+    AppendMenuW(menu, MF_STRING, 3030, L"Main menu (F10)");
+    AppendMenuW(menu, MF_STRING, 700, L"Black hole / Model");
+    AppendMenuW(menu, MF_STRING, 701, L"Miller flyby");
+    AppendMenuW(menu, MF_STRING, GLFW_KEY_F2, L"Orbits (F2)");
+    AppendMenuW(menu, MF_STRING, GLFW_KEY_F3, L"Information (F3)");
+    AppendMenuW(menu, MF_STRING, GLFW_KEY_F4, L"Overview (F4)");
     AppendMenuW(menu, MF_STRING, GLFW_KEY_SPACE, L"Play / Pause");
     AppendMenuW(menu, MF_STRING, GLFW_KEY_HOME, L"Home view");
     AppendMenuW(menu, MF_STRING, GLFW_KEY_LEFT_BRACKET, L"Slower [");
     AppendMenuW(menu, MF_STRING, GLFW_KEY_RIGHT_BRACKET, L"Faster ]");
     AppendMenuW(menu, MF_STRING, GLFW_KEY_COMMA, L"Time slower <");
     AppendMenuW(menu, MF_STRING, GLFW_KEY_PERIOD, L"Time faster >");
-    AppendMenuW(menu, MF_STRING, GLFW_KEY_F4, L"Spacecraft (F4)");
+    AppendMenuW(menu, MF_STRING, 702, L"Spacecraft");
     AppendMenuW(menu, MF_STRING, GLFW_KEY_B, L"Boost (B)");
     AppendMenuW(menu, MF_STRING, GLFW_KEY_R, L"Reset craft (R)");
     AppendMenuW(menu, MF_STRING, GLFW_KEY_N, L"New terrain (N)");
@@ -948,19 +1265,44 @@ void WindowManager::MakeNewWindow() {
     SetPropW(nativeWindow, L"RenderEngineWindow", window);
     originalWindowProcedure = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(nativeWindow, GWLP_WNDPROC,
         reinterpret_cast<LONG_PTR>(+[](HWND handle, UINT message, WPARAM wParam, LPARAM lParam) -> LRESULT {
-            if (message == WM_COMMAND && HIWORD(wParam) == 0) {
-                auto* glfwWindow = static_cast<GLFWwindow*>(GetPropW(handle, L"RenderEngineWindow"));
-                KeyCallback(glfwWindow, LOWORD(wParam), 0, GLFW_PRESS, 0);
+            auto* glfwWindow=static_cast<GLFWwindow*>(GetPropW(handle,L"RenderEngineWindow"));
+            auto* manager=glfwWindow?static_cast<WindowManager*>(glfwGetWindowUserPointer(glfwWindow)):nullptr;
+            if (message==WM_COMMAND && manager) {
+                if (LOWORD(wParam)==3030) manager->OpenMainMenu();
+                else manager->HandleInterfaceCommand(LOWORD(wParam),HIWORD(wParam));
                 return 0;
+            }
+            if (message==WM_SIZE && manager) manager->ResizeInterface();
+            if ((message==WM_CTLCOLORSTATIC || message==WM_CTLCOLOREDIT || message==WM_CTLCOLORLISTBOX) && manager) {
+                const int id=GetDlgCtrlID(reinterpret_cast<HWND>(lParam));
+                return reinterpret_cast<LRESULT>(id>=3000?manager->mainMenu.ControlColor(reinterpret_cast<void*>(wParam)):
+                    manager->scenePanel.ControlColor(reinterpret_cast<void*>(wParam)));
+            }
+            if (message==WM_GETMINMAXINFO) {
+                auto* bounds=reinterpret_cast<MINMAXINFO*>(lParam);
+                bounds->ptMinTrackSize={1000,720}; return 0;
             }
             return CallWindowProcW(originalWindowProcedure, handle, message, wParam, lParam);
         })));
     SetMenu(nativeWindow, menu);
     DrawMenuBar(nativeWindow);
+    scenePanel.Create(nativeWindow);
+    scenePanel.SetVisible(false);
+    std::vector<std::string> quantumNames;
+    for (const auto& example:QuantumStates::Examples()) quantumNames.push_back(example.name);
+    mainMenu.Create(nativeWindow,quantumNames);
+    EnumChildWindows(nativeWindow,+[](HWND control,LPARAM)->BOOL {
+        SetPropW(control,L"RenderEnginePreviousControlProc",reinterpret_cast<HANDLE>(
+            SetWindowLongPtrW(control,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(InterfaceKeyProcedure))));
+        return TRUE;
+    },0);
+    OpenMainMenu();
 #endif
 }
 
 void WindowManager::ReleaseGraphics() {
+    quantum.Release();
+    starSystem.Release();
     optics.Release();
     blackHole.Release();
     glDeleteVertexArrays(1, &VAO);
@@ -969,7 +1311,15 @@ void WindowManager::ReleaseGraphics() {
     glDeleteProgram(phongShader);
 #ifdef _WIN32
     const HWND nativeWindow = glfwGetWin32Window(window);
-    const HMENU menu = GetMenu(nativeWindow);
+    EnumChildWindows(nativeWindow,+[](HWND control,LPARAM)->BOOL {
+        const auto previous=GetPropW(control,L"RenderEnginePreviousControlProc");
+        if (previous) SetWindowLongPtrW(control,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(previous));
+        RemovePropW(control,L"RenderEnginePreviousControlProc");
+        return TRUE;
+    },0);
+    mainMenu.Release();
+    scenePanel.Release();
+    const HMENU menu = static_cast<HMENU>(nativeMenu);
     SetWindowLongPtrW(nativeWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(originalWindowProcedure));
     RemovePropW(nativeWindow, L"RenderEngineWindow");
     SetMenu(nativeWindow, nullptr);

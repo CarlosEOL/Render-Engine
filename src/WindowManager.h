@@ -3,6 +3,10 @@
 #include <vector>
 #include "BlackHole.h"
 #include "CameraOptics.h"
+#include "StarSystem.h"
+#include "ScenePanel.h"
+#include "AppMenu.h"
+#include "QuantumSimulation.h"
 
 //CONTEXT: MANAGES GLFW WINDOWS
 // I intentionally left out glad so the header won't be included in memoryTiles.Cpp, also then it won't need to compile it again in Tile.h
@@ -65,6 +69,30 @@ private:
     void UpdateObserver(double previousTime);
     void ApplyVisionProfile(int profile);
     void AlignCameraUp(const glm::vec3& up);
+    void HandleInterfaceCommand(int id, int notification);
+    void OpenMainMenu();
+    void StartSolarSystem();
+    void StartGargantua();
+    void StartQuantum(int index);
+    void SelectCatalogue(int id);
+    void EnterSelectedSystem(bool overview);
+    void RefreshPanel();
+    void ResizeInterface();
+    void SyncCameraAngles();
+    AppMenu mainMenu;
+    ScenePanel scenePanel;
+    StarSystem starSystem;
+    StarSystem previewSystem;
+    QuantumSimulation quantum;
+    bool starSystemReady = false;
+    bool quantumReady = false;
+    bool inStarSystem = false;
+    bool quantumMode = false;
+    bool trajectories = true;
+    int pendingSystemTarget = 0;
+    int activeSystemTarget = -2;
+    int quantumRateIndex = 2;
+    void* nativeMenu = nullptr;
     CameraOptics optics;
     int visionProfile = 0;
     float lensAspect = static_cast<float>(WIDTH) / HEIGHT;

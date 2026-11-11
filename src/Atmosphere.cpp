@@ -24,6 +24,7 @@ uniform bool logarithmicDepth;
 uniform mat4 inverseViewProjection;
 uniform vec3 cameraPosition;
 uniform vec3 planetCenter;
+uniform vec3 lightPosition;
 uniform float planetRadius;
 
 vec2 sphereInterval(vec3 origin, vec3 direction, float radius) {
@@ -39,7 +40,7 @@ void main() {
     vec4 farPoint = inverseViewProjection * vec4(screenPosition, 1.0, 1.0);
     vec3 direction = normalize(farPoint.xyz - cameraPosition * farPoint.w);
     vec3 origin = cameraPosition - planetCenter;
-    vec2 shell = sphereInterval(origin, direction, planetRadius * 1.12);
+    vec2 shell = sphereInterval(origin, direction, planetRadius * 1.025);
     float start = max(shell.x, 0.0);
     float finish = shell.y;
     float opaqueDepth = texture(sceneDepth, screenPosition * 0.5 + 0.5).r;
@@ -62,14 +63,14 @@ void main() {
     }
     const int samples = 12;
     float interval = (finish - start) / float(samples);
-    vec3 beta = vec3(70.0, 140.0, 300.0);
+    vec3 beta = vec3(37.0, 86.0, 210.0) / planetRadius;
     vec3 transmittance = vec3(1);
     vec3 scattering = vec3(0);
     for (int sampleIndex = 0; sampleIndex < samples; ++sampleIndex) {
         vec3 samplePosition = origin + direction * (start + (float(sampleIndex) + 0.5) * interval);
         float altitude = max(length(samplePosition) - planetRadius, 0.0);
-        float density = exp(-altitude / (planetRadius * 0.018));
-        vec3 sunDirection = normalize(-planetCenter - samplePosition);
+        float density = exp(-altitude / (planetRadius * 0.00125));
+        vec3 sunDirection = normalize(lightPosition - planetCenter - samplePosition);
         vec2 shadow = sphereInterval(samplePosition, sunDirection, planetRadius);
         float illumination = shadow.x > 0.0 && shadow.y >= shadow.x ? 0.0 : 1.0;
         float cosine = dot(direction, sunDirection);
@@ -96,7 +97,8 @@ void main() {
 }
 
 void Atmosphere::Render(const glm::mat4& viewProjection, const glm::vec3& camera,
-                        const glm::vec3& center, float radius, bool logarithmicDepth) const {
+                        const glm::vec3& center, float radius, bool logarithmicDepth,
+                        const glm::vec3& lightPosition) const {
     int viewport[4];
     glGetIntegerv(GL_VIEWPORT, viewport);
     if (viewport[2] <= 0 || viewport[3] <= 0)
@@ -129,6 +131,7 @@ void Atmosphere::Render(const glm::mat4& viewProjection, const glm::vec3& camera
     glUniformMatrix4fv(glGetUniformLocation(program, "inverseViewProjection"), 1, GL_FALSE, glm::value_ptr(inverse));
     glUniform3fv(glGetUniformLocation(program, "cameraPosition"), 1, glm::value_ptr(camera));
     glUniform3fv(glGetUniformLocation(program, "planetCenter"), 1, glm::value_ptr(center));
+    glUniform3fv(glGetUniformLocation(program, "lightPosition"), 1, glm::value_ptr(lightPosition));
     glUniform1f(glGetUniformLocation(program, "planetRadius"), radius);
     glUniform1i(glGetUniformLocation(program, "scene"), 0);
     glUniform1i(glGetUniformLocation(program, "sceneDepth"), 1);

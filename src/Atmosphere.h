@@ -5,7 +5,8 @@ class Atmosphere {
 public:
     bool Initialize();
     void Render(const glm::mat4& viewProjection, const glm::vec3& camera,
-                const glm::vec3& center, float radius, bool logarithmicDepth = false) const;
+                const glm::vec3& center, float radius, bool logarithmicDepth = false,
+                const glm::vec3& lightPosition = glm::vec3(0)) const;
     void Release();
 private:
     unsigned int program = 0;

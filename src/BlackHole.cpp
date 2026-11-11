@@ -348,6 +348,13 @@ bool BlackHole::Initialize() {
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), nullptr);
     glEnableVertexAttribArray(0);
     glGenVertexArrays(1, &screenVao);
+    glGenVertexArrays(1,&guides.vao);
+    glGenBuffers(1,&guides.buffer);
+    glBindVertexArray(guides.vao);
+    glBindBuffer(GL_ARRAY_BUFFER,guides.buffer);
+    glBufferData(GL_ARRAY_BUFFER,sizeof(glm::vec3),nullptr,GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,sizeof(glm::vec3),nullptr);
+    glEnableVertexAttribArray(0);
     std::mt19937 random(618);
     std::uniform_real_distribution<float> component(-1.0f, 1.0f);
     std::vector<glm::vec3> stars;
@@ -587,7 +594,7 @@ float BlackHole::PlanetSurfaceRadius(const glm::vec3& worldDirection, double sec
 }
 
 void BlackHole::Render(const glm::mat4& viewProjection, const glm::vec3& cameraPosition, double seconds,
-                      const glm::vec3& observerVelocity) const {
+                      const glm::vec3& observerVelocity, bool trajectories, int selected) const {
     const glm::mat4 identity(1.0f);
     const auto diskTilt = DiskOrientation();
     const float diskPhase = static_cast<float>(std::remainder(
@@ -673,7 +680,7 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::vec3& cameraP
         glUniform3f(colorLocation, 0.22f, 0.65f, 0.82f);
         glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(identity));
         glBindVertexArray(craftTrail.vao);
-        glDrawArrays(GL_LINE_STRIP, 0, static_cast<int>(trail.size()));
+        if (trajectories) glDrawArrays(GL_LINE_STRIP, 0, static_cast<int>(trail.size()));
 
         // Attitude guidance keeps the ring axis radial while the engine thrusts prograde.
         auto craftModel = glm::translate(identity, glm::vec3(observed.state.position))
@@ -713,6 +720,23 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::vec3& cameraP
     }
     glBindVertexArray(0);
     galaxies.Render(viewProjection);
+    if (trajectories && guides.vao) {
+        glUseProgram(program);
+        glUniform1i(surfaceLocation,4);
+        glUniformMatrix4fv(modelLocation,1,GL_FALSE,glm::value_ptr(identity));
+        glUniform3f(colorLocation,.06f,.18f,.26f);
+        glBindVertexArray(guides.vao);
+        glBindBuffer(GL_ARRAY_BUFFER,guides.buffer);
+        for (const auto& body:bodies) {
+            std::vector<glm::vec3> vertices;
+            const double period=glm::two_pi<double>()/OrbitalMechanics::MeanMotion(gravitationalParameter,body.orbit.semiMajorAxis);
+            for (int point=0;point<=256;++point)
+                vertices.push_back(glm::vec3(diskTilt*glm::vec4(OrbitalMechanics::PositionAtTime(body.orbit,gravitationalParameter,period*point/256),1)));
+            glBufferData(GL_ARRAY_BUFFER,vertices.size()*sizeof(glm::vec3),vertices.data(),GL_DYNAMIC_DRAW);
+            glDrawArrays(GL_LINE_STRIP,0,static_cast<int>(vertices.size()));
+        }
+        glBindVertexArray(0);
+    }
     for (int planet = 0; planet < 3; ++planet)
         atmosphere.Render(viewProjection, cameraPosition, PlanetPosition(seconds, planet), bodies[planet].radius);
     if (photonView) {
@@ -755,12 +779,37 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::vec3& cameraP
         glBindVertexArray(0);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
+    if (selected>=0 && guides.vao) {
+        const auto target=ResolveTarget(selected,seconds).position;
+        const auto delta=target-cameraPosition;
+        const float distance=glm::length(delta);
+        if (distance>.00001f) {
+            const auto forward=delta/distance;
+            const auto reference=std::abs(forward.y)<.95f?glm::vec3(0,1,0):glm::vec3(1,0,0);
+            const auto right=glm::normalize(glm::cross(forward,reference));
+            const auto up=glm::cross(right,forward);
+            std::vector<glm::vec3> vertices;
+            for (const auto axis:{right,up}) for (int sign:{-1,1}) {
+                vertices.push_back(target+axis*(sign*distance*.005f));
+                vertices.push_back(target+axis*(sign*distance*.014f));
+            }
+            glUseProgram(program);
+            glUniform1i(surfaceLocation,4);
+            glUniform3f(colorLocation,.15f,1,.65f);
+            glUniformMatrix4fv(modelLocation,1,GL_FALSE,glm::value_ptr(identity));
+            glDisable(GL_DEPTH_TEST);
+            glBindVertexArray(guides.vao); glBindBuffer(GL_ARRAY_BUFFER,guides.buffer);
+            glBufferData(GL_ARRAY_BUFFER,vertices.size()*sizeof(glm::vec3),vertices.data(),GL_DYNAMIC_DRAW);
+            glDrawArrays(GL_LINES,0,static_cast<int>(vertices.size()));
+            glBindVertexArray(0); glEnable(GL_DEPTH_TEST);
+        }
+    }
 }
 
 void BlackHole::Release() {
     atmosphere.Release();
     galaxies.Release();
-    for (auto* mesh : {&sphere, &backgroundStars, &craftRing, &craftTrail, &photonPackets}) {
+    for (auto* mesh : {&sphere, &backgroundStars, &craftRing, &craftTrail, &photonPackets, &guides}) {
         if (mesh->vao)
             glDeleteVertexArrays(1, &mesh->vao);
         if (mesh->buffer)

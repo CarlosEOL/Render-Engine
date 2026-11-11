@@ -24,7 +24,8 @@ namespace {
     double OrbitAnomaly(const OrbitalMechanics::Orbit& orbit, double gravitationalParameter, double seconds) {
         if (!std::isfinite(orbit.eccentricity) || orbit.eccentricity < 0.0 || orbit.eccentricity >= 1.0
             || !std::isfinite(seconds) || !std::isfinite(orbit.inclination)
-            || !std::isfinite(orbit.ascendingNode) || !std::isfinite(orbit.initialMeanAnomaly))
+            || !std::isfinite(orbit.ascendingNode) || !std::isfinite(orbit.initialMeanAnomaly)
+            || !std::isfinite(orbit.argumentOfPeriapsis))
             throw std::invalid_argument("Elliptical orbit requires finite angles, time, and 0 <= eccentricity < 1.");
         const double meanAnomaly = std::remainder(
             orbit.initialMeanAnomaly + OrbitalMechanics::MeanMotion(gravitationalParameter, orbit.semiMajorAxis) * seconds,
@@ -32,11 +33,14 @@ namespace {
         return EccentricAnomaly(meanAnomaly, orbit.eccentricity);
     }
 
-    glm::vec3 RotateOrbitPlane(const OrbitalMechanics::Orbit& orbit, double x, double y) {
+    glm::dvec3 RotateOrbitPlane(const OrbitalMechanics::Orbit& orbit, double x, double y) {
+        const double rotatedX = x * std::cos(orbit.argumentOfPeriapsis) - y * std::sin(orbit.argumentOfPeriapsis);
+        y = x * std::sin(orbit.argumentOfPeriapsis) + y * std::cos(orbit.argumentOfPeriapsis);
+        x = rotatedX;
         const double projectedY = y * std::cos(orbit.inclination);
         const double nodeCos = std::cos(orbit.ascendingNode);
         const double nodeSin = std::sin(orbit.ascendingNode);
-        return glm::vec3(x * nodeCos - projectedY * nodeSin,
+        return glm::dvec3(x * nodeCos - projectedY * nodeSin,
                          x * nodeSin + projectedY * nodeCos,
                          y * std::sin(orbit.inclination));
     }
@@ -50,6 +54,10 @@ double OrbitalMechanics::MeanMotion(double gravitationalParameter, double semiMa
 }
 
 glm::vec3 OrbitalMechanics::PositionAtTime(const Orbit& orbit, double gravitationalParameter, double seconds) {
+    return glm::vec3(PositionAtTimeDouble(orbit, gravitationalParameter, seconds));
+}
+
+glm::dvec3 OrbitalMechanics::PositionAtTimeDouble(const Orbit& orbit, double gravitationalParameter, double seconds) {
     const double anomaly = OrbitAnomaly(orbit, gravitationalParameter, seconds);
     const double x = orbit.semiMajorAxis * (std::cos(anomaly) - orbit.eccentricity);
     const double y = orbit.semiMajorAxis * std::sqrt(1.0 - orbit.eccentricity * orbit.eccentricity)
@@ -61,10 +69,10 @@ glm::vec3 OrbitalMechanics::VelocityAtTime(const Orbit& orbit, double gravitatio
     const double anomaly = OrbitAnomaly(orbit, gravitationalParameter, seconds);
     const double anomalyRate = MeanMotion(gravitationalParameter, orbit.semiMajorAxis)
         / (1.0 - orbit.eccentricity * std::cos(anomaly));
-    return RotateOrbitPlane(orbit,
+    return glm::vec3(RotateOrbitPlane(orbit,
         -orbit.semiMajorAxis * std::sin(anomaly) * anomalyRate,
         orbit.semiMajorAxis * std::sqrt(1.0 - orbit.eccentricity * orbit.eccentricity)
-            * std::cos(anomaly) * anomalyRate);
+            * std::cos(anomaly) * anomalyRate));
 }
 
 double OrbitalMechanics::GravitationalFrequencyRatio(double emitterRadius, double observerRadius, double horizonRadius) {

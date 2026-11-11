@@ -32,7 +32,7 @@ public:
     double SpacecraftLightAge(const glm::vec3& camera, double seconds) const;
     void SetPhotonView(bool enabled, const glm::vec3& detector) { photonView = enabled; photonDetector = detector; }
     void Render(const glm::mat4& viewProjection, const glm::vec3& cameraPosition, double seconds,
-                const glm::vec3& observerVelocity = glm::vec3(0.0f)) const;
+                const glm::vec3& observerVelocity = glm::vec3(0.0f), bool trajectories = true, int selected = -1) const;
     void Release();
 
 private:
@@ -50,6 +50,7 @@ private:
     Mesh craftRing;
     Mesh craftTrail;
     Mesh photonPackets;
+    Mesh guides;
     bool photonView = false;
     glm::vec3 photonDetector = glm::vec3(0);
     struct PhotonPacket {

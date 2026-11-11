@@ -166,6 +166,12 @@
     <ClCompile Include="src\Atmosphere.cpp" />
     <ClCompile Include="src\CameraOptics.cpp" />
     <ClCompile Include="src\GalaxyBackground.cpp" />
+    <ClCompile Include="src\StarSystem.cpp" />
+    <ClCompile Include="src\SolarSystem.cpp" />
+    <ClCompile Include="src\ScenePanel.cpp" />
+    <ClCompile Include="src\AppMenu.cpp" />
+    <ClCompile Include="src\QuantumStates.cpp" />
+    <ClCompile Include="src\QuantumSimulation.cpp" />
     <ClCompile Include="src\glad.c" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\ObjectLoader.cpp" />
@@ -181,6 +187,12 @@
     <ClInclude Include="src\CameraOptics.h" />
     <ClInclude Include="src\LensCalibration.h" />
     <ClInclude Include="src\GalaxyBackground.h" />
+    <ClInclude Include="src\StarSystem.h" />
+    <ClInclude Include="src\Astronomy.h" />
+    <ClInclude Include="src\ScenePanel.h" />
+    <ClInclude Include="src\AppMenu.h" />
+    <ClInclude Include="src\QuantumStates.h" />
+    <ClInclude Include="src\QuantumSimulation.h" />
     <ClInclude Include="src\ObjectLoader.h" />
     <ClInclude Include="src\WindowManager.h" />
   </ItemGroup>

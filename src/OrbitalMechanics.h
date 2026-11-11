@@ -15,10 +15,12 @@ namespace OrbitalMechanics {
         double inclination;
         double ascendingNode;
         double initialMeanAnomaly;
+        double argumentOfPeriapsis = 0.0;
     };
 
     double MeanMotion(double gravitationalParameter, double semiMajorAxis);
     glm::vec3 PositionAtTime(const Orbit& orbit, double gravitationalParameter, double seconds);
+    glm::dvec3 PositionAtTimeDouble(const Orbit& orbit, double gravitationalParameter, double seconds);
     glm::vec3 VelocityAtTime(const Orbit& orbit, double gravitationalParameter, double seconds);
     double GravitationalFrequencyRatio(double emitterRadius, double observerRadius, double horizonRadius);
     void AdvanceParticle(ParticleState& state, double gravitationalParameter, double thrustAcceleration, double seconds);
