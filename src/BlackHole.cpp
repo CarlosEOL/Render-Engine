@@ -201,10 +201,14 @@ void main() {
     vec3 cameraDirection = normalize(farPoint.xyz / farPoint.w - cameraPosition);
     vec3 direction = observerRayDirection(cameraDirection);
     float observerRadius = length(cameraPosition);
-    // Rays whose impact parameters exceed the disk's apparent extent miss the scene.
-    if (dot(cameraPosition, direction) > 0.0 && observerRadius > 2.0)
+    // A Schwarzschild ray with impact parameter b turns at r = b * sqrt(1 - rs / r), so it never gets inside
+    // the outer disk radius R when b > R / sqrt(1 - rs / R). |position x direction| equals b * sqrt(1 - rs / r0)
+    // for an observer at r0, hence never exceeds b, so comparing it with that bound (plus 2% margin for the
+    // integrator) can only discard rays that miss the disk and the horizon. Outgoing rays from outside R never
+    // return inside it.
+    if (dot(cameraPosition, direction) > 0.0 && observerRadius > diskRadii.y)
         discard;
-    if (length(cross(cameraPosition, direction)) > 2.0)
+    if (length(cross(cameraPosition, direction)) > 1.02 * diskRadii.y / sqrt(1.0 - horizonRadius / diskRadii.y))
         discard;
 
     vec3 position = cameraPosition;
