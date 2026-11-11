@@ -9,30 +9,32 @@ using namespace std;
 GLuint AssetManager::LoadTexture(const char* filePath, bool srgb) {
     int width, height, nrChannels;
     stbi_set_flip_vertically_on_load(true); // Flip for OpenGL
-    unsigned char* data = stbi_load(filePath, &width, &height, &nrChannels, 0);
+    // Always decode to RGBA so 1- and 2-channel images cannot be read as RGB past the end of the buffer.
+    unsigned char* data = stbi_load(filePath, &width, &height, &nrChannels, 4);
 
     if (!data) {
         cerr << "Failed to load texture: " << filePath << std::endl;
         return 0;
     }
 
-    GLenum format = GL_RGB;
-    if (nrChannels == 4)
-        format = GL_RGBA;
-
     GLuint textureID;
     glGenTextures(1, &textureID);
     glBindTexture(GL_TEXTURE_2D, textureID);
 
+    // Rows are tightly packed whatever the width; the default alignment of 4 would skew odd widths.
+    GLint previousAlignment = 4;
+    glGetIntegerv(GL_UNPACK_ALIGNMENT, &previousAlignment);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
     // Upload pixel data to GPU
-    const GLint internalFormat = srgb ? (nrChannels == 4 ? GL_SRGB8_ALPHA8 : GL_SRGB8) : format;
-    glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+    glTexImage2D(GL_TEXTURE_2D, 0, srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
     glGenerateMipmap(GL_TEXTURE_2D);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, previousAlignment);
 
     // Texture settings
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); // No repeating
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); // Smoother scaling
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR); // Uses the mipmaps generated above
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
     if (textureID == 0) {
@@ -41,14 +43,4 @@ GLuint AssetManager::LoadTexture(const char* filePath, bool srgb) {
     
     stbi_image_free(data); // Free CPU memory
     return textureID;
-}
-
-AssetManager::AssetManager()
-{
-    hiddenTex = LoadTexture("assets/hidden.png");
-    cout<<"Loaded Hidden."<<endl;
-    rightTex = LoadTexture("assets/right.png");
-    cout<<"Loaded Right."<<endl;
-    wrongTex = LoadTexture("assets/wrong.png");
-    cout<<"Loaded Wrong."<<endl;
 }

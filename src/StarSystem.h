@@ -95,7 +95,8 @@ class StarSystem
     glm::mat4 Rotation(int planet, double seconds) const;
     double SurfaceRadius(int planet, const glm::dvec3 &direction, double seconds) const;
     void ConstrainSurface(double seconds, glm::vec3 &front, glm::vec3 &up);
-    void UpdatePatch(const glm::vec3 &direction);
+    void StoreLandedDirection(double seconds);
+    void BuildOrbitPaths();
     Star star;
     std::vector<Planet> planets;
     std::vector<OrbitalMechanics::Orbit> asteroids;
@@ -105,6 +106,7 @@ class StarSystem
     int selected = -1;
     int landedPlanet = -1;
     bool landed = false;
+    glm::dvec3 landedDirection = glm::dvec3(0, 1, 0); // unit vector from the planet centre in the planet's own frame
     bool following = false;
     double lastTime = 0;
     glm::dvec3 lastFollowPosition = glm::dvec3(0);
@@ -113,6 +115,18 @@ class StarSystem
     unsigned int lineVao = 0, lineBuffer = 0;
     unsigned int patchVao = 0, patchBuffer = 0;
     int sphereCount = 0, patchCount = 0;
-    glm::vec3 patchDirection = glm::vec3(0);
+    struct Uniforms
+    {
+        int viewProjection = -1, starPosition = -1, phase = -1, model = -1, normalMatrix = -1, bodyKind = -1,
+            terrainSeed = -1, seaLevel = -1, terrainRelief = -1, waterWaveHeight = -1, albedo = -1, temperature = -1,
+            patchEnabled = -1, patchDrawing = -1, patchCenter = -1, patchFrame = -1;
+    } uniform;
+    // Orbit polylines relative to each body's parent. They do not depend on time, so they are built on first use.
+    static constexpr int orbitSamples = 257;
+    std::vector<glm::dvec3> orbitPaths;
+    // Per-frame scratch, kept to avoid reallocating.
+    std::vector<glm::dvec3> positions;
+    std::vector<glm::vec3> lineVertices;
+    size_t lineCapacity = 0;
     Atmosphere atmosphere;
 };
