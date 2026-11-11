@@ -189,6 +189,13 @@ uniform vec3 diskAxis;
 uniform vec2 diskRadii;
 uniform float diskPhase;
 
+// photonAcceleration with the radius passed in and r^-5 as multiplies instead of pow().
+vec3 lensAcceleration(vec3 position, float radius, float angularMomentumSquared) {
+    float inverseRadius = 1.0 / radius;
+    float inverseSquared = inverseRadius * inverseRadius;
+    return (-1.5 * horizonRadius * angularMomentumSquared * inverseSquared * inverseSquared * inverseRadius) * position;
+}
+
 void main() {
     vec4 farPoint = inverseViewProjection * vec4(screenPosition, 1.0, 1.0);
     vec3 cameraDirection = normalize(farPoint.xyz / farPoint.w - cameraPosition);
@@ -207,9 +214,10 @@ void main() {
     float travelled = 0.0;
     bool hit = false;
     vec3 radiance = vec3(0.0);
+    float radius = length(position);
+    vec3 acceleration = lensAcceleration(position, radius, angularMomentumSquared);
 
     for (int step = 0; step < 240; ++step) {
-        float radius = length(position);
         if (radius < horizonRadius * 1.015) {
             hit = true;
             break;
@@ -218,10 +226,11 @@ void main() {
             break;
 
         float interval = clamp(radius * 0.065, 0.004, 0.6);
-        vec3 acceleration = photonAcceleration(position, angularMomentumSquared);
         vec3 nextPosition = position + interval * tangent + 0.5 * interval * interval * acceleration;
-        vec3 nextTangent = tangent + 0.5 * interval
-            * (acceleration + photonAcceleration(nextPosition, angularMomentumSquared));
+        float nextRadius = length(nextPosition);
+        // The end-of-step acceleration is the next step's start, so each step evaluates it once.
+        vec3 nextAcceleration = lensAcceleration(nextPosition, nextRadius, angularMomentumSquared);
+        vec3 nextTangent = tangent + 0.5 * interval * (acceleration + nextAcceleration);
 
         float planeBefore = dot(position, diskAxis);
         float planeAfter = dot(nextPosition, diskAxis);
@@ -251,6 +260,8 @@ void main() {
         travelled += length(nextPosition - position);
         position = nextPosition;
         tangent = nextTangent;
+        radius = nextRadius;
+        acceleration = nextAcceleration;
     }
     if (!hit)
         discard;
