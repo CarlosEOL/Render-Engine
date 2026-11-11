@@ -100,18 +100,23 @@ void AppMenu::Resize(int width, int height)
     const int gap = static_cast<int>(24 * scale);
     const int half = (w - gap) / 2;
     const int y = static_cast<int>(170 * scale);
-    const int cardHeight = std::max(96, std::min(static_cast<int>(200 * scale), height - top - y - 140));
+    const auto px = [scale](int value) { return static_cast<int>(value * scale); };
+    const int buttonHeight = px(42);
+    const int noteHeight = px(80);
+    const int cardHeight = std::max(px(96), std::min(px(200), height - top - y - px(20) - noteHeight - px(16) - buttonHeight - px(16)));
     for (int id : {3010, 3012})
         place(id, 0, y, half, cardHeight);
     for (int id : {3011, 3013})
         place(id, half + gap, y, half, cardHeight);
-    place(3003, 0, y + cardHeight + 20, w, static_cast<int>(80 * scale));
-    const int listHeight = std::max(130, std::min(static_cast<int>(330 * scale), height - top - y - 90));
+    place(3003, 0, y + cardHeight + px(20), w, noteHeight);
+    const int listHeight = std::max(px(130), std::min(px(330), height - top - y - px(16) - buttonHeight - px(16)));
     place(3020, 0, y, half, listHeight);
     place(3021, half + gap, y, half, listHeight);
-    place(3014, half + gap, y + listHeight + 16, half, static_cast<int>(42 * scale));
-    place(3015, 0, y + (page == Page::Quantum ? listHeight : cardHeight + 70) + 16, static_cast<int>(130 * scale),
-          static_cast<int>(42 * scale));
+    place(3014, half + gap, y + listHeight + px(16), half, buttonHeight);
+    const int backY = page == Page::Quantum ? y + listHeight + px(16)
+                      : page == Page::Planetorium ? y + cardHeight + px(20) + noteHeight + px(16)
+                                                  : y + cardHeight + px(20);
+    place(3015, 0, backY, px(130), buttonHeight);
     InvalidateRect(window, nullptr, TRUE);
 }
 

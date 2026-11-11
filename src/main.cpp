@@ -11,8 +11,10 @@ int main(int argc, char** argv) {
     float deltaTime = 0.0f;
 
     WindowManager window;
-    window.MakeNewWindow();
-    cout << "Made a new window.\n" << endl;
+    if (!window.MakeNewWindow()) {
+        glfwTerminate();
+        return 1;
+    }
     if (argc > 1 && string(argv[1]) == "--benchmark") {
         const int status = window.RunBenchmark();
         window.ReleaseGraphics();
