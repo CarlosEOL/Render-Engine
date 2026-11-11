@@ -39,6 +39,30 @@ glm::vec3 RightOf(const glm::vec3 &front, const glm::vec3 &up)
         right = glm::cross(front, std::abs(front.y) < .9f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0));
     return glm::normalize(right);
 }
+
+// The atmosphere pass changes a pixel only when the ray through its centre meets the planet's shell, and it copies
+// the whole framebuffer to find out. A shell that is off screen, behind the camera or smaller than the gap between
+// pixel centres leaves the frame untouched, so such a planet can skip the pass. The shell is bounded conservatively:
+// a point on a sphere of radius r at view depth d projects within r / (d - r) * (1 + |offset| / d) of the centre.
+bool ShellReachesPixel(const glm::mat4 &projection, const glm::mat4 &view, const glm::vec3 &center, float radius,
+                       int width, int height)
+{
+    const double shell = radius * 1.03; // the shader's shell is 1.025 times the radius
+    const glm::dvec3 c = glm::dvec3(view * glm::vec4(center, 1));
+    const double depth = -c.z;
+    if (depth <= 2 * shell)
+        return true;
+    const double spread = shell / (depth - shell);
+    const auto reaches = [&](double offset, double scale, int pixels) {
+        const double middle = scale * offset / depth;
+        const double half = scale * spread * (1 + std::abs(offset) / depth) * 1.01 + 0.1 / pixels; // 0.1 / pixels is 0.05 px
+        // Pixel i is centred at NDC (i + 0.5) * 2 / pixels - 1.
+        const double low = std::ceil((middle - half + 1) * 0.5 * pixels - 0.5);
+        const double high = std::floor((middle + half + 1) * 0.5 * pixels - 0.5);
+        return std::max(low, 0.0) <= std::min(high, pixels - 1.0);
+    };
+    return reaches(c.x, projection[0][0], width) && reaches(c.y, projection[1][1], height);
+}
 } // namespace
 
 StarSystem::Star StarSystem::DescribeStar(int id, const std::string &name)
@@ -711,14 +735,16 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
     if (photonView)
         draw(GL_POINTS, photonFirst, crosshairFirst - photonFirst, glm::vec3(.3f, .7f, 1), 3);
     glBindVertexArray(0);
+    int viewport[4];
+    glGetIntegerv(GL_VIEWPORT, viewport);
     for (int planet = 0; planet < count; ++planet)
     {
         if (!planets[planet].atmosphere)
             continue;
         const auto center = glm::vec3(positions[planet] - camera);
-        atmosphere.Render(vp, glm::vec3(0), center,
-                          static_cast<float>(planets[planet].radiusEarth * Astronomy::earthRadiusAu), true,
-                          glm::vec3(-camera));
+        const auto radius = static_cast<float>(planets[planet].radiusEarth * Astronomy::earthRadiusAu);
+        if (ShellReachesPixel(projection, view, center, radius, viewport[2], viewport[3]))
+            atmosphere.Render(vp, glm::vec3(0), center, radius, true, glm::vec3(-camera));
     }
     if (crosshair)
     {
