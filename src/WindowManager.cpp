@@ -12,7 +12,11 @@
 #include <GLFW/glfw3native.h>
 #endif
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <fstream>
+#include <functional>
 #include <cstdint>
 #include <iostream>
 #include <iomanip>
@@ -1325,6 +1329,54 @@ void WindowManager::ReleaseGraphics() {
     SetMenu(nativeWindow, nullptr);
     DestroyMenu(menu);
 #endif
+}
+
+int WindowManager::RunBenchmark() {
+    using clock = std::chrono::steady_clock;
+    glfwSwapInterval(0);
+    const std::pair<const char*, std::function<void()>> stages[] = {
+        {"gargantua", [&] { StartGargantua(); }},
+        {"miller-flyby", [&] { StartGargantua(); KeyCallback(window, 701, 0, GLFW_PRESS, 0); }},
+        {"solar-system", [&] { StartSolarSystem(); }},
+        {"quantum", [&] { StartQuantum(0); }},
+    };
+    std::cout << "scene start_ms frames mean_ms p50_ms p95_ms max_ms" << std::endl;
+    for (const auto& [name, start] : stages) {
+        const auto startBegin = clock::now();
+        start();
+        const double startMs = std::chrono::duration<double, std::milli>(clock::now() - startBegin).count();
+        simulationPlaying = true;
+        std::vector<double> frames;
+        auto last = clock::now();
+        const auto begin = last;
+        while (!isClosed() && clock::now() - begin < std::chrono::seconds(6)) {
+            const auto now = clock::now();
+            float dt = std::chrono::duration<float>(now - last).count();
+            last = now;
+            Update(dt);
+            if (now - begin > std::chrono::seconds(1)) frames.push_back(dt * 1000.0);
+        }
+        if (frames.empty()) return 1;
+        int width, height;
+        glfwGetFramebufferSize(window, &width, &height);
+        std::vector<unsigned char> pixels(static_cast<size_t>(width) * height * 3);
+        glFinish();
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glReadBuffer(GL_FRONT);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+        std::ofstream image(std::string("benchmark-") + name + ".ppm", std::ios::binary);
+        image << "P6\n" << width << ' ' << height << "\n255\n";
+        for (int row = height - 1; row >= 0; --row)
+            image.write(reinterpret_cast<const char*>(pixels.data()) + static_cast<size_t>(row) * width * 3, width * 3);
+        std::sort(frames.begin(), frames.end());
+        double sum = 0;
+        for (double f : frames) sum += f;
+        std::cout << name << ' ' << std::fixed << std::setprecision(3) << startMs << ' ' << frames.size() << ' ' << std::fixed << std::setprecision(3)
+                  << sum / frames.size() << ' ' << frames[frames.size() / 2] << ' '
+                  << frames[frames.size() * 95 / 100] << ' ' << frames.back() << std::endl;
+    }
+    return 0;
 }
 
 bool WindowManager::isClosed() {

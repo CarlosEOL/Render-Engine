@@ -31,6 +31,7 @@ public:
     void Update(float&);
     bool isClosed();
     void ReleaseGraphics();
+    int RunBenchmark();
     double GetSimulationTime() const { return simulationTime; }
 
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
