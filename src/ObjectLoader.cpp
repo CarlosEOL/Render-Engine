@@ -1,7 +1,9 @@
 #include "ObjectLoader.h"
 
+#include <cfloat>
 #include <iostream>
 #include <vector>
+#include <glm/glm.hpp>
 
 // TinyObjLoader.CC (OBJ) // https://github.com/tinyobjloader/tinyobjloader/blob/release/tiny_obj_loader.cc
 #include <filesystem>
@@ -27,42 +29,61 @@ bool ObjectLoader::LoadOBJ(const std::string& path, std::vector<float>& outVerti
     if (!ret) return false;
 
     glm::vec3 min(FLT_MAX), max(-FLT_MAX);
+    outVertices.clear();
 
-    for (const auto& shape : shapes) 
+    const auto validVertex = [&](int i) { return i >= 0 && 3 * static_cast<size_t>(i) + 2 < attrib.vertices.size(); };
+    const auto validNormal = [&](int i) { return i >= 0 && 3 * static_cast<size_t>(i) + 2 < attrib.normals.size(); };
+
+    for (const auto& shape : shapes)
     {
-        for (const auto& index : shape.mesh.indices) 
+        // LoadObj triangulates, so every three indices form one face.
+        const auto& indices = shape.mesh.indices;
+        for (size_t first = 0; first + 2 < indices.size(); first += 3)
         {
-            float vx = attrib.vertices[3 * index.vertex_index + 0];
-            float vy = attrib.vertices[3 * index.vertex_index + 1];
-            float vz = attrib.vertices[3 * index.vertex_index + 2];
-
-            float nx = 0, ny = 0, nz = 0;
-            if (index.normal_index >= 0)
+            glm::vec3 corner[3];
+            bool valid = true;
+            for (int k = 0; k < 3; ++k)
             {
-                nx = attrib.normals[3 * index.normal_index + 0];
-                ny = attrib.normals[3 * index.normal_index + 1];
-                nz = attrib.normals[3 * index.normal_index + 2];
+                const int v = indices[first + k].vertex_index;
+                if (!validVertex(v))
+                {
+                    valid = false;
+                    break;
+                }
+                corner[k] = glm::vec3(attrib.vertices[3 * v], attrib.vertices[3 * v + 1], attrib.vertices[3 * v + 2]);
             }
+            if (!valid)
+                continue;
 
-            min.x = std::min(min.x, vx);
-            min.y = std::min(min.y, vy);
-            min.z = std::min(min.z, vz);
+            // Files without normals get a flat face normal; an all-zero normal turns into NaN when normalized in the shader.
+            glm::vec3 flat = glm::cross(corner[1] - corner[0], corner[2] - corner[0]);
+            flat = glm::length(flat) > 1e-20f ? glm::normalize(flat) : glm::vec3(0, 1, 0);
 
-            max.x = std::max(max.x, vx);
-            max.y = std::max(max.y, vy);
-            max.z = std::max(max.z, vz);
+            for (int k = 0; k < 3; ++k)
+            {
+                const int n = indices[first + k].normal_index;
+                glm::vec3 normal = flat;
+                if (validNormal(n))
+                    normal = glm::vec3(attrib.normals[3 * n], attrib.normals[3 * n + 1], attrib.normals[3 * n + 2]);
+                if (glm::length(normal) < 1e-6f)
+                    normal = flat;
 
-            outVertices.push_back(vx);
-            outVertices.push_back(vy);
-            outVertices.push_back(vz);
-            outVertices.push_back(nx);
-            outVertices.push_back(ny);
-            outVertices.push_back(nz);
+                min = glm::min(min, corner[k]);
+                max = glm::max(max, corner[k]);
+
+                outVertices.insert(outVertices.end(), {corner[k].x, corner[k].y, corner[k].z, normal.x, normal.y, normal.z});
+            }
         }
     }
 
+    if (outVertices.empty())
+    {
+        std::cerr << "[OBJ error] No triangles in: " << path << std::endl;
+        return false;
+    }
+
     center = (min + max) * 0.5f;
-    
+
     return true;
 }
 
