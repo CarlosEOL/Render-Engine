@@ -98,5 +98,18 @@ int main() {
         std::cout<<"landed drift "<<drift*6371e3<<" m"<<std::endl;
         Require(drift*6371e3<1,"Landed camera drifted along the surface");
     }
+    {
+        StarSystem pole; pole.LoadSolarSystem();
+        glm::vec3 front(0,0,-1),up(0,1,0);
+        pole.SelectPlanet(2);
+        pole.camera=pole.Position(2,0)+glm::dvec3(0,1e-3,0);
+        pole.GoToSelected(0,front,up);
+        Require(glm::length(glm::cross(front,up))>.1f,"GoToSelected left the view direction parallel to up");
+        StarSystem core; core.LoadSolarSystem();
+        core.SelectPlanet(2);
+        core.camera=core.Position(2,0);
+        core.ToggleLanding(0,front,up);
+        Require(std::isfinite(core.camera.x+core.camera.y+core.camera.z),"Landing with the camera at the planet centre produced NaN");
+    }
     std::cout<<Examples().size()<<" quantum presets checked; solar scale, hierarchy and generation checks passed.\n";
 }

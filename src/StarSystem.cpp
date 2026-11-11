@@ -30,6 +30,15 @@ void AlignUp(glm::vec3 &front, glm::vec3 &up, const glm::vec3 &nextUp)
             glm::rotate(glm::mat4(1), std::atan2(sine, glm::dot(up, nextUp)), axis / sine) * glm::vec4(front, 0)));
     up = nextUp;
 }
+
+// cross(front, up) vanishes when the two are parallel, which would turn every direction built from it into NaN.
+glm::vec3 RightOf(const glm::vec3 &front, const glm::vec3 &up)
+{
+    auto right = glm::cross(front, up);
+    if (glm::length(right) < 1e-3f)
+        right = glm::cross(front, std::abs(front.y) < .9f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0));
+    return glm::normalize(right);
+}
 } // namespace
 
 StarSystem::Star StarSystem::DescribeStar(int id, const std::string &name)
@@ -193,7 +202,8 @@ void StarSystem::ConstrainSurface(double seconds, glm::vec3 &front, glm::vec3 &u
     if (landedPlanet < 0)
         return;
     const auto center = Position(landedPlanet, seconds);
-    const auto radial = glm::normalize(camera - center);
+    const auto offset = camera - center;
+    const auto radial = glm::length(offset) > 0 ? glm::normalize(offset) : glm::dvec3(up);
     AlignUp(front, up, glm::vec3(radial));
     camera = center + radial * (SurfaceRadius(landedPlanet, radial, seconds) + 2.0 / Astronomy::metresPerAu);
 }
@@ -232,7 +242,7 @@ void StarSystem::Move(GLFWwindow *window, float realSeconds, glm::vec3 &front, g
     double distance = speedAu * realSeconds;
     if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS)
         distance *= 5;
-    const auto right = glm::normalize(glm::cross(front, up));
+    const auto right = RightOf(front, up);
     glm::dvec3 movement(0);
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
         movement += glm::dvec3(front);
@@ -282,7 +292,8 @@ void StarSystem::GoToSelected(double seconds, glm::vec3 &front, glm::vec3 &up)
         offset = glm::dvec3(0, 0, 1);
     camera = target + glm::normalize(offset) * radius * 5.0;
     front = glm::normalize(glm::vec3(target - camera));
-    up = glm::vec3(0, 1, 0);
+    // Looking straight along the pole would leave front parallel to up and the view matrix undefined.
+    up = std::abs(front.y) > .9999f ? glm::vec3(0, 0, -1) : glm::vec3(0, 1, 0);
     speedAu = radius * 0.5;
     lastTime = seconds;
 }
@@ -700,4 +711,5 @@ void StarSystem::Release()
         if (buffer)
             glDeleteBuffers(1, &buffer);
     program = sphereVao = sphereBuffer = lineVao = lineBuffer = patchVao = patchBuffer = 0;
+    sphereCount = patchCount = 0;
 }
