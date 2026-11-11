@@ -198,14 +198,22 @@ void StarSystem::ConstrainSurface(double seconds, glm::vec3 &front, glm::vec3 &u
     camera = center + radial * (SurfaceRadius(landedPlanet, radial, seconds) + 2.0 / Astronomy::metresPerAu);
 }
 
+void StarSystem::StoreLandedDirection(double seconds)
+{
+    const auto spin = glm::dmat3(glm::mat3(Rotation(landedPlanet, seconds)));
+    landedDirection = glm::normalize(glm::transpose(spin) * (camera - Position(landedPlanet, seconds)));
+}
+
 void StarSystem::Update(double seconds, glm::vec3 &front, glm::vec3 &up)
 {
     if (landed)
     {
-        const auto centerBefore = Position(landedPlanet, lastTime);
         const auto rotation = Rotation(landedPlanet, seconds) * glm::transpose(Rotation(landedPlanet, lastTime));
-        camera =
-            Position(landedPlanet, seconds) + glm::dvec3(rotation * glm::vec4(glm::vec3(camera - centerBefore), 0));
+        // Rebuilt from the stored planet-frame direction every frame: carrying camera through float matrices
+        // frame after frame let it drift along the surface by metres at Earth scale. This is the same matrix the
+        // planet is drawn with, so the ground stays fixed relative to the camera.
+        camera = Position(landedPlanet, seconds) +
+                 glm::dmat3(glm::mat3(Rotation(landedPlanet, seconds))) * landedDirection;
         front = glm::normalize(glm::vec3(rotation * glm::vec4(front, 0)));
         up = glm::normalize(glm::vec3(rotation * glm::vec4(up, 0)));
         ConstrainSurface(seconds, front, up);
@@ -243,7 +251,10 @@ void StarSystem::Move(GLFWwindow *window, float realSeconds, glm::vec3 &front, g
     }
     camera += distance * movement;
     if (landed)
+    {
         ConstrainSurface(lastTime, front, up);
+        StoreLandedDirection(lastTime);
+    }
     else
     {
         for (int planet = 0; planet < static_cast<int>(planets.size()); ++planet)
@@ -303,6 +314,7 @@ void StarSystem::ToggleLanding(double seconds, glm::vec3 &front, glm::vec3 &up)
     landed = true;
     following = false;
     ConstrainSurface(seconds, front, up);
+    StoreLandedDirection(seconds);
     auto horizon = glm::vec3(-Position(selected, seconds));
     horizon -= up * glm::dot(horizon, up);
     if (glm::length(horizon) < .000001f)

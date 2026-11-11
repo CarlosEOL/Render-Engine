@@ -95,6 +95,7 @@ class StarSystem
     glm::mat4 Rotation(int planet, double seconds) const;
     double SurfaceRadius(int planet, const glm::dvec3 &direction, double seconds) const;
     void ConstrainSurface(double seconds, glm::vec3 &front, glm::vec3 &up);
+    void StoreLandedDirection(double seconds);
     void UpdatePatch(const glm::vec3 &direction);
     Star star;
     std::vector<Planet> planets;
@@ -105,6 +106,7 @@ class StarSystem
     int selected = -1;
     int landedPlanet = -1;
     bool landed = false;
+    glm::dvec3 landedDirection = glm::dvec3(0, 1, 0); // unit vector from the planet centre in the planet's own frame
     bool following = false;
     double lastTime = 0;
     glm::dvec3 lastFollowPosition = glm::dvec3(0);

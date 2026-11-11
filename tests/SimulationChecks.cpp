@@ -1,7 +1,9 @@
 #include "QuantumStates.h"
 #include "StarSystem.h"
 #include "Astronomy.h"
+#include <algorithm>
 #include <cmath>
+#include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
 #include <stdexcept>
 
@@ -73,6 +75,28 @@ int main() {
         Require(follow.Selected()==3,"Pick did not select the planet it was aimed at");
         follow.Update(7200,front,up);
         Require(glm::length(follow.camera-before)<1e-12,"Changing the selection while following moved the camera");
+    }
+    {
+        StarSystem land; land.LoadSolarSystem();
+        glm::vec3 front(0,0,-1),up(0,1,0);
+        land.SelectPlanet(2); land.GoToSelected(0,front,up); land.ToggleLanding(0,front,up);
+        Require(land.IsLanded(),"Could not land on Earth");
+        const auto& body=land.Planets()[2];
+        // The planet is drawn with a float rotation; a landed camera must stay fixed in that frame.
+        const auto bodyDirection=[&](double t) {
+            auto spin=glm::rotate(glm::mat4(1),body.tilt,glm::vec3(1,0,0));
+            spin=glm::rotate(spin,static_cast<float>(std::remainder(t/body.daySeconds,1.0)*6.283185307179586),glm::vec3(0,1,0));
+            return glm::normalize(glm::transpose(glm::dmat3(glm::mat3(spin)))*(land.camera-land.Position(2,t)));
+        };
+        const auto start=bodyDirection(0);
+        double drift=0;
+        for (int frame=1;frame<=6000;++frame) {
+            const double t=frame*0.5;
+            land.Update(t,front,up);
+            drift=std::max(drift,glm::length(bodyDirection(t)-start));
+        }
+        std::cout<<"landed drift "<<drift*6371e3<<" m"<<std::endl;
+        Require(drift*6371e3<1,"Landed camera drifted along the surface");
     }
     std::cout<<Examples().size()<<" quantum presets checked; solar scale, hierarchy and generation checks passed.\n";
 }
