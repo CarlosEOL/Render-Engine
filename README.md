@@ -1,30 +1,56 @@
 # Render-Engine
-3D Render Engine with GLFW, GLAD, GLEW & glm
+3D render engine with GLFW, glad and glm. It has three laboratories: a 1:1 scale Solar System, the Gargantua black-hole system, and a quantum state viewer. Drop an OBJ or FBX file on the window to view a model.
+
+## Building
+
+The project builds with Visual Studio 2022 (v143 toolset, x64 only). It expects third-party headers and libraries in one folder, `..\External_Lib` next to the repository by default:
+
+- `include\` holds `glad\glad.h`, `KHR\khrplatform.h`, `GLFW\`, `glm\`, `assimp\`, `stb_image.h` and `tiny_obj_loader.h` (tinyobjloader 1.0.6 or later).
+- `lib\` holds `glfw3.lib`, `assimp-vc143-mtd.lib` for Debug and `assimp-vc143-mt.lib` for Release.
+- `bin\` holds any DLLs the libraries need. The build copies them next to the exe.
+
+Use another folder with `msbuild Render-Engine.vcxproj /p:Configuration=Release /p:Platform=x64 /p:ExternalLibDir=C:\path\to\libs`. vcpkg can supply everything: `vcpkg install glfw3 glm assimp tinyobjloader stb glad --triplet x64-windows`. Copy its `include` folder, rename `glfw3dll.lib` to `glfw3.lib`, and put the DLLs from its `bin` and `debug\bin` folders in `bin\`.
+
+`tests\RunSimulationChecks.cmd` builds and runs the physics and catalogue checks. Set `EXTERNAL_LIB` when the libraries are not in `..\External_Lib`.
+
+`Render-Engine.exe --benchmark` opens each scene with playback running and v-sync off, then prints the scene start time and frame-time statistics. It also saves the last frame of each scene as `benchmark-<scene>.ppm`.
 
 ## Controls
 
-- **Mouse wheel** adjusts the camera's field of view from 15° to 90°. Scroll up to zoom in.
-- **Space** or **Play / Pause** starts and pauses playback. The application starts paused. The disk, ocean waves, planet rotation, and orbits share the playback clock.
-- **< / >** (comma / period) or the **Time slower / Time faster** buttons select one second, one minute, or one hour of simulated time per real second (1×, 60×, 3600×). The title shows local observer time and world playback time as HH:MM:SS.
-- **Black hole / Model** or **F2** switches scenes and resets the view.
-- **Miller flyby** or **F3** moves close to the ocean planet and follows its orbital translation. You can fly around it while following.
-- **Spacecraft** or **F4** moves close to the ring-shaped spacecraft and follows it. **Boost / B** starts its prograde booster manually. **Reset craft / R** restores its initial orbit and fuel at the current playback time.
-- **Home view** or **Home** returns to a scene overview and exits planet-follow mode.
-- **Right mouse button** toggles mouse-look capture. **Esc** releases the cursor for the clickable Windows controls. Changing window focus also releases it.
-- **WASD** moves forward, backward, and sideways. **Q / E** moves down and up. **Left Shift** gives a temporary 5× speed boost.
-- **[ / ]** or **Slower / Faster** halves or doubles flight speed within 0.005–50 scene units per real second. The title shows the selected speed. Camera speed operates independently of playback time.
-- **F1** switches between wireframe and shaded rendering.
-- **N / New terrain** changes the terrain seed. Each of the three planets applies its own seed offset.
-- **L / Land / lift off** places the free camera just above the nearest planet's terrain or sea surface, or releases it back into flight. Movement and mouse-look remain available. The surface rotates and orbits under the observer. F3 approaches near the day/night boundary so the black hole can be seen above the horizon after landing.
-- **Left-click** with the cursor released selects a planet, star, spacecraft, or black hole. Its name appears in the title. **G / Go to selection** jumps close to its current position. Free-cam remains active after arrival.
-- **H / Gravity** toggles gravitational acceleration of the camera. Space starts or pauses the fall. Movement keys remain navigation controls. The fall pauses at the exterior rendering limit, 1.015 horizon radii. **Home view** resets the experiment.
-- **F6 / Photon view** toggles illustrative photon packets. Gold packets originate in the accretion disk, cyan packets originate at the spacecraft, and a green point marks a detector fixed at the camera position when enabled. Fly sideways to inspect the streams. Toggle off and on to reposition the detector. Packet motion pauses with playback.
+The window opens on the main menu. **Planetorium** leads to the Solar System and the Gargantua system, and **Quantum Simulation** leads to the state list. **F10** or **Main menu** returns to it from any scene.
 
-The title distinguishes **World** playback time from **Local** observer time. The local clock applies approximate gravitational and velocity time-dilation factors. **Light age** reports how far into the spacecraft's simulated past the received image looks.
+The side panel shows the playback state, both clocks, flight speed, follow mode, spacecraft status and the current selection at the top. Below that are a searchable star and object browser, the bodies of the selected system and a description. **F3** hides or shows it. After you click a list, the keyboard returns to the 3D view, so the flight keys keep working.
 
-The startup cube rotates with playback so you can see the pause state. Dropped OBJ and FBX models keep their original transforms.
+Every command is also in the menu bar. **Scene**, **Time**, **Camera**, **Spacecraft** and **View** show check marks for the options that are on and grey out commands that do nothing in the current scene.
 
-`WindowManager::GetSimulationTime()` returns elapsed playback time in seconds as a `double`. A simulation scene can use this value to animate its state or pass it to a shader. A numerical solver can use it as the target time for fixed-size integration steps.
+Shared controls:
+
+- **Space** plays and pauses. Scenes start paused.
+- **< / >** (comma / period) change the time rate. Gargantua offers 1×, 60× and 3600×. Star systems go up to one year per second.
+- **WASD** fly, **Q / E** move down and up, and **Left Shift** gives a 5× boost. **[ / ]** halve or double flight speed.
+- **Right mouse button** toggles mouse look. **Esc** releases the cursor.
+- **Mouse wheel** zooms between 15° and 90° field of view.
+- **Left-click** selects the body or star under the cursor. **G** or **Go to selection** goes to it. In the Gargantua view, G on a star enters that star's system.
+- **F** follows the selection. **L** lands on or lifts off the nearest surface. **F4** or **Home** shows the overview.
+- **F2** toggles orbit paths and **F6** toggles the photon view. **F7** switches between HDR tone mapping and pure exposure, and **- / =** step exposure. **View > Lens** applies calibrated camera lens profiles.
+
+Gargantua only:
+
+- **Scene > Miller flyby** follows the ocean planet. **Scene > Spacecraft view** follows the ring spacecraft.
+- **B** fires the spacecraft's prograde booster and **R** restores its initial orbit and fuel.
+- **H** toggles free fall toward the black hole. The fall stops at 1.015 horizon radii.
+
+Quantum view:
+
+- **Space** plays and pauses, **< / >** change the rate, and **R** restarts the selected state.
+
+Model viewer:
+
+- Drop an `.obj` or `.fbx` file on the window. **F1** switches between wireframe and shaded rendering. **Scene > Gargantua black hole** switches back.
+
+The **World** clock is playback time. The **Local** clock applies approximate gravitational and velocity time dilation at the camera. **Craft light age** is how far into the spacecraft's past the received image looks.
+
+`WindowManager::GetSimulationTime()` returns elapsed playback time in seconds as a `double`.
 
 ## Black-hole scene
 
