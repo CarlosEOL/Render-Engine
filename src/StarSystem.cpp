@@ -435,7 +435,7 @@ in vec3 localPosition;
 in vec3 relativePosition;
 out vec4 color;
 uniform int bodyKind;
-uniform mat4 model;
+uniform mat3 normalMatrix;
 uniform vec3 starPosition;
 uniform vec3 albedo;
 uniform float temperature;
@@ -481,7 +481,7 @@ void main() {
         float bands=.5+.5*sin(70.0*radial.y+7.0*terrainFbm(radial*5.0));
         material=mix(albedo*.4,min(vec3(1),albedo*1.5+vec3(.15)),bands);
     }
-    normal=normalize(mat3(transpose(inverse(model)))*normal);
+    normal=normalize(normalMatrix*normal);
     vec3 light=normalize(starPosition-relativePosition);
     vec3 view=normalize(-relativePosition);
     float diffuse=max(dot(normal,light),0.0);
@@ -499,7 +499,7 @@ void main() {
     }
     const auto location = [&](const char *name) { return glGetUniformLocation(program, name); };
     uniform = {location("viewProjection"), location("starPosition"), location("phase"),
-               location("model"),          location("bodyKind"),
+               location("model"),          location("normalMatrix"), location("bodyKind"),
                location("terrainSeed"),    location("seaLevel"),     location("terrainRelief"),
                location("waterWaveHeight"), location("albedo"),      location("temperature"),
                location("patchEnabled"),   location("patchDrawing"), location("patchCenter")};
@@ -616,6 +616,8 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
         model = glm::translate(glm::mat4(1), glm::vec3(center - camera)) * rotation;
         model = glm::scale(model, glm::vec3(radius));
         setModel(model);
+        // The model is a rotation and a uniform scale, so its normal matrix is the rotation alone.
+        glUniformMatrix3fv(uniform.normalMatrix, 1, GL_FALSE, glm::value_ptr(glm::mat3(rotation)));
         glUniform1i(uniform.bodyKind, body.gas ? 2 : 1);
         glUniform1f(uniform.terrainSeed, static_cast<float>(body.seed));
         glUniform1f(uniform.seaLevel, body.seaLevel);

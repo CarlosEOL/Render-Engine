@@ -119,7 +119,7 @@ class StarSystem
     glm::vec3 patchDirection = glm::vec3(0);
     struct Uniforms
     {
-        int viewProjection = -1, starPosition = -1, phase = -1, model = -1, bodyKind = -1,
+        int viewProjection = -1, starPosition = -1, phase = -1, model = -1, normalMatrix = -1, bodyKind = -1,
             terrainSeed = -1, seaLevel = -1, terrainRelief = -1, waterWaveHeight = -1, albedo = -1, temperature = -1,
             patchEnabled = -1, patchDrawing = -1, patchCenter = -1;
     } uniform;
