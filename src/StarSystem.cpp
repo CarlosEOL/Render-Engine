@@ -322,6 +322,7 @@ void StarSystem::ToggleFollow(double seconds)
 void StarSystem::Pick(const glm::vec3 &direction, double seconds)
 {
     double best = 1;
+    int picked = selected;
     for (int body = -1; body < static_cast<int>(planets.size()); ++body)
     {
         const auto offset = Position(body, seconds) - camera;
@@ -336,8 +337,14 @@ void StarSystem::Pick(const glm::vec3 &direction, double seconds)
         if (score < best)
         {
             best = score;
-            selected = body;
+            picked = body;
         }
+    }
+    if (picked != selected)
+    {
+        selected = picked;
+        // lastFollowPosition belongs to the old selection; keeping it would move the camera by the distance between the two bodies.
+        following = false;
     }
 }
 

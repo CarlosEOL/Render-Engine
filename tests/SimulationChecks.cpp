@@ -63,5 +63,16 @@ int main() {
     Require(a.Planets()[0].seed==b.Planets()[0].seed && a.Planets()[0].seed!=c.Planets()[0].seed,"Planet seeds not deterministic and distinct");
     for (int i=0;i<static_cast<int>(a.Planets().size());++i)
         Require(glm::length(a.Position(i,12345)-b.Position(i,12345))<1e-12,"Generated positions not deterministic");
+    {
+        StarSystem follow; follow.LoadSolarSystem();
+        glm::vec3 front(0,0,-1),up(0,1,0);
+        follow.SelectPlanet(2); follow.ToggleFollow(0);
+        follow.Update(3600,front,up);
+        const auto before=follow.camera;
+        follow.Pick(glm::vec3(glm::normalize(follow.Position(3,3600)-follow.camera)),3600);
+        Require(follow.Selected()==3,"Pick did not select the planet it was aimed at");
+        follow.Update(7200,front,up);
+        Require(glm::length(follow.camera-before)<1e-12,"Changing the selection while following moved the camera");
+    }
     std::cout<<Examples().size()<<" quantum presets checked; solar scale, hierarchy and generation checks passed.\n";
 }
