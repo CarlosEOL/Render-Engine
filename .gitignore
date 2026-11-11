@@ -30,3 +30,17 @@
 *.exe
 *.out
 *.app
+
+# Build output and IDE state
+build/
+x64/
+Render-Engine/
+.vs/
+.idea/
+*.pdb
+*.ilk
+*.idb
+*.tlog
+*.recipe
+*.user
+*.ppm
