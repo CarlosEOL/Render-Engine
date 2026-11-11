@@ -1,5 +1,6 @@
 #include "OrbitalMechanics.h"
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 #include <glm/geometric.hpp>
@@ -8,17 +9,31 @@ namespace {
     constexpr double pi = 3.14159265358979323846;
 
     double EccentricAnomaly(double meanAnomaly, double eccentricity) {
-        // Kepler's equation is monotonic for an elliptical orbit (0 <= e < 1).
+        // f(E) = E - e sin E - M is increasing for 0 <= e < 1, so the root is bracketed by [-pi, pi] when
+        // M is. Newton's method from Danby's starting guess converges in a handful of steps; whenever a step
+        // would leave the bracket (e near 1 flattens f'), that iteration bisects instead.
+        constexpr int maxIterations = 60;
+        constexpr double newtonTolerance = 1e-9; // Newton then leaves an error of about step^2 / (1 - e), below 1e-14
         double lower = -pi;
         double upper = pi;
-        for (int iteration = 0; iteration < 40; ++iteration) {
-            const double midpoint = (lower + upper) * 0.5;
-            if (midpoint - eccentricity * std::sin(midpoint) < meanAnomaly)
-                lower = midpoint;
+        double anomaly = std::clamp(meanAnomaly + 0.85 * eccentricity * (meanAnomaly < 0.0 ? -1.0 : 1.0), lower, upper);
+        for (int iteration = 0; iteration < maxIterations; ++iteration) {
+            const double residual = anomaly - eccentricity * std::sin(anomaly) - meanAnomaly;
+            if (residual == 0.0)
+                break;
+            if (residual > 0.0)
+                upper = anomaly;
             else
-                upper = midpoint;
+                lower = anomaly;
+            const double step = residual / (1.0 - eccentricity * std::cos(anomaly));
+            if (std::abs(step) < newtonTolerance) {
+                anomaly -= step;
+                break;
+            }
+            const double next = anomaly - step;
+            anomaly = next > lower && next < upper ? next : 0.5 * (lower + upper);
         }
-        return (lower + upper) * 0.5;
+        return anomaly;
     }
 
     double OrbitAnomaly(const OrbitalMechanics::Orbit& orbit, double gravitationalParameter, double seconds) {

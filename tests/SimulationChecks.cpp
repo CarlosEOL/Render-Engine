@@ -111,5 +111,33 @@ int main() {
         core.ToggleLanding(0,front,up);
         Require(std::isfinite(core.camera.x+core.camera.y+core.camera.z),"Landing with the camera at the planet centre produced NaN");
     }
+    {
+        // Recover the eccentric anomaly from the orbit position and compare it with a bisection run to double precision.
+        constexpr double pi=3.141592653589793;
+        const auto reference=[&](double mean,double e) {
+            double lower=-pi,upper=pi;
+            for (int i=0;i<200;++i) {
+                const double middle=.5*(lower+upper);
+                if (middle-e*std::sin(middle)<mean) lower=middle; else upper=middle;
+            }
+            return .5*(lower+upper);
+        };
+        std::vector<double> means={-pi,pi,0,1e-12,-1e-12,1e-9,1e-6,-1e-6,1e-3,pi-1e-9,-pi+1e-9};
+        for (int i=0;i<=720;++i) means.push_back(-pi+i*(2*pi/720)+.001);
+        double worst=0;
+        for (double e:{0.0,.1,.5,.9,.967,.99,.999}) {
+            for (double mean:means) {
+                if (mean>pi || mean<-pi) continue;
+                const auto p=OrbitalMechanics::PositionAtTimeDouble({1,e,0,0,mean,0},1.0,0.0);
+                const double anomaly=std::atan2(p.y/std::sqrt(1-e*e),p.x+e);
+                const double error=std::abs(std::remainder(anomaly-reference(mean,e),2*pi));
+                const double residual=std::abs(std::remainder(anomaly-e*std::sin(anomaly)-mean,2*pi));
+                worst=std::max(worst,std::max(error,residual));
+                if (error>=1e-12 || residual>=1e-12) std::cerr<<"e="<<e<<" M="<<mean<<" error="<<error<<" residual="<<residual<<"\n";
+                Require(error<1e-12 && residual<1e-12,"Kepler solver disagrees with bisection");
+            }
+        }
+        std::cout<<"Kepler solver worst error "<<worst<<" rad"<<std::endl;
+    }
     std::cout<<Examples().size()<<" quantum presets checked; solar scale, hierarchy and generation checks passed.\n";
 }
