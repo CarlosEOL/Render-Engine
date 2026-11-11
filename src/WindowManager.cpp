@@ -262,6 +262,21 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
     manager.sceneCacheValid=false;
     if (key == GLFW_KEY_F10 || key == 3030) { manager.OpenMainMenu(); return; }
     if (manager.mainMenu.Visible()) return;
+    if(key==1320 || key==1321){
+        manager.starSystem.SetStellarActivity(key==1321);
+        manager.blackHole.SetStellarActivity(key==1321);
+        return;
+    }
+    if(key==1322){
+        if(manager.inStarSystem){
+            manager.starSystem.SetStellarActivity(true);
+            manager.starSystem.TriggerStellarFlare(manager.simulationTime);
+        }else{
+            manager.blackHole.SetStellarActivity(true);
+            manager.blackHole.TriggerStellarFlare(manager.simulationTime);
+        }
+        return;
+    }
     if(key==1303){manager.frameLimit=30;manager.blackHoleResolution=.5f;return;}
     if(key>=1300 && key<=1302){manager.frameLimit=key==1300?30:key==1301?60:120;return;}
     if(key>=1310 && key<=1312){manager.blackHoleResolution=key==1310?.5f:key==1311?.75f:1;return;}
@@ -1444,6 +1459,7 @@ void WindowManager::Update(float& dT) {
         titleUpdateElapsed+=dT;
         if (titleUpdateElapsed>=.2f) { RefreshPanel(); UpdateTitle(); titleUpdateElapsed=0; }
         glBindFramebuffer(GL_FRAMEBUFFER,0);
+        glClearColor(0.0f,0.0f,0.0f,1.0f);
         glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
         glPolygonMode(GL_FRONT_AND_BACK,GL_FILL);
         quantum.Render(sceneWidth,fullHeight,fieldOfView,cameraPos,cameraFront,cameraUp);
@@ -1536,6 +1552,7 @@ void WindowManager::Update(float& dT) {
     if(showBlackHole && !inStarSystem)
         glViewport(0,0,glm::max(1,static_cast<int>(sceneWidth*blackHoleResolution)),glm::max(1,static_cast<int>(fullHeight*blackHoleResolution)));
     optics.BeginFrame();
+    glClearColor(0.0f,0.0f,0.0f,1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     if (inStarSystem && starSystemReady) {
@@ -1744,6 +1761,12 @@ void WindowManager::MakeNewWindow() {
     AppendMenuW(performance,MF_STRING,1311,L"Black hole 75% resolution - default");
     AppendMenuW(performance,MF_STRING,1312,L"Black hole 100% resolution");
     AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(performance),L"Performance");
+    const HMENU activity=CreatePopupMenu();
+    AppendMenuW(activity,MF_STRING,1321,L"Stellar activity on - default");
+    AppendMenuW(activity,MF_STRING,1320,L"Stellar activity off");
+    AppendMenuW(activity,MF_SEPARATOR,0,nullptr);
+    AppendMenuW(activity,MF_STRING,1322,L"Trigger eruption on visible stars");
+    AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(activity),L"Stellar activity");
     SetPropW(nativeWindow, L"RenderEngineWindow", window);
     originalWindowProcedure = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(nativeWindow, GWLP_WNDPROC,
         reinterpret_cast<LONG_PTR>(+[](HWND handle, UINT message, WPARAM wParam, LPARAM lParam) -> LRESULT {

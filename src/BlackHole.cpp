@@ -173,7 +173,9 @@ void main() {
     } else if (surface == 3) {
         float shift = frequencyRatio(length(worldPosition), length(cameraPosition),
             velocityBeta, normalize(-relativePosition));
-        fragColor = vec4(blackbody(temperature * shift), 1.0);
+        vec3 radial=normalize(localPosition);
+        float mu=dot(normalize(mat3(model)*radial),normalize(-relativePosition));
+        fragColor = vec4(stellarSurface(radial,blackbody(temperature * shift),mu), 1.0);
     } else if (surface == 8) {
         fragColor = vec4(photonColor, 1.0);
     } else if (surface == 7) {
@@ -451,7 +453,7 @@ bool BlackHole::Initialize() {
     const std::string vertexSource = std::string("#version 330 core\n")
         + PlanetTerrain::ShaderFunctions() + vertexBody;
     const std::string fragmentSource = std::string("#version 330 core\nuniform float horizonRadius;\nuniform vec3 observerBeta;\n")
-        + OrbitalMechanics::RelativityShaderFunctions() + PlanetTerrain::ShaderFunctions() + fragmentBody;
+        + OrbitalMechanics::RelativityShaderFunctions() + PlanetTerrain::ShaderFunctions() + StellarActivity::ShaderFunctions() + fragmentBody;
     program = compileShaderProgram(vertexSource.c_str(), fragmentSource.c_str());
     const std::string lensSource = std::string("#version 330 core\nuniform float horizonRadius;\nuniform vec3 observerBeta;\n")
         + OrbitalMechanics::RelativityShaderFunctions() + lensFragmentBody;
@@ -557,7 +559,7 @@ bool BlackHole::Initialize() {
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     ResetSpacecraft(0.0);
-    if (!atmosphere.Initialize()) {
+    if (!atmosphere.Initialize() || !stellarActivity.Initialize()) {
         Release();
         return false;
     }
@@ -729,7 +731,8 @@ BlackHole::Target BlackHole::ResolveTarget(int id, double seconds) const {
         const auto name = star < 1600 ? "Local star " + std::to_string(star + 1)
             : "Galaxy " + std::to_string((star - 1600) / 1800 + 1)
                 + " star " + std::to_string((star - 1600) % 1800 + 1);
-        return {destinations[star], 0.012f, name};
+        const auto metadata=StarSystem::DescribeStar(id,name);
+        return {destinations[star],static_cast<float>(metadata.radiusSolar*Astronomy::solarRadiusAu), name};
     }
     return {glm::vec3(0), horizonRadius, "Black hole"};
 }
@@ -825,7 +828,7 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
 
     glUseProgram(program);
     glBindVertexArray(sphere.vao);
-    const auto drawSphere = [&](const glm::dvec3& center, float radius, Surface surface, const glm::vec3& color) {
+    const auto drawSphere = [&](const glm::dvec3& center, float radius, Surface surface, const glm::vec3& color, int seed, float temperature) {
         auto model = glm::translate(identity, glm::vec3(center-cameraPosition));
         if (surface == Planet)
             model *= PlanetRotation(seconds);
@@ -835,6 +838,7 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
         glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(model));
         glUniform1i(surfaceLocation, surface);
         glUniform3fv(colorLocation, 1, glm::value_ptr(color));
+        if(surface==Star) stellarActivity.BindSurface(program,seed,seconds);
         const bool patch=surface==Planet && glm::length(cameraPosition-center)<radius*1.15;
         glUniform1i(glGetUniformLocation(program,"patchEnabled"),patch);
         glUniform1i(glGetUniformLocation(program,"patchDrawing"),false);
@@ -857,6 +861,7 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
             glBindVertexArray(sphere.vao);
         }
         glUniform1i(glGetUniformLocation(program,"patchEnabled"),false);
+        if(surface==Star)stellarActivity.Render(viewProjection,model,temperature,seed,seconds);
     };
     int bodyIndex = 0;
     for (const auto& body : bodies) {
@@ -870,14 +875,15 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
         glUniform1f(glGetUniformLocation(program, "temperature"), body.temperature);
         glUniform1f(glGetUniformLocation(program,"waterWaveHeight"),static_cast<float>(2.0/Astronomy::metresPerAu/body.radius));
         const auto preciseCenter=glm::dmat3(diskTilt)*OrbitalMechanics::PositionAtTimeDouble(body.orbit,gravitationalParameter,seconds);
-        drawSphere(preciseCenter, body.radius, body.surface, body.color);
+        drawSphere(preciseCenter, body.radius, body.surface, body.color,bodyIndex+1,body.temperature);
         ++bodyIndex;
     }
     glUniform3f(glGetUniformLocation(program, "velocityBeta"), 0, 0, 0);
     for (int star = 0; star < static_cast<int>(destinations.size()); ++star) {
         if (glm::length(cameraPosition - glm::dvec3(destinations[star])) < 3.0) {
-            glUniform1f(glGetUniformLocation(program, "temperature"), 3500.0f + (star * 7919 % 6500));
-            drawSphere(destinations[star], 0.012f, Star, glm::vec3(1));
+            const auto metadata=StarSystem::DescribeStar(star+10,"");
+            glUniform1f(glGetUniformLocation(program, "temperature"),static_cast<float>(metadata.temperature));
+            drawSphere(destinations[star],static_cast<float>(metadata.radiusSolar*Astronomy::solarRadiusAu), Star, glm::vec3(1),star+10,static_cast<float>(metadata.temperature));
         }
     }
     const auto observed = ObservedFlight(cameraPosition, seconds);
@@ -1091,6 +1097,7 @@ void BlackHole::RenderLensing(const glm::mat4& vp,const glm::dvec3& camera,doubl
 }
 
 void BlackHole::Release() {
+    stellarActivity.Release();
     if(stellarProperties)glDeleteBuffers(1,&stellarProperties);stellarProperties=0;
     for(auto texture:{skyCube,sourceColor,sourceDepth})if(texture)glDeleteTextures(1,&texture);
     skyCube=sourceColor=sourceDepth=0;sourceWidth=sourceHeight=0;

@@ -448,7 +448,7 @@ void main() {
 )";
     const std::string fragment =
         std::string("#version 330 core\nconst float horizonRadius=0.0; const vec3 observerBeta=vec3(0);\n") +
-        PlanetTerrain::ShaderFunctions() + OrbitalMechanics::RelativityShaderFunctions() + R"(
+        PlanetTerrain::ShaderFunctions() + OrbitalMechanics::RelativityShaderFunctions() + StellarActivity::ShaderFunctions() + R"(
 in vec3 localPosition;
 in vec3 relativePosition;
 out vec4 color;
@@ -473,8 +473,8 @@ void main() {
         if (inside != patchDrawing) discard;
     }
     if (bodyKind == 0) {
-        float granules=0.94+0.06*terrainNoise(radial*75.0);
-        color=vec4(blackbody(temperature)*granules,1);
+        float mu=dot(normalize(mat3(model)*radial),normalize(-relativePosition));
+        color=vec4(stellarSurface(radial,blackbody(temperature),mu),1);
         return;
     }
     vec3 normal=radial;
@@ -531,7 +531,11 @@ void main() {
     upload(patchVao, patchBuffer, {{0, 0, 0}});
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
-    return atmosphere.Initialize();
+    if (!atmosphere.Initialize() || !stellarActivity.Initialize()) {
+        Release();
+        return false;
+    }
+    return true;
 }
 
 void StarSystem::UpdatePatch(const glm::vec3 &direction)
@@ -596,8 +600,10 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
     glUniform1i(glGetUniformLocation(program, "patchEnabled"), false);
     glUniform1f(glGetUniformLocation(program, "terrainSeed"), static_cast<float>(star.id % 10000));
     glUniform1f(glGetUniformLocation(program, "temperature"), static_cast<float>(star.temperature));
+    stellarActivity.BindSurface(program,star.id,seconds);
     glBindVertexArray(sphereVao);
     glDrawArrays(GL_TRIANGLES, 0, sphereCount);
+    stellarActivity.Render(vp,model,static_cast<float>(star.temperature),star.id,seconds);
     for (int planet = 0; planet < static_cast<int>(planets.size()); ++planet)
     {
         const auto &body = planets[planet];
@@ -740,6 +746,7 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
 
 void StarSystem::Release()
 {
+    stellarActivity.Release();
     atmosphere.Release();
     if (program)
         glDeleteProgram(program);

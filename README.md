@@ -62,6 +62,14 @@ The **Performance** menu offers a one-click **Cooler mode** (30 FPS / 50% black-
 
 **Vision / Lens** contains Off, Subtle and Standard flare settings. Flares come from a tiny GPU bright-source extraction pass and analytic glare/diffraction. The old mirrored-image ghosts are removed. Three galaxy appearances use the original spiral and a new barred-spiral/elliptical atlas; see [asset provenance and generation prompts](assets/README.md).
 
+## Stellar activity
+
+Stars now have GPU-rendered prominence arcades, flowing plasma strands, bright active regions, dark spots, moving granulation, and limb darkening. This works on the Sun, generated system hosts, and resolved stars in Gargantua's scene. **Stellar activity** in the top menu has On, Off, and **Trigger eruption on visible stars**. Trigger also enables activity in the active scene. To inspect the Sun, use **Shift+F4**, select the Sun, and press **G**.
+
+**Space** pauses/resumes the stellar effects with the rest of the simulation. **>** increases the time rate; 60x or 3600x makes the minute/hour-scale evolution easier to see. The inspection eruption starts immediately and fades over several simulated minutes. Reduce exposure for surface detail. Distant stars skip prominence geometry, and unchanged paused scenes retain the existing render cache.
+
+These are deterministic procedural plasma visuals with an enhanced emission-line-inspired palette. They do not solve magnetohydrodynamics, predict stellar activity, or apply radiation/CME forces to nearby objects. Temperature changes their appearance using a visual heuristic. See the [implementation changes and reasons](docs/SIMULATION_CHANGES.md).
+
 ## Change log and reasons
 
 The entries below record earlier implementation stages. Current behavior is described above; later replacements and their reasons are recorded in [the current detailed log](docs/SIMULATION_CHANGES.md).

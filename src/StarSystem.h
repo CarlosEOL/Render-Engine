@@ -1,5 +1,6 @@
 #pragma once
 #include "Atmosphere.h"
+#include "StellarActivity.h"
 #include "OrbitalMechanics.h"
 #include <glm/glm.hpp>
 #include <string>
@@ -44,6 +45,8 @@ class StarSystem
     void Generate(int id, const std::string &name);
     void LoadSolarSystem();
     bool Initialize();
+    void SetStellarActivity(bool enabled) { stellarActivity.SetEnabled(enabled); }
+    void TriggerStellarFlare(double seconds) { stellarActivity.Trigger(seconds); }
     void Release();
     void Update(double seconds, glm::vec3 &front, glm::vec3 &up);
     void Move(GLFWwindow *window, float realSeconds, glm::vec3 &front, glm::vec3 &up);
@@ -130,4 +133,5 @@ class StarSystem
     int sphereCount = 0, patchCount = 0;
     glm::vec3 patchDirection = glm::vec3(0);
     Atmosphere atmosphere;
+    StellarActivity stellarActivity;
 };

@@ -5,12 +5,15 @@
 #include <string>
 #include "OrbitalMechanics.h"
 #include "Atmosphere.h"
+#include "StellarActivity.h"
 #include "GalaxyBackground.h"
 #include "Astronomy.h"
 
 class BlackHole {
 public:
     bool Initialize();
+    void SetStellarActivity(bool enabled) { stellarActivity.SetEnabled(enabled); }
+    void TriggerStellarFlare(double seconds) { stellarActivity.Trigger(seconds); }
     static glm::dvec3 PlanetPosition(double seconds, int planet = 0);
     float PlanetSurfaceRadius(const glm::vec3& worldDirection, double seconds, int planet = 0) const;
     static int NearestPlanet(const glm::dvec3& position, double seconds);
@@ -80,6 +83,7 @@ private:
     unsigned int terrainSeed = 618;
     std::vector<glm::vec3> destinations;
     Atmosphere atmosphere;
+    StellarActivity stellarActivity;
     GalaxyBackground galaxies;
     struct FlightSample {
         double time;

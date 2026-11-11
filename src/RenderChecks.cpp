@@ -11,6 +11,9 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
         return false;
     std::filesystem::create_directories(directory);
     glfwSwapInterval(0);
+    // Exercise the real startup transition, including the menu's OpenGL clear-color state.
+    float menuFrame=.016f;
+    Update(menuFrame);
     bool success = true;
     const auto capture = [&](const char *name) {
         speedToastUntil = 0;
@@ -107,5 +110,36 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
     exposureEv = 4;
     ApplyVisionProfile(2);
     capture("camera-flare");
+    // Isolate actual plasma outside the photosphere from the camera's optical flare.
+    lensFlareStrength=0;
+    exposureEv=-2;
+    ApplyVisionProfile(0);
+    fieldOfView=45;
+    starSystem.camera={0,0,3.5*Astronomy::solarRadiusAu};
+    KeyCallback(window,1321,0,GLFW_PRESS,0);
+    KeyCallback(window,1322,0,GLFW_PRESS,0);
+    const auto active=capture("solar-prominences");
+    const auto paused=capture("solar-prominences-paused");
+    if(active!=paused || !idleFrame) {
+        std::cerr<<"Stellar activity changed while paused\n";
+        success=false;
+    }
+    KeyCallback(window,1320,0,GLFW_PRESS,0);
+    const auto disabled=capture("solar-prominences-disabled");
+    size_t exteriorPlasma=0;
+    for(size_t i=0;i<active.size();i+=3)
+        if(disabled[i]<5 && disabled[i+1]<5 && disabled[i+2]<5
+            && (active[i]>20 || active[i+1]>20 || active[i+2]>20))++exteriorPlasma;
+    std::cout<<"Exterior plasma pixels: "<<exteriorPlasma<<"\n";
+    if(exteriorPlasma<100)success=false;
+    KeyCallback(window,1321,0,GLFW_PRESS,0);
+    simulationTime+=180;
+    if(active==capture("solar-prominences-evolved"))success=false;
+    StartGargantua();
+    const auto companion=blackHole.ResolveTarget(4,simulationTime);
+    cameraPos=companion.position+glm::dvec3(0,0,companion.radius*3.5);
+    cameraFront={0,0,-1};cameraUp={0,1,0};
+    selectedTarget=4;
+    capture("gargantua-stellar-prominences");
     return success;
 }
