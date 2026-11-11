@@ -14,6 +14,9 @@
 #include "ObjectLoader.h"
 #include "Astronomy.h"
 #ifdef _WIN32
+#include "UiTheme.h"
+#endif
+#ifdef _WIN32
 #include <GLFW/glfw3native.h>
 #endif
 
@@ -78,6 +81,8 @@ namespace {
         const int id = GetDlgCtrlID(control);
         const HWND parent = GetParent(control);
         const bool searching = id==2100;
+        if (message==WM_MOUSEMOVE || message==WM_MOUSELEAVE || message==WM_NCDESTROY)
+            UiTheme::TrackHover(control, message);
         if ((message==WM_SYSKEYDOWN || message==WM_SYSKEYUP) && key==VK_F10) {
             if (message==WM_SYSKEYDOWN) SendMessageW(parent,WM_COMMAND,GLFW_KEY_F10,0);
             return 0;
@@ -576,6 +581,7 @@ void WindowManager::RefreshPanel() {
     if (quantumMode) scenePanel.SetInformation(quantum.Information());
     else if (pendingSystemTarget!=0) {
         const auto& system=inStarSystem && activeSystemTarget==pendingSystemTarget?starSystem:previewSystem;
+        scenePanel.HighlightPlanet(system.Selected()+1);
         auto info=system.Information(simulationTime);
         if (system.IsSolarSystem()) info+="\n1:1 physical radii and distances\nJ2000 frozen Keplerian elements\n4096 representative belt/KBO markers\nPlanet surfaces are procedural illustrations.\n";
         info+=inStarSystem && activeSystemTarget==pendingSystemTarget
@@ -583,6 +589,7 @@ void WindowManager::RefreshPanel() {
             : "\nG or double-click enters this system.\n";
         scenePanel.SetInformation(info);
     } else {
+        scenePanel.HighlightPlanet(selectedTarget>=0 && selectedTarget<10 ? selectedTarget : -1);
         scenePanel.SetInformation(
             "GARGANTUA (inspired by Interstellar)\n"
             "Supermassive black hole, Schwarzschild model\n"
@@ -1291,6 +1298,7 @@ bool WindowManager::MakeNewWindow() {
     const HWND nativeWindow = glfwGetWin32Window(window);
     const BOOL dark = TRUE;
     DwmSetWindowAttribute(nativeWindow, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
+    UiTheme::EnableDarkMenus();
 
     const HMENU menu = CreateMenu();
     nativeMenu = menu;
@@ -1362,8 +1370,21 @@ bool WindowManager::MakeNewWindow() {
             if ((message==WM_CTLCOLORSTATIC || message==WM_CTLCOLOREDIT || message==WM_CTLCOLORLISTBOX
                  || message==WM_CTLCOLORBTN) && manager) {
                 const int id=GetDlgCtrlID(reinterpret_cast<HWND>(lParam));
-                return reinterpret_cast<LRESULT>(id>=3000?manager->mainMenu.ControlColor(reinterpret_cast<void*>(wParam)):
-                    manager->scenePanel.ControlColor(reinterpret_cast<void*>(wParam)));
+                return reinterpret_cast<LRESULT>(id>=3000?manager->mainMenu.ControlColor(reinterpret_cast<void*>(wParam),id):
+                    manager->scenePanel.ControlColor(reinterpret_cast<void*>(wParam),id));
+            }
+            if (message==WM_DRAWITEM && manager) {
+                const auto* item=reinterpret_cast<const DRAWITEMSTRUCT*>(lParam);
+                if (item->CtlID>=3000) manager->mainMenu.DrawItem(item);
+                else manager->scenePanel.DrawItem(item);
+                return TRUE;
+            }
+            LRESULT menuResult=0;
+            if (UiTheme::HandleMenuBarMessage(handle,message,wParam,lParam,menuResult)) return menuResult;
+            if (message==WM_NCPAINT || message==WM_NCACTIVATE) {
+                const LRESULT result=CallWindowProcW(originalWindowProcedure, handle, message, wParam, lParam);
+                UiTheme::PaintMenuBarSeparator(handle);
+                return result;
             }
             if (message==WM_GETMINMAXINFO) {
                 auto* bounds=reinterpret_cast<MINMAXINFO*>(lParam);
@@ -1379,7 +1400,11 @@ bool WindowManager::MakeNewWindow() {
     for (const auto& example:QuantumStates::Examples()) quantumNames.push_back(example.name);
     mainMenu.Create(nativeWindow,quantumNames);
     EnumChildWindows(nativeWindow,+[](HWND control,LPARAM)->BOOL {
-        SetWindowTheme(control, L"DarkMode_Explorer", nullptr);
+        wchar_t type[16];
+        GetClassNameW(control, type, 16);
+        // Single-line edits need the dark file-dialog theme for their border; everything else uses dark Explorer scroll bars.
+        const bool singleLineEdit = lstrcmpiW(type, L"Edit") == 0 && !(GetWindowLongW(control, GWL_STYLE) & ES_MULTILINE);
+        SetWindowTheme(control, singleLineEdit ? L"DarkMode_CFD" : L"DarkMode_Explorer", nullptr);
         SetPropW(control,L"RenderEnginePreviousControlProc",reinterpret_cast<HANDLE>(
             SetWindowLongPtrW(control,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(InterfaceKeyProcedure))));
         return TRUE;
@@ -1408,6 +1433,7 @@ void WindowManager::ReleaseGraphics() {
     },0);
     mainMenu.Release();
     scenePanel.Release();
+    UiTheme::ReleaseResources();
     const HMENU menu = static_cast<HMENU>(nativeMenu);
     SetWindowLongPtrW(nativeWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(originalWindowProcedure));
     RemovePropW(nativeWindow, L"RenderEngineWindow");

@@ -17,6 +17,7 @@ class ScenePanel
     void SetStatus(const std::string &text);
     void SetPlanets(const std::vector<std::string> &names);
     void ShowBodies(bool show);
+    void HighlightPlanet(int row);
     int SelectedStar() const;
     int SelectedPlanet() const;
     int Width() const
@@ -27,7 +28,8 @@ class ScenePanel
     {
         return visible;
     }
-    void *ControlColor(void *dc) const;
+    void *ControlColor(void *dc, int id) const;
+    void DrawItem(const void *drawItem) const;
     void Release();
 
   private:
@@ -36,9 +38,9 @@ class ScenePanel
     int widthPixels = 0;
     void *parent = nullptr;
     void *font = nullptr;
-    void *backgroundBrush = nullptr;
+    void *headerFont = nullptr;
+    void *headlineFont = nullptr;
     std::vector<void *> controls;
-    void *statusFont = nullptr;
     std::vector<std::pair<int, std::string>> catalogue;
     std::vector<std::string> lowercaseNames;
     std::string lastInformation;

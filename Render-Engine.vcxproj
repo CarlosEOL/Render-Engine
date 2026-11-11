@@ -107,6 +107,7 @@
     <ClCompile Include="src\StarSystem.cpp" />
     <ClCompile Include="src\SolarSystem.cpp" />
     <ClCompile Include="src\ScenePanel.cpp" />
+    <ClCompile Include="src\UiTheme.cpp" />
     <ClCompile Include="src\AppMenu.cpp" />
     <ClCompile Include="src\QuantumStates.cpp" />
     <ClCompile Include="src\QuantumSimulation.cpp" />
@@ -128,6 +129,7 @@
     <ClInclude Include="src\StarSystem.h" />
     <ClInclude Include="src\Astronomy.h" />
     <ClInclude Include="src\ScenePanel.h" />
+    <ClInclude Include="src\UiTheme.h" />
     <ClInclude Include="src\AppMenu.h" />
     <ClInclude Include="src\QuantumStates.h" />
     <ClInclude Include="src\QuantumSimulation.h" />

@@ -22,7 +22,8 @@ class AppMenu
     }
     int SelectedQuantum() const;
     void SetQuantumInformation(const std::string &text);
-    void *ControlColor(void *dc) const;
+    void *ControlColor(void *dc, int id) const;
+    void DrawItem(const void *drawItem) const;
     void Release();
 
   private:
@@ -31,6 +32,6 @@ class AppMenu
     void *parent = nullptr;
     void *font = nullptr;
     void *titleFont = nullptr;
-    void *brush = nullptr;
+    void *cardFont = nullptr;
     std::vector<void *> controls;
 };
