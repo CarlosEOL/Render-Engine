@@ -242,6 +242,10 @@ void StarSystem::Move(GLFWwindow *window, float realSeconds, glm::vec3 &front, g
             movement -= glm::dvec3(up);
     }
     camera += distance * movement;
+    const double hostRadius=star.radiusSolar*Astronomy::solarRadiusAu;
+    if (!landed && glm::length(camera)<hostRadius+2/Astronomy::metresPerAu)
+        camera=(glm::length(camera)>0?glm::normalize(camera):glm::dvec3(0,0,1))
+            *(hostRadius+2/Astronomy::metresPerAu);
     if (landed)
         ConstrainSurface(lastTime, front, up);
     else
@@ -349,7 +353,7 @@ std::string StarSystem::Information(double seconds) const
          << std::fixed << std::setprecision(3) << "Age  " << star.ageGyr << " billion years\n"
          << "Mass  " << star.massSolar << " solar\nRadius  " << star.radiusSolar << " solar\n"
          << std::setprecision(0) << "Temperature  " << star.temperature << " K\n"
-         << "Planets  " << planets.size() << "\n";
+         << "Objects  " << planets.size() << "\n";
     if (selected >= 0)
     {
         const auto &body = planets[selected];
@@ -538,7 +542,7 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
         glUniformMatrix4fv(glGetUniformLocation(program, "model"), 1, GL_FALSE, glm::value_ptr(model));
     };
     auto model = glm::translate(glm::mat4(1), glm::vec3(-camera));
-    model = glm::scale(model, glm::vec3(star.radiusSolar * Astronomy::solarRadiusAu));
+    model = glm::scale(model, glm::vec3(static_cast<float>(star.radiusSolar * Astronomy::solarRadiusAu)));
     setModel(model);
     glUniform1i(glGetUniformLocation(program, "bodyKind"), 0);
     glUniform1i(glGetUniformLocation(program, "patchEnabled"), false);
@@ -552,7 +556,7 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
         const auto center = Position(planet, seconds);
         const double radius = body.radiusEarth * Astronomy::earthRadiusAu;
         model = glm::translate(glm::mat4(1), glm::vec3(center - camera)) * Rotation(planet, seconds);
-        model = glm::scale(model, glm::vec3(radius));
+        model = glm::scale(model, glm::vec3(static_cast<float>(radius)));
         setModel(model);
         glUniform1i(glGetUniformLocation(program, "bodyKind"), body.gas ? 2 : 1);
         glUniform1f(glGetUniformLocation(program, "terrainSeed"), static_cast<float>(body.seed));
@@ -626,11 +630,20 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
         for (int body = -1; body < static_cast<int>(planets.size()); ++body)
         {
             const auto source = Position(body, seconds);
-            const double duration = std::max(.001, glm::length(source - camera) / Astronomy::lightSpeedAu);
+            const double duration = std::max(.001, glm::length(source - photonDetector) / Astronomy::lightSpeedAu);
             for (int point = 0; point < 8; ++point)
             {
                 const double fraction = std::fmod(seconds / duration + point / 8.0, 1.0);
-                packets.push_back(glm::vec3(glm::mix(source, camera, fraction) - camera));
+                packets.push_back(glm::vec3(glm::mix(source, photonDetector, fraction) - camera));
+            }
+        }
+        for (const auto& orbit:asteroids) {
+            const auto p=OrbitalMechanics::PositionAtTimeDouble(orbit,Astronomy::solarGravityAu,seconds);
+            const glm::dvec3 source(p.x,p.z,-p.y);
+            const double duration=std::max(.001,glm::length(source-photonDetector)/Astronomy::lightSpeedAu);
+            for (int point=0;point<4;++point) {
+                const double fraction=std::fmod(seconds/duration+point/4.0,1.0);
+                packets.push_back(glm::vec3(glm::mix(source,photonDetector,fraction)-camera));
             }
         }
         drawLines(packets, GL_POINTS, glm::vec3(.3f, .7f, 1), 3);

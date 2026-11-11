@@ -91,6 +91,9 @@ void ScenePanel::SetTitle(const std::string &title)
 void ScenePanel::SetCatalogue(std::vector<std::pair<int, std::string>> items)
 {
     catalogue = std::move(items);
+#ifdef _WIN32
+    if (parent) SetDlgItemTextA(static_cast<HWND>(parent),2100,"");
+#endif
     Filter();
 }
 
@@ -136,8 +139,12 @@ void ScenePanel::SetInformation(const std::string &text)
             windowsText += '\r';
         windowsText += c;
     }
-    if (parent)
-        SetDlgItemTextA(static_cast<HWND>(parent), 2102, windowsText.c_str());
+    if (parent) {
+        const HWND info=GetDlgItem(static_cast<HWND>(parent),2102);
+        const auto firstLine=SendMessageW(info,EM_GETFIRSTVISIBLELINE,0,0);
+        SetWindowTextA(info,windowsText.c_str());
+        SendMessageW(info,EM_LINESCROLL,0,firstLine);
+    }
 #endif
 }
 

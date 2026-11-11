@@ -129,8 +129,10 @@ const char* OrbitalMechanics::RelativityShaderFunctions() {
     // GLSL counterparts live beside the CPU equations to keep the physics in this file.
     return R"(
 float frequencyRatio(float emitterRadius, float observerRadius, vec3 velocityBeta, vec3 toObserver) {
-    float gravity = sqrt((1.0 - horizonRadius / emitterRadius)
-                       / (1.0 - horizonRadius / observerRadius));
+    float emitterTerm = max(1.0 - horizonRadius / emitterRadius, 0.0001);
+    float observerTerm = observerRadius > horizonRadius
+        ? max(1.0 - horizonRadius / observerRadius, 0.0001) : 0.0001;
+    float gravity = sqrt(emitterTerm / observerTerm);
     float betaSquared = min(dot(velocityBeta, velocityBeta), 0.99);
     float observerFactor = (1.0 - dot(observerBeta, toObserver))
         / sqrt(max(1.0 - dot(observerBeta, observerBeta), 0.0001));
@@ -154,10 +156,12 @@ vec3 circularVelocityBeta(vec3 position, vec3 axis) {
 }
 
 vec3 photonInitialTangent(vec3 position, vec3 direction) {
+    float radius = length(position);
     vec3 radial = normalize(position);
     vec3 radialDirection = radial * dot(direction, radial);
-    return direction - radialDirection
-        + sqrt(max(1.0 - horizonRadius / length(position), 0.0)) * radialDirection;
+    float radialScale = radius > horizonRadius
+        ? sqrt(max(1.0 - horizonRadius / radius, 0.0)) : 1.0;
+    return direction - radialDirection + radialScale * radialDirection;
 }
 
 vec3 photonAcceleration(vec3 position, float angularMomentumSquared) {
@@ -167,10 +171,12 @@ vec3 photonAcceleration(vec3 position, float angularMomentumSquared) {
 }
 
 vec3 localPhotonDirection(vec3 position, vec3 tangent) {
+    float radius = length(position);
     vec3 radial = normalize(position);
     vec3 radialTangent = radial * dot(tangent, radial);
-    return normalize(tangent - radialTangent
-        + radialTangent / sqrt(max(1.0 - horizonRadius / length(position), 0.0001)));
+    float radialScale = radius > horizonRadius
+        ? 1.0 / sqrt(max(1.0 - horizonRadius / radius, 0.0001)) : 1.0;
+    return normalize(tangent - radialTangent + radialTangent * radialScale);
 }
 
 vec3 blackbody(float temperature) {

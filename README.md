@@ -1,20 +1,30 @@
 # Render-Engine
 3D Render Engine with GLFW, GLAD, GLEW & glm
 
+## Startup laboratories
+
+The app opens at a main menu. Choose **Planetorium** for either **Solar System - 1:1 scale** or the existing **Gargantua system**. Choose **Quantum Simulation** for 38 selectable examples: infinite-well states and superpositions, harmonic-oscillator states, coherent and squeezed states, free packets, hydrogen orbital slices, spin states, Bell states, and numerical tunneling/scattering experiments.
+
+**F10** returns to the main menu and pauses playback. **F2** toggles orbital trajectories, **F3** toggles the browser/information panel, and **F4** shows the selected system's overview. Select a body in the right-hand list and press **G**, double-click it, or click **Go to selection**. **F** follows it while time advances. The solar system uses physical AU distances, true mean radii, double-precision camera coordinates and camera-relative rendering; small selection markers remain visible in overview. The existing Gargantua demonstration retains its illustrative scale.
+
+The solar preset includes the Sun, eight planets, Pluto, Ceres, Vesta, Eris, a representative Halley orbit, seven moons, and 4,096 representative main-belt/Kuiper-belt markers. Planet positions use fixed J2000 Keplerian elements; surfaces are procedural illustrations. This is not a current-date ephemeris or a complete survey catalogue. Solar-system time can advance by seconds, minutes, hours, days, 30-day months, or Julian years per real second. Quantum examples use separate dimensionless time rates of 0.1x to 4x; **R** restarts the selected state.
+
+See [the detailed changes and reasons](docs/SIMULATION_CHANGES.md) for every changed component, equations, sources, accuracy boundaries, and validation instructions.
+
 ## Controls
 
-- **Mouse wheel** adjusts the camera's field of view from 15° to 90°. Scroll up to zoom in.
+- **Mouse wheel** multiplies flight speed by 10× per notch (1×, 10×, 100×, and so on). Scroll down to slow down.
 - **Space** or **Play / Pause** starts and pauses playback. The application starts paused. The disk, ocean waves, planet rotation, and orbits share the playback clock.
 - **< / >** (comma / period) or the **Time slower / Time faster** buttons select one second, one minute, or one hour of simulated time per real second (1×, 60×, 3600×). The title shows local observer time and world playback time as HH:MM:SS.
-- **Black hole / Model** or **F2** switches scenes and resets the view.
-- **Miller flyby** or **F3** moves close to the ocean planet and follows its orbital translation. You can fly around it while following.
-- **Spacecraft** or **F4** moves close to the ring-shaped spacecraft and follows it. **Boost / B** starts its prograde booster manually. **Reset craft / R** restores its initial orbit and fuel at the current playback time.
+- **Black hole / Model** switches the legacy scenes and resets the view.
+- **Miller flyby** moves close to the ocean planet and follows its orbital translation. You can fly around it while following.
+- **Spacecraft** moves close to the ring-shaped spacecraft and follows it. **Boost / B** starts its prograde booster manually. **Reset craft / R** restores its initial orbit and fuel at the current playback time.
 - **Home view** or **Home** returns to a scene overview and exits planet-follow mode.
-- **Right mouse button** toggles mouse-look capture. **Esc** releases the cursor for the clickable Windows controls. Changing window focus also releases it.
+- **Right mouse button** toggles mouse-look capture. Hold **Shift + right mouse button** and move the mouse forward or backward to zoom; press the **middle mouse button** to reset the zoom. **Esc** releases the cursor for the clickable Windows controls. Changing window focus also releases it.
 - **WASD** moves forward, backward, and sideways. **Q / E** moves down and up. **Left Shift** gives a temporary 5× speed boost.
 - **[ / ]** or **Slower / Faster** halves or doubles flight speed within 0.005–50 scene units per real second. The title shows the selected speed. Camera speed operates independently of playback time.
 - **F1** switches between wireframe and shaded rendering.
-- **N / New terrain** changes the terrain seed. Each of the three planets applies its own seed offset.
+- **N / New terrain** is retained for the legacy scene; its black-hole planets now use ocean-only surfaces. Regular generated systems retain unique seeded terrain.
 - **L / Land / lift off** places the free camera just above the nearest planet's terrain or sea surface, or releases it back into flight. Movement and mouse-look remain available. The surface rotates and orbits under the observer. F3 approaches near the day/night boundary so the black hole can be seen above the horizon after landing.
 - **Left-click** with the cursor released selects a planet, star, spacecraft, or black hole. Its name appears in the title. **G / Go to selection** jumps close to its current position. Free-cam remains active after arrival.
 - **H / Gravity** toggles gravitational acceleration of the camera. Space starts or pauses the fall. Movement keys remain navigation controls. The fall pauses at the exterior rendering limit, 1.015 horizon radii. **Home view** resets the experiment.
@@ -22,7 +32,7 @@
 
 The title distinguishes **World** playback time from **Local** observer time. The local clock applies approximate gravitational and velocity time-dilation factors. **Light age** reports how far into the spacecraft's simulated past the received image looks.
 
-The startup cube rotates with playback so you can see the pause state. Dropped OBJ and FBX models keep their original transforms.
+The legacy model-viewer cube rotates with playback. Dropped OBJ and FBX models keep their original transforms and open the model viewer.
 
 `WindowManager::GetSimulationTime()` returns elapsed playback time in seconds as a `double`. A simulation scene can use this value to animate its state or pass it to a shader. A numerical solver can use it as the target time for fixed-size integration steps.
 

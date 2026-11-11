@@ -53,6 +53,7 @@ class StarSystem
     void Overview(glm::vec3 &front, glm::vec3 &up);
     void Pick(const glm::vec3 &direction, double seconds);
     void ToggleFollow(double seconds);
+    void SetPhotonDetector() { photonDetector=camera; }
     glm::dvec3 Position(int planet, double seconds) const;
     const Star &Host() const
     {
@@ -108,6 +109,7 @@ class StarSystem
     bool following = false;
     double lastTime = 0;
     glm::dvec3 lastFollowPosition = glm::dvec3(0);
+    glm::dvec3 photonDetector = glm::dvec3(0);
     unsigned int program = 0;
     unsigned int sphereVao = 0, sphereBuffer = 0;
     unsigned int lineVao = 0, lineBuffer = 0;

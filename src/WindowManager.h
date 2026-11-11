@@ -66,7 +66,11 @@ private:
     void UpdateTitle();
     void ResetView();
     void ToggleLanding();
-    void UpdateObserver(double previousTime);
+    void UpdateObserver(double previousTime, float realSeconds);
+    void InitializeOverlay();
+    void ReleaseOverlay();
+    void ShowSpeedToast(float speed, bool starSystem);
+    void RenderSpeedToast();
     void ApplyVisionProfile(int profile);
     void AlignCameraUp(const glm::vec3& up);
     void HandleInterfaceCommand(int id, int notification);
@@ -118,6 +122,7 @@ private:
     glm::vec3 lastPlanetPosition = glm::vec3(0.0f);
     glm::vec3 lastSpacecraftPosition = glm::vec3(0.0f);
     bool mouseCaptured = false;
+    bool zoomDragging = false;
     float cameraSpeed = 1.0f;
     float fieldOfView = 45.0f;
     double simulationTime = 0.0;
@@ -126,4 +131,11 @@ private:
     int timeRateIndex = 0;
     float titleUpdateElapsed = 0.0f;
     bool showingDefaultCube = true;
+    unsigned int overlayProgram = 0;
+    unsigned int overlayVao = 0;
+    unsigned int overlayVbo = 0;
+    unsigned int overlayTexture = 0;
+    int overlayWidth = 0;
+    int overlayHeight = 0;
+    double speedToastUntil = 0.0;
 };

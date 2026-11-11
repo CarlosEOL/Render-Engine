@@ -79,7 +79,7 @@ const std::vector<QuantumStates::Example> &QuantumStates::Examples()
         for (int n = 0; n < 6; ++n)
             result.push_back(
                 {std::string("Spin 1/2 | ") + spins[n], Family::Spin, n,
-                 "A pure qubit on the Bloch sphere. The vector is (2 Re(a*b), 2 Im(a*b), |a|^2-|b|^2). Bars show Z "
+                 "A pure qubit on the Bloch sphere. The vector is (2 Re(conj(a)b), 2 Im(conj(a)b), |a|^2-|b|^2). Bars show Z "
                  "measurement probabilities, not repeated measurement outcomes. Rabi state uses H = sigma_x/2."});
         result.push_back(
             {"Two qubits | Bell Phi+", Family::Bell, 0,
