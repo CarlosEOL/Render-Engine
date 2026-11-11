@@ -228,9 +228,12 @@ void main() {
             float fraction = planeBefore / (planeBefore - planeAfter);
             vec3 intersection = mix(position, nextPosition, fraction);
             float diskRadius = length(intersection);
-            if (diskRadius > diskRadii.x && diskRadius < diskRadii.y) {
+            float radial = (diskRadius - diskRadii.x) / (diskRadii.y - diskRadii.x);
+            float edge = smoothstep(0.0, 0.06, radial) * (1.0 - smoothstep(0.8, 1.0, radial));
+            // Where the fade has reached zero the disk is absent: stopping here would write opaque black
+            // and depth over the fringe, hiding the galaxies and every later image of the disk.
+            if (diskRadius > diskRadii.x && diskRadius < diskRadii.y && edge > 0.001) {
                 vec3 diskPosition = (inverseDiskOrientation * vec4(intersection, 1.0)).xyz;
-                float radial = (diskRadius - diskRadii.x) / (diskRadii.y - diskRadii.x);
                 float angle = atan(diskPosition.y, diskPosition.x) - diskPhase;
                 float bands = 0.6 + 0.4 * sin(65.0 * radial + 1.5 * sin(3.0 * angle));
                 float spiral = 0.6 + 0.4 * cos(5.0 * angle + 22.0 * radial);
@@ -238,7 +241,6 @@ void main() {
                 float shift = frequencyRatio(diskRadius, observerRadius,
                     circularVelocityBeta(intersection, diskAxis), toObserver);
                 float temperature = 5200.0 * pow(diskRadius / diskRadii.x, -0.75);
-                float edge = smoothstep(0.0, 0.06, radial) * (1.0 - smoothstep(0.8, 1.0, radial));
                 radiance = 4.0 * blackbody(temperature * shift) * edge * (0.4 + 0.3 * bands + 0.3 * spiral);
                 travelled += length(intersection - position);
                 hit = true;
