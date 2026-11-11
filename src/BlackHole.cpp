@@ -116,7 +116,9 @@ void main() {
         vec3 lightDirection = normalize(-worldPosition);
         vec3 viewDirection = normalize(cameraPosition - worldPosition);
         float light = max(dot(normal, lightDirection), 0.0);
-        float specular = pow(max(dot(normal, normalize(lightDirection + viewDirection)), 0.0), 100.0) * water;
+        // The half-vector term stays positive past the terminator at grazing angles, so gate it by the lit side.
+        float specular = pow(max(dot(normal, normalize(lightDirection + viewDirection)), 0.0), 100.0) * water
+            * smoothstep(0.0, 0.1, dot(normal, lightDirection));
         vec3 ocean = mix(vec3(0.04, 0.42, 0.46), vec3(0.005, 0.025, 0.09),
             1.0 - exp(-12.0 * depth));
         float moisture = 0.5 + 0.5 * terrainNoise(radial * 5.0 + vec3(31.0));
@@ -150,7 +152,8 @@ void main() {
             normal = -normal;
         vec3 lightDirection = normalize(vec3(1.0, 1.0, 2.0) - worldPosition);
         float diffuse = max(dot(normal, lightDirection), 0.0);
-        float specular = pow(max(dot(normal, normalize(lightDirection + viewDirection)), 0.0), 24.0);
+        float specular = pow(max(dot(normal, normalize(lightDirection + viewDirection)), 0.0), 24.0)
+            * smoothstep(0.0, 0.1, dot(normal, lightDirection));
         fragColor = vec4(bodyColor * (0.22 + 0.78 * diffuse) + 0.5 * specular, 1.0);
     } else if (surface == 6) {
         vec3 normal = normalize(mat3(transpose(inverse(model))) * localPosition);
