@@ -11,8 +11,10 @@ public:
 private:
     unsigned int program = 0;
     unsigned int vao = 0;
-    unsigned int sceneTexture = 0;
     unsigned int depthTexture = 0;
+    struct Uniforms {
+        int inverseViewProjection, cameraPosition, planetCenter, lightPosition, planetRadius, logarithmicDepth;
+    } uniforms = {};
     mutable int textureWidth = 0;
     mutable int textureHeight = 0;
 };
