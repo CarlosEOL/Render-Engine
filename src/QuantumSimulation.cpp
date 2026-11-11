@@ -71,6 +71,7 @@ void main() {
         }
     } else {
         vec2 psi=texture(wave,vec2(uv.x,.5)).rg;
+        psi=mat2(cos(phase),sin(phase),-sin(phase),cos(phase))*psi;
         float density=dot(psi,psi)/max(peakDensity,1e-12);
         if (uv.y>.48) {
             result+=hue(atan(psi.y,psi.x))*(1-exp(-density*3))
@@ -102,6 +103,11 @@ void main() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    if (!particles.Initialize())
+    {
+        Release();
+        return false;
+    }
     Select(0);
     return true;
 }
@@ -133,9 +139,9 @@ void QuantumSimulation::Upload()
     const auto &example = QuantumStates::Examples()[selected];
     const bool hydrogen = example.family == QuantumStates::Family::Hydrogen;
     const bool numerical = example.family == QuantumStates::Family::Numerical;
-    const int width = hydrogen ? 256 : QuantumStates::Solver::size;
-    const int height = hydrogen ? 256 : 1;
-    const double extent = hydrogen ? (example.state == 0 ? 6 : example.state < 4 ? 16 : 30) : 12;
+    const int width = QuantumStates::Solver::size;
+    const int height = 1;
+    const double extent = 12;
     std::vector<glm::vec4> data(width * height);
     peakDensity = 1e-15;
     visibleNorm = mean = deviation = 0;
@@ -143,12 +149,16 @@ void QuantumSimulation::Upload()
     for (int y = 0; y < height; ++y)
         for (int x = 0; x < width; ++x)
         {
-            const double coordinate = -extent + 2 * extent * x / (width - 1);
-            const auto psi = numerical ? solver.Wave()[x]
-                                       : QuantumStates::Evaluate(example, coordinate,
-                                                                 hydrogen ? -extent + 2 * extent * y / (height - 1) : 0,
-                                                                 hydrogen ? 0 : time);
-            data[y * width + x] = glm::vec4(psi.real(), psi.imag(),numerical?solver.Potential()[x]:0,0);
+            const double coordinate = hydrogen ? (example.state == 0  ? 12
+                                                  : example.state < 4 ? 36
+                                                                      : 80) *
+                                                     x / static_cast<double>(width - 1)
+                                               : -extent + 2 * extent * x / (width - 1);
+            const auto psi = hydrogen
+                                 ? std::complex<double>(QuantumStates::HydrogenRadial(example.state, coordinate), 0)
+                             : numerical ? solver.Wave()[x]
+                                         : QuantumStates::Evaluate(example, coordinate, 0, time);
+            data[y * width + x] = glm::vec4(psi.real(), psi.imag(), numerical ? solver.Potential()[x] : 0, 0);
             const double density = std::norm(psi);
             peakDensity = std::max(peakDensity, density);
             if (!hydrogen)
@@ -166,28 +176,33 @@ void QuantumSimulation::Upload()
     }
     glBindTexture(GL_TEXTURE_2D, texture);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, width, height, 0, GL_RGBA, GL_FLOAT, data.data());
+    particles.Update(example, time, numerical ? &solver.Wave() : nullptr);
 }
-void QuantumSimulation::Render(float aspect) const
+void QuantumSimulation::Render(int width, int height, float fieldOfView, const glm::vec3 &camera,
+                               const glm::vec3 &front, const glm::vec3 &up) const
 {
     if (!program)
         return;
     const auto &example = QuantumStates::Examples()[selected];
     using Family = QuantumStates::Family;
-    const int mode = example.family == Family::Hydrogen ? 1
-                     : example.family == Family::Spin   ? 2
-                     : example.family == Family::Bell   ? 3
-                                                        : 0;
+    const int graphHeight = std::max(90, height / 5);
+    glViewport(0, graphHeight, width, height - graphHeight);
+    particles.Render(example, time, width, height - graphHeight, fieldOfView, camera, front, up);
+    glViewport(0, 0, width, graphHeight);
+    const float aspect = static_cast<float>(width) / graphHeight;
+    const int mode = (example.family == Family::Spin || example.family == Family::Bell) ? 3 : 0;
     glUseProgram(program);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texture);
     glUniform1i(glGetUniformLocation(program, "wave"), 0);
     glUniform1i(glGetUniformLocation(program, "mode"), mode);
-    glUniform1i(glGetUniformLocation(program,"showPotential"),example.family==Family::Numerical);
+    glUniform1i(glGetUniformLocation(program, "showPotential"), example.family == Family::Numerical);
     glUniform1f(glGetUniformLocation(program, "aspect"), aspect);
     glUniform1f(glGetUniformLocation(program, "peakDensity"), static_cast<float>(peakDensity));
     const double energy = example.state == 0 ? -.5 : example.state < 4 ? -.125 : -1.0 / 18;
-    glUniform1f(glGetUniformLocation(program, "phase"),
-                static_cast<float>(std::remainder(-energy * time, 6.283185307179586)));
+    glUniform1f(
+        glGetUniformLocation(program, "phase"),
+        example.family == Family::Hydrogen ? static_cast<float>(std::remainder(-energy * time, 6.283185307179586)) : 0);
     glm::vec3 bloch(0, 0, 1);
     if (example.state == 1)
         bloch = {0, 0, -1};
@@ -213,6 +228,7 @@ void QuantumSimulation::Render(float aspect) const
     glBindVertexArray(0);
     glDepthMask(GL_TRUE);
     glEnable(GL_DEPTH_TEST);
+    glViewport(0, 0, width, height);
 }
 std::string QuantumSimulation::Information() const
 {
@@ -228,7 +244,8 @@ std::string QuantumSimulation::Information() const
         for (int i = 0; i < static_cast<int>(probabilities.size()); ++i)
             text << (probabilities.size() == 2 ? qubit[i] : joint[i]) << "  " << probabilities[i] << "\r\n";
         if (example.family == QuantumStates::Family::Spin)
-            text << "\r\nBloch sphere in an oblique view: Z upward, X lower-right, Y upper-left.\r\n";
+            text << "\r\n3D Bloch sphere: physical display Y represents Bloch Z; display -Z represents Bloch Y. This "
+                    "is state space, not a particle trajectory.\r\n";
         else
             text << "\r\nBars left to right: 00, 01, 10, 11.\r\n";
     }
@@ -240,16 +257,26 @@ std::string QuantumSimulation::Information() const
                 "amplitude\r\nTop: density / phase strip\r\nCurves use shared peak scaling.\r\n";
     }
     else
-        text << "\r\nCentral x-z slice, equal axes. Display brightness is scaled to this orbital's peak. Not a "
-                "normalized 2D probability distribution.\r\n";
-    if (example.family==QuantumStates::Family::Numerical)
-        text<<"\r\nAmber curve: potential V (vertical chart span = 4 energy units).\r\n";
-    text << "\r\nSpace  Play / pause\r\n< >  Time rate\r\nR  Restart selected state\r\nF3  Information panel\r\nF10  "
+        text << "\r\n3D cloud samples |psi(x,y,z)|^2 in Bohr radii.\r\nBottom graph: radial probability r^2 "
+                "|R_nl(r)|^2, from r=0 to "
+             << (example.state == 0  ? 12
+                 : example.state < 4 ? 36
+                                     : 80)
+             << " Bohr radii.\r\n";
+    if (example.family != QuantumStates::Family::Hydrogen && example.family != QuantumStates::Family::Spin &&
+        example.family != QuantumStates::Family::Bell)
+        text << "\r\n3D cloud: Born probability along X. Gaussian display thickness in Y/Z is illustrative; the "
+                "underlying equation is 1D. Dots are probability samples, not classical particle paths.\r\n";
+    if (example.family == QuantumStates::Family::Numerical)
+        text << "\r\nAmber curve: potential V (vertical chart span = 4 energy units).\r\n";
+    text << "\r\nSpace  Play / pause\r\n< >  Time rate\r\nCtrl+R  Restart selected state\r\nRMB  Look around\r\nWASD  "
+            "Fly\r\nQ/E  Roll\r\nR/F  Up/down\r\nHome  Frame state\r\nF3  Information panel\r\nF10  "
             "Main menu\r\n";
     return text.str();
 }
 void QuantumSimulation::Release()
 {
+    particles.Release();
     if (program)
         glDeleteProgram(program);
     if (vao)

@@ -24,6 +24,8 @@ struct Example
 };
 const std::vector<Example> &Examples();
 std::complex<double> Evaluate(const Example &example, double x, double y, double time);
+std::complex<double> Hydrogen3D(int orbital, double x, double y, double z, double time);
+double HydrogenRadial(int orbital, double radius);
 std::vector<double> Probabilities(const Example &example, double time);
 // hbar=m=1; hard walls at +/-12. Crank-Nicolson evolves a sampled wavefunction.
 class Solver

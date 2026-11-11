@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vector>
+#include <array>
 #include "BlackHole.h"
 #include "CameraOptics.h"
 #include "StarSystem.h"
@@ -15,6 +16,9 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#ifndef GLFW_INCLUDE_NONE
+#define GLFW_INCLUDE_NONE
+#endif
 #include "GLFW/glfw3.h"
 
 const unsigned int WIDTH = 1980, HEIGHT = 1080; //Window Size
@@ -32,6 +36,8 @@ public:
     bool isClosed();
     void ReleaseGraphics();
     double GetSimulationTime() const { return simulationTime; }
+    int GetFrameLimit() const { return !isFocused || mainMenu.Visible() || idleFrame ? glm::min(frameLimit,30) : frameLimit; }
+    bool RunRenderChecks(const std::string& directory);
 
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
     static void MouseCallback(GLFWwindow* window, double xPos, double yPos);
@@ -44,7 +50,7 @@ public:
     static unsigned int VAO, VBO, EBO;
     static float verticeDistance;
 
-    static glm::vec3 cameraPos;
+    static glm::dvec3 cameraPos;
     static glm::vec3 cameraFront;
     static glm::vec3 cameraUp;
 
@@ -83,6 +89,13 @@ private:
     void RefreshPanel();
     void ResizeInterface();
     void SyncCameraAngles();
+    void PrepareCurrentBrowser();
+    int frameLimit = 60;
+    float blackHoleResolution = .75f;
+    float lensFlareStrength = .45f;
+    bool sceneCacheValid = false;
+    bool idleFrame = false;
+    std::array<double,24> lastSceneSignature = {};
     AppMenu mainMenu;
     ScenePanel scenePanel;
     StarSystem starSystem;
@@ -98,6 +111,7 @@ private:
     int quantumRateIndex = 2;
     void* nativeMenu = nullptr;
     CameraOptics optics;
+    bool opticsReady = false;
     int visionProfile = 0;
     float lensAspect = static_cast<float>(WIDTH) / HEIGHT;
     float exposureEv = 0.0f;
@@ -117,10 +131,12 @@ private:
     bool followPlanet = false;
     bool followSpacecraft = false;
     bool followSelected = false;
+    bool followSelectedRotation = false;
+    glm::dmat3 lastSelectedRotation = glm::dmat3(1);
     int followingTarget = -1;
-    glm::vec3 lastSelectedPosition = glm::vec3(0);
-    glm::vec3 lastPlanetPosition = glm::vec3(0.0f);
-    glm::vec3 lastSpacecraftPosition = glm::vec3(0.0f);
+    glm::dvec3 lastSelectedPosition = glm::dvec3(0);
+    glm::dvec3 lastPlanetPosition = glm::dvec3(0.0);
+    glm::dvec3 lastSpacecraftPosition = glm::dvec3(0.0);
     bool mouseCaptured = false;
     bool zoomDragging = false;
     float cameraSpeed = 1.0f;

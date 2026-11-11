@@ -56,12 +56,16 @@ void ScenePanel::Resize(int width, int height)
     MoveWindow(GetDlgItem(window, 2099), x, 0, widthPixels, height, TRUE);
     place(2105, margin, static_cast<int>(24 * scale), margin);
     place(2100, static_cast<int>(42 * scale), static_cast<int>(27 * scale), margin);
-    place(2101, static_cast<int>(77 * scale), static_cast<int>(142 * scale), margin);
-    const int bottom = height - static_cast<int>(240 * scale);
-    place(2102, static_cast<int>(230 * scale), std::max(60, bottom - static_cast<int>(238 * scale)), margin);
-    place(2106, bottom, static_cast<int>(24 * scale), margin);
-    place(2103, bottom + static_cast<int>(28 * scale), static_cast<int>(148 * scale), margin);
+    const int contentTop=static_cast<int>((currentSystemOnly?77:77)*scale);
+    const int contentBottom=height-static_cast<int>(64*scale);
+    const int listHeight=browserVisible?(informationVisible?(contentBottom-contentTop)/2:contentBottom-contentTop):0;
+    place(2101,contentTop,std::max(60,listHeight),margin);
+    place(2106,static_cast<int>(42*scale),static_cast<int>(27*scale),margin);
+    place(2103,contentTop,std::max(60,listHeight),margin);
+    const int infoTop=browserVisible?contentTop+listHeight+static_cast<int>(12*scale):margin;
+    place(2102,infoTop,std::max(60,contentBottom-infoTop),margin);
     place(2104, height - static_cast<int>(48 * scale), static_cast<int>(32 * scale), margin);
+    RefreshVisibility();
     InvalidateRect(window, nullptr, TRUE);
 #endif
 }
@@ -74,10 +78,41 @@ void ScenePanel::Toggle()
 void ScenePanel::SetVisible(bool show)
 {
     visible = show;
+    RefreshVisibility();
+}
+
+void ScenePanel::RefreshVisibility() {
 #ifdef _WIN32
-    for (auto control : controls)
-        ShowWindow(static_cast<HWND>(control), visible ? SW_SHOW : SW_HIDE);
+    for (auto control:controls) {
+        const int id=GetDlgCtrlID(static_cast<HWND>(control));
+        bool show=visible && (browserVisible || informationVisible);
+        if (id==2102) show=visible && informationVisible;
+        else if (id==2100 || id==2101) show=visible && browserVisible && !currentSystemOnly;
+        else if (id==2103 || id==2106) show=visible && browserVisible && currentSystemOnly;
+        else if (id==2105 || id==2104) show=visible && browserVisible;
+        ShowWindow(static_cast<HWND>(control),show?SW_SHOW:SW_HIDE);
+    }
+    if (parent) SetDlgItemTextA(static_cast<HWND>(parent),2106,systemName.c_str());
 #endif
+}
+
+void ScenePanel::ToggleBrowser(bool local) {
+    browserVisible=!(visible && browserVisible && currentSystemOnly==local);
+    currentSystemOnly=local; visible=true;
+    SetTitle(local?"Current system (Shift+F4)":"All star systems (F4)");
+#ifdef _WIN32
+    if(parent){RECT rect;GetClientRect(static_cast<HWND>(parent),&rect);Resize(rect.right,rect.bottom);}
+#endif
+}
+void ScenePanel::ToggleInformation() {
+    informationVisible=!informationVisible; visible=true;
+#ifdef _WIN32
+    if(parent){RECT rect;GetClientRect(static_cast<HWND>(parent),&rect);Resize(rect.right,rect.bottom);}
+#endif
+}
+void ScenePanel::SetCurrentSystemName(const std::string& name) {
+    systemName=name;
+    RefreshVisibility();
 }
 
 void ScenePanel::SetTitle(const std::string &title)

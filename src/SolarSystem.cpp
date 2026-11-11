@@ -8,6 +8,7 @@
 // J2000 elements are held fixed; this is a Keplerian model, not a live ephemeris.
 void StarSystem::LoadSolarSystem()
 {
+    InvalidateCaches();
     solarSystem = true;
     planets.clear();
     asteroids.clear();
@@ -230,7 +231,7 @@ void StarSystem::LoadSolarSystem()
                              rand(0, glm::two_pi<double>()), rand(0, glm::two_pi<double>())});
     }
     selected = 2;
-    landed = following = false;
+    landed = following = followingRotation = false;
     lastTime = 0;
     camera = glm::dvec3(0, 35, 65);
     speedAu = 5;

@@ -1,4 +1,5 @@
 #pragma once
+#include "QuantumParticleView.h"
 #include "QuantumStates.h"
 
 class QuantumSimulation
@@ -8,7 +9,12 @@ class QuantumSimulation
     void Release();
     void Select(int example);
     void Advance(double seconds);
-    void Render(float aspect) const;
+    void Render(int width, int height, float fieldOfView, const glm::vec3 &camera, const glm::vec3 &front,
+                const glm::vec3 &up) const;
+    float ViewDistance() const
+    {
+        return particles.SuggestedDistance(QuantumStates::Examples()[selected]);
+    }
     int Selected() const
     {
         return selected;
@@ -28,5 +34,6 @@ class QuantumSimulation
     double peakDensity = 1;
     unsigned int program = 0, vao = 0, texture = 0;
     QuantumStates::Solver solver;
+    QuantumParticleView particles;
     void Upload();
 };

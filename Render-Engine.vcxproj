@@ -172,6 +172,9 @@
     <ClCompile Include="src\AppMenu.cpp" />
     <ClCompile Include="src\QuantumStates.cpp" />
     <ClCompile Include="src\QuantumSimulation.cpp" />
+    <ClCompile Include="src\QuantumParticleView.cpp" />
+    <ClCompile Include="src\CameraMotion.cpp" />
+    <ClCompile Include="src\RenderChecks.cpp" />
     <ClCompile Include="src\glad.c" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\ObjectLoader.cpp" />
@@ -193,13 +196,16 @@
     <ClInclude Include="src\AppMenu.h" />
     <ClInclude Include="src\QuantumStates.h" />
     <ClInclude Include="src\QuantumSimulation.h" />
+    <ClInclude Include="src\QuantumParticleView.h" />
+    <ClInclude Include="src\CameraMotion.h" />
     <ClInclude Include="src\ObjectLoader.h" />
     <ClInclude Include="src\WindowManager.h" />
   </ItemGroup>
   <ItemDefinitionGroup>
     <PostBuildEvent>
       <Command>if not exist "$(TargetDir)assets" mkdir "$(TargetDir)assets"
-copy /Y "$(ProjectDir)assets\galaxy.png" "$(TargetDir)assets\galaxy.png"</Command>
+copy /Y "$(ProjectDir)assets\galaxy.png" "$(TargetDir)assets\galaxy.png"
+copy /Y "$(ProjectDir)assets\galaxy-variants.png" "$(TargetDir)assets\galaxy-variants.png"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

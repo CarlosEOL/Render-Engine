@@ -31,8 +31,8 @@ void AppMenu::Create(void *nativeParent, const std::vector<std::string> &names)
         BS_MULTILINE | WS_TABSTOP);
     add(L"BUTTON", L"Gargantua system\nBlack hole, ocean worlds and spacecraft", 3013, BS_MULTILINE | WS_TABSTOP);
     add(L"STATIC",
-        L"Distances and body radii use the same physical scale. Small objects have selection markers.\nGargantua "
-        L"retains the existing illustrative simulation scale.",
+        L"Distances and body radii use the same physical scale. Small objects have selection markers.\nGargantua uses "
+        L"100 million solar masses; Miller is Earth-sized. Its orbit is a Schwarzschild approximation.",
         3003, SS_CENTER);
     add(L"LISTBOX", L"", 3020, WS_BORDER | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_TABSTOP);
     for (const auto &name : names)

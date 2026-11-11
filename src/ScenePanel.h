@@ -9,6 +9,11 @@ class ScenePanel
     void Create(void *parent);
     void Resize(int width, int height);
     void Toggle();
+    void ToggleBrowser(bool currentSystemOnly);
+    void ShowBrowser(bool local) { browserVisible=false; ToggleBrowser(local); }
+    bool IsCurrentSystemBrowser() const { return currentSystemOnly; }
+    void ToggleInformation();
+    void SetCurrentSystemName(const std::string& name);
     void SetVisible(bool show);
     void SetTitle(const std::string &title);
     void SetCatalogue(std::vector<std::pair<int, std::string>> items);
@@ -19,7 +24,7 @@ class ScenePanel
     int SelectedPlanet() const;
     int Width() const
     {
-        return visible ? widthPixels : 0;
+        return visible && (browserVisible || informationVisible) ? widthPixels : 0;
     }
     bool Visible() const
     {
@@ -30,6 +35,11 @@ class ScenePanel
 
   private:
     bool visible = true;
+    bool browserVisible = true;
+    bool informationVisible = true;
+    bool currentSystemOnly = true;
+    void RefreshVisibility();
+    std::string systemName;
     int widthPixels = 0;
     void *parent = nullptr;
     void *font = nullptr;

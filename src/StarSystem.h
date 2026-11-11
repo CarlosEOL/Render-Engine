@@ -4,6 +4,7 @@
 #include <glm/glm.hpp>
 #include <string>
 #include <vector>
+#include <limits>
 
 struct GLFWwindow;
 
@@ -53,6 +54,8 @@ class StarSystem
     void Overview(glm::vec3 &front, glm::vec3 &up);
     void Pick(const glm::vec3 &direction, double seconds);
     void ToggleFollow(double seconds);
+    void ToggleRotationFollow(double seconds);
+    bool IsRotationFollowing() const { return followingRotation; }
     void SetPhotonDetector() { photonDetector=camera; }
     glm::dvec3 Position(int planet, double seconds) const;
     const Star &Host() const
@@ -79,6 +82,7 @@ class StarSystem
     {
         selected = planet >= 0 && planet < static_cast<int>(planets.size()) ? planet : -1;
         following = false;
+        followingRotation = false;
     }
     bool IsLanded() const
     {
@@ -94,6 +98,7 @@ class StarSystem
 
   private:
     glm::mat4 Rotation(int planet, double seconds) const;
+    glm::dmat3 RotationDouble(int planet, double seconds) const;
     double SurfaceRadius(int planet, const glm::dvec3 &direction, double seconds) const;
     void ConstrainSurface(double seconds, glm::vec3 &front, glm::vec3 &up);
     void UpdatePatch(const glm::vec3 &direction);
@@ -103,10 +108,18 @@ class StarSystem
     bool solarSystem = false;
     double GravityFor(int planet) const;
     glm::dvec3 RelativePosition(int planet, double seconds) const;
+    void InvalidateCaches();
+    mutable double cachedPositionTime = std::numeric_limits<double>::quiet_NaN();
+    mutable std::vector<glm::dvec3> cachedPositions;
+    std::vector<std::vector<glm::dvec3>> cachedOrbits;
+    std::vector<glm::dvec3> cachedAsteroids;
+    double cachedAsteroidTime = std::numeric_limits<double>::quiet_NaN();
     int selected = -1;
     int landedPlanet = -1;
     bool landed = false;
     bool following = false;
+    bool followingRotation = false;
+    glm::dmat3 lastFollowRotation = glm::dmat3(1);
     double lastTime = 0;
     glm::dvec3 lastFollowPosition = glm::dvec3(0);
     glm::dvec3 photonDetector = glm::dvec3(0);

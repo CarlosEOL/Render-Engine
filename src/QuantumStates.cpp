@@ -71,15 +71,17 @@ const std::vector<QuantumStates::Example> &QuantumStates::Examples()
                           "appears while they overlap. Packets continue through each other."});
         const char *orbitals[] = {"1s", "2s", "2p_x", "2p_z", "3d_z2", "3d_xz", "3d_x2-y2"};
         for (int n = 0; n < 7; ++n)
-            result.push_back({std::string("Hydrogen | ") + orbitals[n], Family::Hydrogen, n,
-                              "Analytic hydrogen orbital in atomic units (Bohr radii, Hartree energies). This is a "
-                              "central x-z slice of a 3D probability density, not a particle trajectory or a volume "
-                              "projection. Hue indicates wavefunction phase."});
+            result.push_back(
+                {std::string("Hydrogen | ") + orbitals[n], Family::Hydrogen, n,
+                 "Analytic hydrogen orbital in atomic units (Bohr radii, Hartree energies). This is a "
+                 "3D Born-probability cloud with a radial probability graph below. Dots sample the wavefunction "
+                 "density; they are not classical particle trajectories. Hue indicates phase."});
         const char *spins[] = {"|0> +Z", "|1> -Z", "|+> +X", "|-> -X", "|+i> +Y", "|0> Rabi oscillation"};
         for (int n = 0; n < 6; ++n)
             result.push_back(
                 {std::string("Spin 1/2 | ") + spins[n], Family::Spin, n,
-                 "A pure qubit on the Bloch sphere. The vector is (2 Re(conj(a)b), 2 Im(conj(a)b), |a|^2-|b|^2). Bars show Z "
+                 "A pure qubit on the Bloch sphere. The vector is (2 Re(conj(a)b), 2 Im(conj(a)b), |a|^2-|b|^2). Bars "
+                 "show Z "
                  "measurement probabilities, not repeated measurement outcomes. Rabi state uses H = sigma_x/2."});
         result.push_back(
             {"Two qubits | Bell Phi+", Family::Bell, 0,
@@ -142,23 +144,38 @@ std::complex<double> QuantumStates::Evaluate(const Example &e, double x, double 
         return (Packet(x, t, -3, 1.5, .6) + Packet(x, t, 3, -1.5, .6)) / std::sqrt(2 * (1 + overlap));
     }
     if (e.family == Family::Hydrogen)
-    {
-        const double r = std::sqrt(x * x + y * y);
-        if (e.state == 0)
-            return std::exp(-r) / std::sqrt(pi) * Phase(t / 2);
-        if (e.state == 1)
-            return (2 - r) * std::exp(-r / 2) / (4 * std::sqrt(2 * pi)) * Phase(t / 8);
-        if (e.state == 2 || e.state == 3)
-            return (e.state == 2 ? x : y) * std::exp(-r / 2) / (4 * std::sqrt(2 * pi)) * Phase(t / 8);
-        const double common = std::exp(-r / 3) / (81 * std::sqrt(6 * pi));
-        if (e.state == 4)
-            return common * (2 * y * y - x * x) * Phase(t / 18);
-        if (e.state == 5)
-            return common * std::sqrt(12.0) * x * y * Phase(t / 18);
-        // The hidden third coordinate is zero in this x-z slice.
-        return common * std::sqrt(3.0) * x * x * Phase(t / 18);
-    }
+        return Hydrogen3D(e.state, x, 0, y, t);
     return 0;
+}
+
+std::complex<double> QuantumStates::Hydrogen3D(int orbital, double x, double y, double z, double t)
+{
+    const double r = std::sqrt(x * x + y * y + z * z);
+    if (orbital == 0)
+        return std::exp(-r) / std::sqrt(pi) * Phase(t / 2);
+    if (orbital == 1)
+        return (2 - r) * std::exp(-r / 2) / (4 * std::sqrt(2 * pi)) * Phase(t / 8);
+    if (orbital == 2 || orbital == 3)
+        return (orbital == 2 ? x : z) * std::exp(-r / 2) / (4 * std::sqrt(2 * pi)) * Phase(t / 8);
+    const double common = std::exp(-r / 3) / (81 * std::sqrt(6 * pi));
+    if (orbital == 4)
+        return common * (2 * z * z - x * x - y * y) * Phase(t / 18);
+    if (orbital == 5)
+        return common * std::sqrt(12.0) * x * z * Phase(t / 18);
+    return common * std::sqrt(3.0) * (x * x - y * y) * Phase(t / 18);
+}
+
+double QuantumStates::HydrogenRadial(int orbital, double r)
+{
+    if (r < 0)
+        return 0;
+    if (orbital == 0)
+        return 2 * r * std::exp(-r);
+    if (orbital == 1)
+        return r * (2 - r) * std::exp(-r / 2) / (2 * std::sqrt(2.0));
+    if (orbital < 4)
+        return r * r * std::exp(-r / 2) / (2 * std::sqrt(6.0));
+    return 4 * r * r * r * std::exp(-r / 3) / (81 * std::sqrt(30.0));
 }
 
 std::vector<double> QuantumStates::Probabilities(const Example &e, double t)

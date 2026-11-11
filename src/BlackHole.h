@@ -6,32 +6,34 @@
 #include "OrbitalMechanics.h"
 #include "Atmosphere.h"
 #include "GalaxyBackground.h"
+#include "Astronomy.h"
 
 class BlackHole {
 public:
     bool Initialize();
-    static glm::vec3 PlanetPosition(double seconds, int planet = 0);
+    static glm::dvec3 PlanetPosition(double seconds, int planet = 0);
     float PlanetSurfaceRadius(const glm::vec3& worldDirection, double seconds, int planet = 0) const;
-    static int NearestPlanet(const glm::vec3& position, double seconds);
+    static int NearestPlanet(const glm::dvec3& position, double seconds);
     struct Target {
-        glm::vec3 position;
+        glm::dvec3 position;
         float radius;
         std::string name;
     };
     Target ResolveTarget(int id, double seconds) const;
-    int PickTarget(const glm::vec3& origin, const glm::vec3& direction, double seconds) const;
+    glm::mat3 TargetRotation(int id, double seconds) const;
+    int PickTarget(const glm::dvec3& origin, const glm::vec3& direction, double seconds) const;
     static glm::mat4 PlanetRotation(double seconds);
-    static double GravityParameter() { return 1.8; }
-    static float HorizonRadius() { return 0.24f; }
+    static double GravityParameter() { return Astronomy::gargantuaGravityAu; }
+    static float HorizonRadius() { return static_cast<float>(Astronomy::gargantuaHorizonAu); }
     void Update(double seconds);
     void BoostSpacecraft();
     void ResetSpacecraft(double seconds);
     void RegenerateTerrain() { terrainSeed = (terrainSeed + 1) % 10000; }
-    glm::vec3 SpacecraftPosition() const { return glm::vec3(spacecraft.position); }
+    glm::dvec3 SpacecraftPosition() const { return spacecraft.position; }
     const char* SpacecraftStatus() const;
-    double SpacecraftLightAge(const glm::vec3& camera, double seconds) const;
-    void SetPhotonView(bool enabled, const glm::vec3& detector) { photonView = enabled; photonDetector = detector; }
-    void Render(const glm::mat4& viewProjection, const glm::vec3& cameraPosition, double seconds,
+    double SpacecraftLightAge(const glm::dvec3& camera, double seconds) const;
+    void SetPhotonView(bool enabled, const glm::dvec3& detector) { photonView = enabled; photonDetector = detector; }
+    void Render(const glm::mat4& viewProjection, const glm::dvec3& cameraPosition, double seconds,
                 const glm::vec3& observerVelocity = glm::vec3(0.0f), bool trajectories = true, int selected = -1) const;
     void Release();
 
@@ -45,21 +47,31 @@ private:
     unsigned int program = 0;
     unsigned int lensProgram = 0;
     unsigned int screenVao = 0;
+    unsigned int stellarProperties = 0;
+    unsigned int skyCube = 0;
+    unsigned int sourceColor = 0;
+    unsigned int sourceDepth = 0;
+    mutable int sourceWidth = 0, sourceHeight = 0;
+    void BuildSkyCube();
+    void RenderLensing(const glm::mat4& viewProjection,const glm::dvec3& camera,double seconds,const glm::vec3& beta) const;
     Mesh sphere;
     Mesh backgroundStars;
     Mesh craftRing;
     Mesh craftTrail;
     Mesh photonPackets;
     Mesh guides;
+    mutable Mesh waterPatch;
+    mutable glm::vec3 waterPatchDirection = glm::vec3(0);
+    mutable std::vector<std::vector<glm::dvec3>> orbitGuides;
     bool photonView = false;
-    glm::vec3 photonDetector = glm::vec3(0);
+    glm::dvec3 photonDetector = glm::dvec3(0);
     struct PhotonPacket {
         glm::vec3 position;
         glm::vec3 color;
     };
     mutable std::vector<PhotonPacket> packetCache;
     OrbitalMechanics::ParticleState spacecraft = {};
-    std::vector<glm::vec3> trail;
+    std::vector<glm::dvec3> trail;
     double spacecraftTime = 0.0;
     double fuelSeconds = 1.2;
     double trailSampleTime = 0.0;
@@ -78,5 +90,5 @@ private:
     std::vector<FlightSample> flightHistory;
     double missionStart = 0.0;
     FlightSample FlightAt(double seconds) const;
-    FlightSample ObservedFlight(const glm::vec3& camera, double seconds) const;
+    FlightSample ObservedFlight(const glm::dvec3& camera, double seconds) const;
 };

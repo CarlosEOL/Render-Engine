@@ -1,5 +1,6 @@
 #include "glad/glad.h"
 #include "Atmosphere.h"
+#include <cmath>
 #include <glm/gtc/type_ptr.hpp>
 
 unsigned int compileShaderProgram(const char*, const char*);
@@ -103,6 +104,15 @@ void Atmosphere::Render(const glm::mat4& viewProjection, const glm::vec3& camera
     glGetIntegerv(GL_VIEWPORT, viewport);
     if (viewport[2] <= 0 || viewport[3] <= 0)
         return;
+    if(glm::length(center-camera)>radius*2) {
+        const auto clip=viewProjection*glm::vec4(center,1);
+        if(clip.w<=0)return;
+        const float projectionScale=glm::length(glm::vec3(viewProjection[0][1],viewProjection[1][1],viewProjection[2][1]));
+        const float screenRadius=radius*1.03f*projectionScale/clip.w;
+        if(screenRadius*viewport[3]*.5f<1.0f)return;
+        const auto ndc=glm::vec2(clip)/clip.w;
+        if(std::abs(ndc.x)>1+screenRadius || std::abs(ndc.y)>1+screenRadius)return;
+    }
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, sceneTexture);
     if (textureWidth != viewport[2] || textureHeight != viewport[3]) {

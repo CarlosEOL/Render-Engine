@@ -11,14 +11,15 @@ namespace {
         // Kepler's equation is monotonic for an elliptical orbit (0 <= e < 1).
         double lower = -pi;
         double upper = pi;
-        for (int iteration = 0; iteration < 40; ++iteration) {
-            const double midpoint = (lower + upper) * 0.5;
-            if (midpoint - eccentricity * std::sin(midpoint) < meanAnomaly)
-                lower = midpoint;
-            else
-                upper = midpoint;
+        double anomaly=eccentricity<.8?meanAnomaly:std::copysign(pi,meanAnomaly);
+        for (int iteration=0;iteration<64;++iteration) {
+            const double residual=anomaly-eccentricity*std::sin(anomaly)-meanAnomaly;
+            if (std::abs(residual)<1e-14)return anomaly;
+            if(residual<0)lower=anomaly;else upper=anomaly;
+            const double candidate=anomaly-residual/(1-eccentricity*std::cos(anomaly));
+            anomaly=candidate>lower && candidate<upper?candidate:(lower+upper)*.5;
         }
-        return (lower + upper) * 0.5;
+        return anomaly;
     }
 
     double OrbitAnomaly(const OrbitalMechanics::Orbit& orbit, double gravitationalParameter, double seconds) {

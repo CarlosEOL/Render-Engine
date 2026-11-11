@@ -28,6 +28,18 @@ namespace {
     }
 }
 
+std::vector<glm::vec3> PlanetTerrain::SpherePatch(const glm::vec3& direction,int segments) {
+    const auto reference=std::abs(direction.y)<.9f?glm::vec3(0,1,0):glm::vec3(1,0,0);
+    const auto right=glm::normalize(glm::cross(reference,direction)),up=glm::cross(direction,right);
+    const auto point=[&](int x,int y) {
+        return glm::normalize(direction+right*(.025f*(2.0f*x/segments-1))+up*(.025f*(2.0f*y/segments-1)));
+    };
+    std::vector<glm::vec3> vertices;vertices.reserve(segments*segments*6);
+    for(int y=0;y<segments;++y)for(int x=0;x<segments;++x)
+        vertices.insert(vertices.end(),{point(x,y),point(x+1,y),point(x+1,y+1),point(x,y),point(x+1,y+1),point(x,y+1)});
+    return vertices;
+}
+
 float PlanetTerrain::SurfaceRadius(const glm::vec3& direction, unsigned int seed, float wavePhase,
                                   float seaLevel, float relief, float waves) {
     auto position = direction * 2.6f;

@@ -4,7 +4,7 @@ cd /d "%~dp0.."
 call "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat" -arch=x64 >nul
 if errorlevel 1 exit /b 1
 if not exist "build\checks" mkdir "build\checks"
-cl /nologo /EHsc /std:c++20 /MDd /I src /I "..\External_Lib\include" tests\SimulationChecks.cpp src\QuantumStates.cpp src\StarSystem.cpp src\SolarSystem.cpp src\OrbitalMechanics.cpp src\PlanetTerrain.cpp src\Atmosphere.cpp src\glad.c /Fo"build\checks\\" /Fe"build\checks\SimulationChecks.exe" /link /LIBPATH:"..\External_Lib\lib" glfw3.lib opengl32.lib user32.lib gdi32.lib shell32.lib
+cl /nologo /EHsc /std:c++20 /MDd /I src /I "..\External_Lib\include" tests\SimulationChecks.cpp src\QuantumStates.cpp src\CameraMotion.cpp src\StarSystem.cpp src\SolarSystem.cpp src\OrbitalMechanics.cpp src\PlanetTerrain.cpp src\Atmosphere.cpp src\glad.c /Fo"build\checks\\" /Fe"build\checks\SimulationChecks.exe" /link /LIBPATH:"..\External_Lib\lib" glfw3.lib opengl32.lib user32.lib gdi32.lib shell32.lib
 if errorlevel 1 exit /b 1
 "build\checks\SimulationChecks.exe"
 exit /b %errorlevel%

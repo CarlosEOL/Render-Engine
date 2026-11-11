@@ -1,4 +1,5 @@
 #include "StarSystem.h"
+#include "CameraMotion.h"
 #include "Astronomy.h"
 #include "PlanetTerrain.h"
 #include "glad/glad.h"
@@ -34,6 +35,17 @@ void AlignUp(glm::vec3 &front, glm::vec3 &up, const glm::vec3 &nextUp)
 
 StarSystem::Star StarSystem::DescribeStar(int id, const std::string &name)
 {
+    if(id>=4 && id<=8) {
+        const double temperatures[]={5200,10000,3500,6200,8500};
+        const double radii[]={1,2,.65,1.2,1.8};
+        const double masses[]={.9,2.4,.4,1.1,1.9};
+        const char* types[]={"K0 V main-sequence star","A0 V main-sequence star","M2 V main-sequence star","F8 V main-sequence star","A5 V main-sequence star"};
+        Star result;result.id=id;result.name=name;result.classification=types[id-4];
+        result.temperature=temperatures[id-4];result.radiusSolar=radii[id-4];result.massSolar=masses[id-4];
+        result.luminositySolar=result.radiusSolar*result.radiusSolar*std::pow(result.temperature/5772.0,4);
+        result.ageGyr=.45*std::min(13.7,10*result.massSolar/result.luminositySolar);
+        return result;
+    }
     std::mt19937_64 random(0x8c3c010cb4754c91ULL ^ static_cast<unsigned long long>(id) * 7919ULL);
     Star result;
     result.id = id;
@@ -91,6 +103,7 @@ StarSystem::Star StarSystem::DescribeStar(int id, const std::string &name)
 
 void StarSystem::Generate(int id, const std::string &name)
 {
+    InvalidateCaches();
     solarSystem = false;
     asteroids.clear();
     star = DescribeStar(id, name);
@@ -139,7 +152,7 @@ void StarSystem::Generate(int id, const std::string &name)
         axis *= Random(random, 1.5, 2.05);
     }
     selected = -1;
-    landed = following = false;
+    landed = following = followingRotation = false;
     lastTime = 0;
     camera = glm::dvec3(0, 0, std::max(0.1, star.radiusSolar * Astronomy::solarRadiusAu * 8));
     speedAu = 0.1;
@@ -149,8 +162,20 @@ glm::dvec3 StarSystem::Position(int planet, double seconds) const
 {
     if (planet < 0)
         return glm::dvec3(0);
-    const auto relative = RelativePosition(planet, seconds);
-    return planets[planet].parent < 0 ? relative : Position(planets[planet].parent, seconds) + relative;
+    if(cachedPositionTime!=seconds || cachedPositions.size()!=planets.size()) {
+        cachedPositions.resize(planets.size());
+        for(int index=0;index<static_cast<int>(planets.size());++index) {
+            cachedPositions[index]=RelativePosition(index,seconds);
+            if(planets[index].parent>=0)cachedPositions[index]+=cachedPositions[planets[index].parent];
+        }
+        cachedPositionTime=seconds;
+    }
+    return cachedPositions[planet];
+}
+
+void StarSystem::InvalidateCaches() {
+    cachedPositionTime=cachedAsteroidTime=std::numeric_limits<double>::quiet_NaN();
+    cachedPositions.clear();cachedOrbits.clear();cachedAsteroids.clear();
 }
 
 double StarSystem::GravityFor(int planet) const
@@ -168,11 +193,14 @@ glm::dvec3 StarSystem::RelativePosition(int planet, double seconds) const
 
 glm::mat4 StarSystem::Rotation(int planet, double seconds) const
 {
-    const auto &body = planets[planet];
-    auto rotation = glm::rotate(glm::mat4(1), body.tilt, glm::vec3(1, 0, 0));
-    return glm::rotate(rotation,
-                       static_cast<float>(std::remainder(seconds / body.daySeconds, 1.0) * glm::two_pi<double>()),
-                       glm::vec3(0, 1, 0));
+    return glm::mat4(glm::mat3(RotationDouble(planet,seconds)));
+}
+
+glm::dmat3 StarSystem::RotationDouble(int planet,double seconds) const {
+    const double period=planet<0?25.38*Astronomy::secondsPerDay:planets[planet].daySeconds;
+    const double tilt=planet<0?0:planets[planet].tilt;
+    auto rotation=glm::rotate(glm::dmat4(1),tilt,glm::dvec3(1,0,0));
+    return glm::dmat3(glm::rotate(rotation,std::remainder(seconds/period,1.0)*glm::two_pi<double>(),glm::dvec3(0,1,0)));
 }
 
 double StarSystem::SurfaceRadius(int planet, const glm::dvec3 &direction, double seconds) const
@@ -195,7 +223,7 @@ void StarSystem::ConstrainSurface(double seconds, glm::vec3 &front, glm::vec3 &u
     const auto center = Position(landedPlanet, seconds);
     const auto radial = glm::normalize(camera - center);
     AlignUp(front, up, glm::vec3(radial));
-    camera = center + radial * (SurfaceRadius(landedPlanet, radial, seconds) + 2.0 / Astronomy::metresPerAu);
+    camera = center + radial * (SurfaceRadius(landedPlanet, radial, seconds) + Astronomy::observerClearanceAu);
 }
 
 void StarSystem::Update(double seconds, glm::vec3 &front, glm::vec3 &up)
@@ -213,7 +241,11 @@ void StarSystem::Update(double seconds, glm::vec3 &front, glm::vec3 &up)
     else if (following)
     {
         const auto position = Position(selected, seconds);
-        camera += position - lastFollowPosition;
+        if (followingRotation) {
+            const auto rotation=RotationDouble(selected,seconds);
+            CameraMotion::Carry(camera,front,up,lastFollowPosition,position,rotation*glm::transpose(lastFollowRotation));
+            lastFollowRotation=rotation;
+        } else camera += position - lastFollowPosition;
         lastFollowPosition = position;
     }
     lastTime = seconds;
@@ -236,16 +268,18 @@ void StarSystem::Move(GLFWwindow *window, float realSeconds, glm::vec3 &front, g
         movement -= glm::dvec3(right);
     if (!landed)
     {
-        if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)
+        const bool shift=glfwGetKey(window,GLFW_KEY_LEFT_SHIFT)==GLFW_PRESS || glfwGetKey(window,GLFW_KEY_RIGHT_SHIFT)==GLFW_PRESS
+            || glfwGetKey(window,GLFW_KEY_LEFT_CONTROL)==GLFW_PRESS || glfwGetKey(window,GLFW_KEY_RIGHT_CONTROL)==GLFW_PRESS;
+        if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS && !shift)
             movement += glm::dvec3(up);
-        if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS)
+        if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS)
             movement -= glm::dvec3(up);
     }
     camera += distance * movement;
     const double hostRadius=star.radiusSolar*Astronomy::solarRadiusAu;
-    if (!landed && glm::length(camera)<hostRadius+2/Astronomy::metresPerAu)
+    if (!landed && glm::length(camera)<hostRadius+Astronomy::observerClearanceAu)
         camera=(glm::length(camera)>0?glm::normalize(camera):glm::dvec3(0,0,1))
-            *(hostRadius+2/Astronomy::metresPerAu);
+            *(hostRadius+Astronomy::observerClearanceAu);
     if (landed)
         ConstrainSurface(lastTime, front, up);
     else
@@ -258,7 +292,7 @@ void StarSystem::Move(GLFWwindow *window, float realSeconds, glm::vec3 &front, g
             {
                 const auto radial = glm::length(delta) > 0 ? glm::normalize(delta) : glm::dvec3(0, 0, 1);
                 camera = Position(planet, lastTime) +
-                         radial * (SurfaceRadius(planet, radial, lastTime) + 2.0 / Astronomy::metresPerAu);
+                         radial * (SurfaceRadius(planet, radial, lastTime) + Astronomy::observerClearanceAu);
             }
         }
     }
@@ -266,7 +300,7 @@ void StarSystem::Move(GLFWwindow *window, float realSeconds, glm::vec3 &front, g
 
 void StarSystem::GoToSelected(double seconds, glm::vec3 &front, glm::vec3 &up)
 {
-    landed = following = false;
+    landed = following = followingRotation = false;
     const auto target = Position(selected, seconds);
     const double radius = selected < 0 ? star.radiusSolar * Astronomy::solarRadiusAu
                                        : planets[selected].radiusEarth * Astronomy::earthRadiusAu;
@@ -282,7 +316,7 @@ void StarSystem::GoToSelected(double seconds, glm::vec3 &front, glm::vec3 &up)
 
 void StarSystem::Overview(glm::vec3 &front, glm::vec3 &up)
 {
-    landed = following = false;
+    landed = following = followingRotation = false;
     double outer = 0;
     for (const auto &body : planets)
         if (body.parent < 0)
@@ -319,8 +353,18 @@ void StarSystem::ToggleLanding(double seconds, glm::vec3 &front, glm::vec3 &up)
 void StarSystem::ToggleFollow(double seconds)
 {
     following = !following;
+    followingRotation=false;
     landed = false;
     lastFollowPosition = Position(selected, seconds);
+}
+
+void StarSystem::ToggleRotationFollow(double seconds) {
+    followingRotation=!(following && followingRotation);
+    following=followingRotation;
+    landed=false;
+    lastFollowPosition=Position(selected,seconds);
+    lastFollowRotation=RotationDouble(selected,seconds);
+    lastTime=seconds;
 }
 
 void StarSystem::Pick(const glm::vec3 &direction, double seconds)
@@ -340,6 +384,7 @@ void StarSystem::Pick(const glm::vec3 &direction, double seconds)
         if (score < best)
         {
             best = score;
+            if(selected!=body){following=false;followingRotation=false;}
             selected = body;
         }
     }
@@ -369,10 +414,10 @@ std::string StarSystem::Information(double seconds) const
              << " days\n"
              << "Temperature  " << body.temperature << " K\n";
     }
-    text << "\nF2  Orbit paths\nF3  Information panel\nF4  System overview\nF  Follow selection\nG  Go to selection\nL "
+    text << "\nQ/E  Roll\nR/F  Up/down\nT  Follow position\nShift+R  Follow rotation\nF2  Orbit paths\nF3  Information\nF4  All star systems\nShift+F4  Current system only\nHome  Overview\nG  Go to selection\nL "
             " Land / lift off\n"
          << (landed      ? "\nStanding on surface"
-             : following ? "\nFollowing selection"
+             : following ? (followingRotation?"\nFollowing translation and rotation":"\nFollowing position")
                          : "\nFree camera");
     return text.str();
 }
@@ -532,6 +577,8 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
                                              static_cast<float>(std::clamp(clearance * .01, 1e-13, 1e-3)), 20000.0f);
     const auto view = glm::lookAt(glm::vec3(0), front, up);
     const auto vp = projection * view;
+    int viewport[4];glGetIntegerv(GL_VIEWPORT,viewport);
+    const double pixelsPerRadian=viewport[3]/(2.0*std::tan(glm::radians(static_cast<double>(fieldOfView))*.5));
     glClear(GL_DEPTH_BUFFER_BIT);
     glUseProgram(program);
     glUniformMatrix4fv(glGetUniformLocation(program, "viewProjection"), 1, GL_FALSE, glm::value_ptr(vp));
@@ -542,6 +589,7 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
         glUniformMatrix4fv(glGetUniformLocation(program, "model"), 1, GL_FALSE, glm::value_ptr(model));
     };
     auto model = glm::translate(glm::mat4(1), glm::vec3(-camera));
+    model*=Rotation(-1,seconds);
     model = glm::scale(model, glm::vec3(static_cast<float>(star.radiusSolar * Astronomy::solarRadiusAu)));
     setModel(model);
     glUniform1i(glGetUniformLocation(program, "bodyKind"), 0);
@@ -555,6 +603,7 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
         const auto &body = planets[planet];
         const auto center = Position(planet, seconds);
         const double radius = body.radiusEarth * Astronomy::earthRadiusAu;
+        if(radius/glm::max(radius,glm::length(center-camera))*pixelsPerRadian<.75)continue;
         model = glm::translate(glm::mat4(1), glm::vec3(center - camera)) * Rotation(planet, seconds);
         model = glm::scale(model, glm::vec3(static_cast<float>(radius)));
         setModel(model);
@@ -602,26 +651,35 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
     drawLines(markers, GL_POINTS, glm::vec3(.15f, .45f, .65f), 3);
     if (trajectories)
     {
+        if(cachedOrbits.size()!=planets.size()) {
+            cachedOrbits.resize(planets.size());
+            for(int planet=0;planet<static_cast<int>(planets.size());++planet) {
+                const double period=glm::two_pi<double>()/OrbitalMechanics::MeanMotion(GravityFor(planet),planets[planet].orbit.semiMajorAxis);
+                for(int point=0;point<=256;++point)cachedOrbits[planet].push_back(RelativePosition(planet,period*point/256.0));
+            }
+        }
         for (int planet = 0; planet < static_cast<int>(planets.size()); ++planet)
         {
             std::vector<glm::vec3> path;
-            const double period = glm::two_pi<double>() /
-                                  OrbitalMechanics::MeanMotion(GravityFor(planet), planets[planet].orbit.semiMajorAxis);
-            for (int point = 0; point <= 256; ++point)
-                path.push_back(glm::vec3(RelativePosition(planet, period * point / 256.0) +
-                                         Position(planets[planet].parent, seconds) - camera));
+            const auto offset=Position(planets[planet].parent,seconds)-camera;
+            for(const auto& point:cachedOrbits[planet])path.push_back(glm::vec3(point+offset));
             drawLines(path, GL_LINE_STRIP, glm::vec3(.035f, .12f, .18f), 1);
         }
     }
     if (!asteroids.empty())
     {
+        if(cachedAsteroids.size()!=asteroids.size() || !std::isfinite(cachedAsteroidTime)
+            || std::abs(seconds-cachedAsteroidTime)>=300) {
+            cachedAsteroids.clear();cachedAsteroids.reserve(asteroids.size());
+            for(const auto& orbit:asteroids) {
+                const auto p=OrbitalMechanics::PositionAtTimeDouble(orbit,Astronomy::solarGravityAu,seconds);
+                cachedAsteroids.push_back({p.x,p.z,-p.y});
+            }
+            cachedAsteroidTime=seconds;
+        }
         std::vector<glm::vec3> points;
         points.reserve(asteroids.size());
-        for (const auto &orbit : asteroids)
-        {
-            const auto p = OrbitalMechanics::PositionAtTimeDouble(orbit, Astronomy::solarGravityAu, seconds);
-            points.push_back(glm::vec3(glm::dvec3(p.x, p.z, -p.y) - camera));
-        }
+        for(const auto& p:cachedAsteroids)points.push_back(glm::vec3(p-camera));
         drawLines(points, GL_POINTS, glm::vec3(.13f, .10f, .07f), 1);
     }
     if (photonView)
@@ -637,9 +695,7 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
                 packets.push_back(glm::vec3(glm::mix(source, photonDetector, fraction) - camera));
             }
         }
-        for (const auto& orbit:asteroids) {
-            const auto p=OrbitalMechanics::PositionAtTimeDouble(orbit,Astronomy::solarGravityAu,seconds);
-            const glm::dvec3 source(p.x,p.z,-p.y);
+        for (const auto& source:cachedAsteroids) {
             const double duration=std::max(.001,glm::length(source-photonDetector)/Astronomy::lightSpeedAu);
             for (int point=0;point<4;++point) {
                 const double fraction=std::fmod(seconds/duration+point/4.0,1.0);
