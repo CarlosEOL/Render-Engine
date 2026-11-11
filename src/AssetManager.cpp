@@ -6,7 +6,7 @@
 
 using namespace std;
 
-GLuint AssetManager::LoadTexture(const char* filePath) {
+GLuint AssetManager::LoadTexture(const char* filePath, bool srgb) {
     int width, height, nrChannels;
     stbi_set_flip_vertically_on_load(true); // Flip for OpenGL
     unsigned char* data = stbi_load(filePath, &width, &height, &nrChannels, 0);
@@ -25,7 +25,8 @@ GLuint AssetManager::LoadTexture(const char* filePath) {
     glBindTexture(GL_TEXTURE_2D, textureID);
 
     // Upload pixel data to GPU
-    glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+    const GLint internalFormat = srgb ? (nrChannels == 4 ? GL_SRGB8_ALPHA8 : GL_SRGB8) : format;
+    glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, GL_UNSIGNED_BYTE, data);
     glGenerateMipmap(GL_TEXTURE_2D);
 
     // Texture settings

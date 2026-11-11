@@ -5,6 +5,7 @@
 class AssetManager
 {
 public:
+    static GLuint LoadTexture(const char* filePath, bool srgb = false);
     
     GLuint hiddenTex;
     GLuint rightTex;
@@ -18,6 +19,5 @@ public:
 
 private:
     AssetManager();
-    GLuint LoadTexture(const char* filePath);
     ~AssetManager() = default;
 };

@@ -160,6 +160,12 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\AssetManager.cpp" />
+    <ClCompile Include="src\BlackHole.cpp" />
+    <ClCompile Include="src\OrbitalMechanics.cpp" />
+    <ClCompile Include="src\PlanetTerrain.cpp" />
+    <ClCompile Include="src\Atmosphere.cpp" />
+    <ClCompile Include="src\CameraOptics.cpp" />
+    <ClCompile Include="src\GalaxyBackground.cpp" />
     <ClCompile Include="src\glad.c" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\ObjectLoader.cpp" />
@@ -168,9 +174,22 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\AssetManager.h" />
+    <ClInclude Include="src\BlackHole.h" />
+    <ClInclude Include="src\OrbitalMechanics.h" />
+    <ClInclude Include="src\PlanetTerrain.h" />
+    <ClInclude Include="src\Atmosphere.h" />
+    <ClInclude Include="src\CameraOptics.h" />
+    <ClInclude Include="src\LensCalibration.h" />
+    <ClInclude Include="src\GalaxyBackground.h" />
     <ClInclude Include="src\ObjectLoader.h" />
     <ClInclude Include="src\WindowManager.h" />
   </ItemGroup>
+  <ItemDefinitionGroup>
+    <PostBuildEvent>
+      <Command>if not exist "$(TargetDir)assets" mkdir "$(TargetDir)assets"
+copy /Y "$(ProjectDir)assets\galaxy.png" "$(TargetDir)assets\galaxy.png"</Command>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

@@ -1,0 +1,155 @@
+#include "glad/glad.h"
+#include "Atmosphere.h"
+#include <glm/gtc/type_ptr.hpp>
+
+unsigned int compileShaderProgram(const char*, const char*);
+
+bool Atmosphere::Initialize() {
+    const char* vertex = R"(
+#version 330 core
+out vec2 screenPosition;
+void main() {
+    vec2 corner = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
+    screenPosition = corner * 2.0 - 1.0;
+    gl_Position = vec4(screenPosition, 0.0, 1.0);
+}
+)";
+    const char* fragment = R"(
+#version 330 core
+in vec2 screenPosition;
+out vec4 fragColor;
+uniform sampler2D scene;
+uniform sampler2D sceneDepth;
+uniform bool logarithmicDepth;
+uniform mat4 inverseViewProjection;
+uniform vec3 cameraPosition;
+uniform vec3 planetCenter;
+uniform float planetRadius;
+
+vec2 sphereInterval(vec3 origin, vec3 direction, float radius) {
+    float along = dot(origin, direction);
+    float discriminant = along * along - dot(origin, origin) + radius * radius;
+    if (discriminant < 0.0) return vec2(1.0, -1.0);
+    float root = sqrt(discriminant);
+    return vec2(-along - root, -along + root);
+}
+
+void main() {
+    vec3 background = texture(scene, screenPosition * 0.5 + 0.5).rgb;
+    vec4 farPoint = inverseViewProjection * vec4(screenPosition, 1.0, 1.0);
+    vec3 direction = normalize(farPoint.xyz - cameraPosition * farPoint.w);
+    vec3 origin = cameraPosition - planetCenter;
+    vec2 shell = sphereInterval(origin, direction, planetRadius * 1.12);
+    float start = max(shell.x, 0.0);
+    float finish = shell.y;
+    float opaqueDepth = texture(sceneDepth, screenPosition * 0.5 + 0.5).r;
+    if (opaqueDepth < 1.0) {
+        float geometryDistance;
+        if (logarithmicDepth) {
+            geometryDistance = (exp2(opaqueDepth * log2(1.0 + 20000.0 * 1e12)) - 1.0) / 1e12;
+        } else {
+            vec4 geometry = inverseViewProjection * vec4(screenPosition, opaqueDepth * 2.0 - 1.0, 1.0);
+            geometryDistance = dot(geometry.xyz / geometry.w - cameraPosition, direction);
+        }
+        finish = min(finish, geometryDistance);
+    }
+    vec2 ground = sphereInterval(origin, direction, planetRadius * 1.0035);
+    if (ground.x > 0.0 && ground.y >= ground.x)
+        finish = min(finish, ground.x);
+    if (finish <= start) {
+        fragColor = vec4(background, 1);
+        return;
+    }
+    const int samples = 12;
+    float interval = (finish - start) / float(samples);
+    vec3 beta = vec3(70.0, 140.0, 300.0);
+    vec3 transmittance = vec3(1);
+    vec3 scattering = vec3(0);
+    for (int sampleIndex = 0; sampleIndex < samples; ++sampleIndex) {
+        vec3 samplePosition = origin + direction * (start + (float(sampleIndex) + 0.5) * interval);
+        float altitude = max(length(samplePosition) - planetRadius, 0.0);
+        float density = exp(-altitude / (planetRadius * 0.018));
+        vec3 sunDirection = normalize(-planetCenter - samplePosition);
+        vec2 shadow = sphereInterval(samplePosition, sunDirection, planetRadius);
+        float illumination = shadow.x > 0.0 && shadow.y >= shadow.x ? 0.0 : 1.0;
+        float cosine = dot(direction, sunDirection);
+        float phase = 0.75 * (1.0 + cosine * cosine);
+        vec3 segment = exp(-beta * density * interval);
+        scattering += transmittance * (1.0 - segment) * vec3(0.32, 0.55, 1.0)
+            * phase * (0.03 + 0.97 * illumination);
+        transmittance *= segment;
+    }
+    fragColor = vec4(background * transmittance + scattering, 1);
+}
+)";
+    program = compileShaderProgram(vertex, fragment);
+    int linked = 0;
+    glGetProgramiv(program, GL_LINK_STATUS, &linked);
+    if (!linked) {
+        Release();
+        return false;
+    }
+    glGenVertexArrays(1, &vao);
+    glGenTextures(1, &sceneTexture);
+    glGenTextures(1, &depthTexture);
+    return true;
+}
+
+void Atmosphere::Render(const glm::mat4& viewProjection, const glm::vec3& camera,
+                        const glm::vec3& center, float radius, bool logarithmicDepth) const {
+    int viewport[4];
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    if (viewport[2] <= 0 || viewport[3] <= 0)
+        return;
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, sceneTexture);
+    if (textureWidth != viewport[2] || textureHeight != viewport[3]) {
+        textureWidth = viewport[2];
+        textureHeight = viewport[3];
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, textureWidth, textureHeight, 0, GL_RGBA, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindTexture(GL_TEXTURE_2D, depthTexture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, textureWidth, textureHeight, 0,
+            GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindTexture(GL_TEXTURE_2D, sceneTexture);
+    }
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, viewport[0], viewport[1], textureWidth, textureHeight);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, depthTexture);
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, viewport[0], viewport[1], textureWidth, textureHeight);
+    glUseProgram(program);
+    const auto inverse = glm::inverse(viewProjection);
+    glUniformMatrix4fv(glGetUniformLocation(program, "inverseViewProjection"), 1, GL_FALSE, glm::value_ptr(inverse));
+    glUniform3fv(glGetUniformLocation(program, "cameraPosition"), 1, glm::value_ptr(camera));
+    glUniform3fv(glGetUniformLocation(program, "planetCenter"), 1, glm::value_ptr(center));
+    glUniform1f(glGetUniformLocation(program, "planetRadius"), radius);
+    glUniform1i(glGetUniformLocation(program, "scene"), 0);
+    glUniform1i(glGetUniformLocation(program, "sceneDepth"), 1);
+    glUniform1i(glGetUniformLocation(program, "logarithmicDepth"), logarithmicDepth);
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glBindVertexArray(vao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindVertexArray(0);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void Atmosphere::Release() {
+    if (program) glDeleteProgram(program);
+    if (vao) glDeleteVertexArrays(1, &vao);
+    if (sceneTexture) glDeleteTextures(1, &sceneTexture);
+    if (depthTexture) glDeleteTextures(1, &depthTexture);
+    program = vao = sceneTexture = depthTexture = 0;
+    textureWidth = textureHeight = 0;
+}

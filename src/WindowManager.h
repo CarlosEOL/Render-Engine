@@ -1,5 +1,9 @@
 #pragma once
 
+#include <vector>
+#include "BlackHole.h"
+#include "CameraOptics.h"
+
 //CONTEXT: MANAGES GLFW WINDOWS
 // I intentionally left out glad so the header won't be included in memoryTiles.Cpp, also then it won't need to compile it again in Tile.h
 
@@ -22,6 +26,8 @@ public:
     void MakeNewWindow();
     void Update(float&);
     bool isClosed();
+    void ReleaseGraphics();
+    double GetSimulationTime() const { return simulationTime; }
 
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
     static void MouseCallback(GLFWwindow* window, double xPos, double yPos);
@@ -49,5 +55,47 @@ public:
     static void ProcessCamera(GLFWwindow*, const float&);
 
 private:
+    static void ScrollCallback(GLFWwindow* window, double xOffset, double yOffset);
+    static void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
+    static void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
+    void SetMouseCaptured(bool captured);
+    void UpdateTitle();
+    void ResetView();
+    void ToggleLanding();
+    void UpdateObserver(double previousTime);
+    void ApplyVisionProfile(int profile);
+    void AlignCameraUp(const glm::vec3& up);
+    CameraOptics optics;
+    int visionProfile = 0;
+    float lensAspect = static_cast<float>(WIDTH) / HEIGHT;
+    float exposureEv = 0.0f;
+    bool hdrMode = true;
+    bool landed = false;
+    bool observerGravity = false;
+    bool horizonReached = false;
+    int landedPlanet = 0;
+    int selectedTarget = -1;
+    bool photonView = false;
+    OrbitalMechanics::ParticleState observer = {};
+
     GLFWwindow* window;
+    BlackHole blackHole;
+    bool blackHoleReady = false;
+    bool showBlackHole = false;
+    bool followPlanet = false;
+    bool followSpacecraft = false;
+    bool followSelected = false;
+    int followingTarget = -1;
+    glm::vec3 lastSelectedPosition = glm::vec3(0);
+    glm::vec3 lastPlanetPosition = glm::vec3(0.0f);
+    glm::vec3 lastSpacecraftPosition = glm::vec3(0.0f);
+    bool mouseCaptured = false;
+    float cameraSpeed = 1.0f;
+    float fieldOfView = 45.0f;
+    double simulationTime = 0.0;
+    double localTime = 0.0;
+    bool simulationPlaying = false;
+    int timeRateIndex = 0;
+    float titleUpdateElapsed = 0.0f;
+    bool showingDefaultCube = true;
 };
