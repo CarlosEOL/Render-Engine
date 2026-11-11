@@ -386,7 +386,6 @@ bool BlackHole::Initialize() {
     destinations = std::move(stars);
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
-    ResetSpacecraft(0.0);
     if (!atmosphere.Initialize()) {
         Release();
         return false;
@@ -463,6 +462,8 @@ void BlackHole::Update(double seconds) {
             trailSampleTime = spacecraftTime;
         }
     }
+    if (!craftTrail.buffer)
+        return;
     glBindBuffer(GL_ARRAY_BUFFER, craftTrail.buffer);
     glBufferSubData(GL_ARRAY_BUFFER, 0, trail.size() * sizeof(glm::vec3), trail.data());
     glBindBuffer(GL_ARRAY_BUFFER, 0);

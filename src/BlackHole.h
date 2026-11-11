@@ -9,6 +9,8 @@
 
 class BlackHole {
 public:
+    // The craft's flight history is CPU-only state that queries read even if GPU setup failed.
+    BlackHole() { ResetSpacecraft(0.0); }
     bool Initialize();
     static glm::vec3 PlanetPosition(double seconds, int planet = 0);
     float PlanetSurfaceRadius(const glm::vec3& worldDirection, double seconds, int planet = 0) const;
