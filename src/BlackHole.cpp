@@ -65,11 +65,14 @@ namespace {
     const char* vertexBody = R"(
 layout (location = 0) in vec3 position;
 layout (location = 1) in vec3 packetColor;
+layout (location = 2) in vec2 packetTiming;
 uniform mat4 model;
 uniform mat4 viewProjection;
 uniform float wavePhase;
 uniform int surface;
 uniform bool oceanWorld;
+uniform float photonSeconds;
+uniform vec3 photonDetector;
 out vec3 localPosition;
 out vec3 worldPosition;
 out vec3 photonColor;
@@ -79,6 +82,9 @@ void main() {
     if (surface == 2) {
         displaced = oceanWorld ? position * (1.0 + 0.0015 * oceanWave(position, wavePhase))
             : planetSurface(position, terrainHeight(position), wavePhase);
+    } else if (surface == 9) {
+        // Photon packet of a fixed emitter: packetTiming is (1 / light delay, phase offset).
+        displaced = mix(position, photonDetector, fract(photonSeconds * packetTiming.x + packetTiming.y));
     }
     vec4 world = model * vec4(displaced, 1.0);
     localPosition = position;
@@ -138,7 +144,7 @@ void main() {
         float shift = frequencyRatio(length(worldPosition), length(cameraPosition),
             velocityBeta, normalize(cameraPosition - worldPosition));
         fragColor = vec4(blackbody(temperature * shift), 1.0);
-    } else if (surface == 8) {
+    } else if (surface == 8 || surface == 9) {
         fragColor = vec4(photonColor, 1.0);
     } else if (surface == 7) {
         float seed = fract(sin(dot(worldPosition, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
@@ -347,7 +353,8 @@ bool BlackHole::Initialize() {
         .viewProjection = bodyLocation("viewProjection"), .model = bodyLocation("model"),
         .normalMatrix = bodyLocation("normalMatrix"), .surface = bodyLocation("surface"),
         .bodyColor = bodyLocation("bodyColor"), .velocityBeta = bodyLocation("velocityBeta"),
-        .temperature = bodyLocation("temperature")};
+        .temperature = bodyLocation("temperature"), .photonSeconds = bodyLocation("photonSeconds"),
+        .photonDetector = bodyLocation("photonDetector")};
     lensUniforms = {.observerBeta = lensLocation("observerBeta"),
         .inverseViewProjection = lensLocation("inverseViewProjection"),
         .viewProjection = lensLocation("viewProjection"), .cameraPosition = lensLocation("cameraPosition"),
@@ -450,6 +457,55 @@ bool BlackHole::Initialize() {
     }
     galaxies.Initialize();
     return true;
+}
+
+void BlackHole::SetPhotonView(bool enabled, const glm::vec3& detector) {
+    photonView = enabled;
+    photonDetector = detector;
+    if (enabled && program)
+        BuildPhotonStreams();
+}
+
+void BlackHole::BuildPhotonStreams() {
+    // The detector only changes here, so the light delay of every fixed emitter is computed once.
+    std::vector<PhotonStream> streams;
+    streams.reserve((destinations.size() + 11) * 4);
+    const auto appendStream = [&](const glm::vec3& emitter, const glm::vec3& color) {
+        const double delay = glm::max(0.001, OrbitalMechanics::LightTravelDelay(
+            glm::dvec3(emitter), glm::dvec3(photonDetector), gravitationalParameter, horizonRadius));
+        for (int packet = 0; packet < 4; ++packet)
+            streams.push_back({emitter, color, static_cast<float>(1.0 / delay), packet / 4.0f});
+    };
+    for (int point = 0; point < 8; ++point) {
+        const float angle = glm::two_pi<float>() * point / 8.0f;
+        appendStream(glm::vec3(DiskOrientation() * glm::vec4(
+            outerDiskRadius * std::cos(angle), outerDiskRadius * std::sin(angle), 0, 1)),
+            glm::vec3(1.0f, 0.7f, 0.2f));
+    }
+    for (const auto& star : destinations)
+        appendStream(star, glm::vec3(1.0f, 0.85f, 0.55f));
+    for (const auto& group : GalaxyBackground::Groups())
+        appendStream(group.center, glm::vec3(0.7f, 0.55f, 1.0f));
+    if (!photonStatic.vao) {
+        glGenVertexArrays(1, &photonStatic.vao);
+        glGenBuffers(1, &photonStatic.buffer);
+        glBindVertexArray(photonStatic.vao);
+        glBindBuffer(GL_ARRAY_BUFFER, photonStatic.buffer);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(PhotonStream), nullptr);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(PhotonStream),
+            reinterpret_cast<void*>(offsetof(PhotonStream, color)));
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(PhotonStream),
+            reinterpret_cast<void*>(offsetof(PhotonStream, inverseDelay)));
+        glEnableVertexAttribArray(2);
+    }
+    glBindVertexArray(photonStatic.vao);
+    glBindBuffer(GL_ARRAY_BUFFER, photonStatic.buffer);
+    glBufferData(GL_ARRAY_BUFFER, streams.size() * sizeof(PhotonStream), streams.data(), GL_STATIC_DRAW);
+    photonStatic.vertexCount = static_cast<int>(streams.size());
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
 void BlackHole::ResetSpacecraft(double seconds) {
@@ -808,8 +864,8 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::vec3& cameraP
     for (int planet = 0; planet < 3; ++planet)
         atmosphere.Render(viewProjection, cameraPosition, PlanetPosition(seconds, planet), bodies[planet].radius);
     if (photonView) {
+        // Only the bodies and the craft move; every other emitter's packets are placed by the vertex shader.
         packetCache.clear();
-        packetCache.reserve((destinations.size() + 20) * 4 + 1);
         const auto appendStream = [&](const glm::vec3& emitter, const glm::vec3& color, bool historical) {
             const double delay = glm::max(0.001, OrbitalMechanics::LightTravelDelay(
                 glm::dvec3(emitter), glm::dvec3(photonDetector), gravitationalParameter, horizonRadius));
@@ -819,24 +875,22 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::vec3& cameraP
                 packetCache.push_back({glm::mix(source, photonDetector, static_cast<float>(progress)), color});
             }
         };
-        for (int point = 0; point < 8; ++point) {
-            const float angle = glm::two_pi<float>() * point / 8.0f;
-            appendStream(glm::vec3(DiskOrientation() * glm::vec4(
-                outerDiskRadius * std::cos(angle), outerDiskRadius * std::sin(angle), 0, 1)),
-                glm::vec3(1.0f, 0.7f, 0.2f), false);
-        }
         for (int id = 1; id <= 8; ++id)
             appendStream(ResolveTarget(id, seconds).position,
                 id <= 3 ? glm::vec3(0.2f, 0.65f, 1.0f) : glm::vec3(1.0f, 0.9f, 0.65f), false);
         appendStream(glm::vec3(spacecraft.position), glm::vec3(0.2f, 0.9f, 1.0f), true);
-        for (const auto& star : destinations)
-            appendStream(star, glm::vec3(1.0f, 0.85f, 0.55f), false);
-        for (const auto& group : GalaxyBackground::Groups())
-            appendStream(group.center, glm::vec3(0.7f, 0.55f, 1.0f), false);
         packetCache.push_back({photonDetector, glm::vec3(0.4f, 1.0f, 0.5f)});
         glUseProgram(program);
-        glUniform1i(surfaceLocation, 8);
         glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(identity));
+        if (photonStatic.vertexCount) {
+            glUniform1i(surfaceLocation, 9);
+            glUniform1f(bodyUniforms.photonSeconds, static_cast<float>(seconds));
+            glUniform3fv(bodyUniforms.photonDetector, 1, glm::value_ptr(photonDetector));
+            glBindVertexArray(photonStatic.vao);
+            glPointSize(3.0f);
+            glDrawArrays(GL_POINTS, 0, photonStatic.vertexCount);
+        }
+        glUniform1i(surfaceLocation, 8);
         glBindVertexArray(photonPackets.vao);
         glBindBuffer(GL_ARRAY_BUFFER, photonPackets.buffer);
         glBufferData(GL_ARRAY_BUFFER, packetCache.size() * sizeof(PhotonPacket), packetCache.data(), GL_DYNAMIC_DRAW);
@@ -877,7 +931,7 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::vec3& cameraP
 void BlackHole::Release() {
     atmosphere.Release();
     galaxies.Release();
-    for (auto* mesh : {&sphere, &sphereLow, &backgroundStars, &craftRing, &craftTrail, &photonPackets, &guides, &orbitGuides}) {
+    for (auto* mesh : {&sphere, &sphereLow, &backgroundStars, &craftRing, &craftTrail, &photonPackets, &photonStatic, &guides, &orbitGuides}) {
         if (mesh->vao)
             glDeleteVertexArrays(1, &mesh->vao);
         if (mesh->buffer)
