@@ -48,6 +48,7 @@ private:
     unsigned int lensProgram = 0;
     unsigned int screenVao = 0;
     Mesh sphere;
+    Mesh sphereLow;
     Mesh backgroundStars;
     Mesh craftRing;
     Mesh craftTrail;

@@ -350,6 +350,7 @@ bool BlackHole::Initialize() {
         glEnableVertexAttribArray(0);
     };
     upload(sphere, MakeSphere());
+    upload(sphereLow, PlanetTerrain::SphereVertices(16, 24));
     upload(craftRing, MakeCraftRing());
     // Orbits depend on neither time nor camera, so build every guide once.
     std::vector<glm::vec3> orbitPoints;
@@ -678,7 +679,13 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::vec3& cameraP
     glDrawArrays(GL_TRIANGLES, 0, 3);
 
     glUseProgram(program);
-    glBindVertexArray(sphere.vao);
+    // Spheres that cover under ~8 px (0.015 of the half-height) do not need the 36,864-vertex mesh.
+    const float focal = glm::length(glm::vec3(viewProjection[0][1], viewProjection[1][1], viewProjection[2][1]));
+    const auto sphereFor = [&](const glm::vec3& center, float radius) -> const Mesh& {
+        const float depth = viewProjection[0][3] * center.x + viewProjection[1][3] * center.y
+            + viewProjection[2][3] * center.z + viewProjection[3][3];
+        return radius * focal < 0.015f * depth ? sphereLow : sphere;
+    };
     const auto drawSphere = [&](const glm::vec3& center, float radius, Surface surface, const glm::vec3& color) {
         auto model = glm::translate(identity, center);
         if (surface == Planet)
@@ -687,7 +694,10 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::vec3& cameraP
         glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(model));
         glUniform1i(surfaceLocation, surface);
         glUniform3fv(colorLocation, 1, glm::value_ptr(color));
-        glDrawArrays(GL_TRIANGLES, 0, sphere.vertexCount);
+        // Planets displace their vertices and are shaded per pixel from the mesh, so they keep the dense one.
+        const Mesh& mesh = surface == Planet ? sphere : sphereFor(center, radius);
+        glBindVertexArray(mesh.vao);
+        glDrawArrays(GL_TRIANGLES, 0, mesh.vertexCount);
     };
     int bodyIndex = 0;
     for (const auto& body : bodies) {
@@ -727,20 +737,23 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::vec3& cameraP
         glUniform3f(colorLocation, 0.75f, 0.80f, 0.84f);
         glBindVertexArray(craftRing.vao);
         glDrawArrays(GL_TRIANGLES, 0, craftRing.vertexCount);
-        glBindVertexArray(sphere.vao);
+        const auto drawPiece = [&](const glm::mat4& model, float radius) {
+            glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(model));
+            const Mesh& mesh = sphereFor(glm::vec3(model[3]), radius);
+            glBindVertexArray(mesh.vao);
+            glDrawArrays(GL_TRIANGLES, 0, mesh.vertexCount);
+        };
         for (int module = 0; module < 12; ++module) {
             const float angle = glm::two_pi<float>() * module / 12.0f;
             auto model = glm::translate(craftModel, glm::vec3(0.045f * std::cos(angle), 0.045f * std::sin(angle), 0.0f));
             model = glm::scale(model, glm::vec3(0.008f, 0.008f, 0.012f));
-            glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(model));
-            glDrawArrays(GL_TRIANGLES, 0, sphere.vertexCount);
+            drawPiece(model, 0.012f);
         }
         for (int spoke = 0; spoke < 4; ++spoke) {
             auto model = glm::rotate(craftModel, glm::half_pi<float>() * spoke, glm::vec3(0.0f, 0.0f, 1.0f));
             model = glm::translate(model, glm::vec3(0.022f, 0.0f, 0.0f));
             model = glm::scale(model, glm::vec3(0.023f, 0.002f, 0.002f));
-            glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(model));
-            glDrawArrays(GL_TRIANGLES, 0, sphere.vertexCount);
+            drawPiece(model, 0.023f);
         }
         if (observed.firing) {
             glUniform1i(surfaceLocation, 6);
@@ -748,9 +761,8 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::vec3& cameraP
             auto exhaust = glm::translate(identity, glm::vec3(observed.state.position) - 0.075f * direction)
                 * AttitudeAlong(direction);
             exhaust = glm::scale(exhaust, glm::vec3(0.018f, 0.018f, 0.075f));
-            glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(exhaust));
             glUniform3f(colorLocation, 0.25f, 0.65f, 1.0f);
-            glDrawArrays(GL_TRIANGLES, 0, sphere.vertexCount);
+            drawPiece(exhaust, 0.075f);
         }
     }
     glBindVertexArray(0);
@@ -837,7 +849,7 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::vec3& cameraP
 void BlackHole::Release() {
     atmosphere.Release();
     galaxies.Release();
-    for (auto* mesh : {&sphere, &backgroundStars, &craftRing, &craftTrail, &photonPackets, &guides, &orbitGuides}) {
+    for (auto* mesh : {&sphere, &sphereLow, &backgroundStars, &craftRing, &craftTrail, &photonPackets, &guides, &orbitGuides}) {
         if (mesh->vao)
             glDeleteVertexArrays(1, &mesh->vao);
         if (mesh->buffer)
