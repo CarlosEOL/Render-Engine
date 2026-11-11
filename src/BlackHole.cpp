@@ -23,6 +23,7 @@ namespace {
     constexpr float outerDiskRadius = 1.03f;
     const OrbitalMechanics::Orbit spacecraftOrbit{1.7, 0.46, 0.35, 0.9, glm::pi<double>()};
     constexpr double boosterAcceleration = 0.85;
+    constexpr int orbitGuidePoints = 257;
 
     enum Surface { Planet = 2, Star = 3 };
 
@@ -335,6 +336,15 @@ bool BlackHole::Initialize() {
     };
     upload(sphere, MakeSphere());
     upload(craftRing, MakeCraftRing());
+    // Orbits depend on neither time nor camera, so build every guide once.
+    std::vector<glm::vec3> orbitPoints;
+    for (const auto& body : bodies) {
+        const double period = glm::two_pi<double>() / OrbitalMechanics::MeanMotion(gravitationalParameter, body.orbit.semiMajorAxis);
+        for (int point = 0; point < orbitGuidePoints; ++point)
+            orbitPoints.push_back(glm::vec3(DiskOrientation() * glm::vec4(OrbitalMechanics::PositionAtTime(
+                body.orbit, gravitationalParameter, period * point / (orbitGuidePoints - 1)), 1)));
+    }
+    upload(orbitGuides, orbitPoints);
     glGenVertexArrays(1, &photonPackets.vao);
     glGenBuffers(1, &photonPackets.buffer);
     glBindVertexArray(photonPackets.vao);
@@ -730,21 +740,14 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::vec3& cameraP
     }
     glBindVertexArray(0);
     galaxies.Render(viewProjection);
-    if (trajectories && guides.vao) {
+    if (trajectories && orbitGuides.vao) {
         glUseProgram(program);
         glUniform1i(surfaceLocation,4);
         glUniformMatrix4fv(modelLocation,1,GL_FALSE,glm::value_ptr(identity));
         glUniform3f(colorLocation,.06f,.18f,.26f);
-        glBindVertexArray(guides.vao);
-        glBindBuffer(GL_ARRAY_BUFFER,guides.buffer);
-        for (const auto& body:bodies) {
-            std::vector<glm::vec3> vertices;
-            const double period=glm::two_pi<double>()/OrbitalMechanics::MeanMotion(gravitationalParameter,body.orbit.semiMajorAxis);
-            for (int point=0;point<=256;++point)
-                vertices.push_back(glm::vec3(diskTilt*glm::vec4(OrbitalMechanics::PositionAtTime(body.orbit,gravitationalParameter,period*point/256),1)));
-            glBufferData(GL_ARRAY_BUFFER,vertices.size()*sizeof(glm::vec3),vertices.data(),GL_DYNAMIC_DRAW);
-            glDrawArrays(GL_LINE_STRIP,0,static_cast<int>(vertices.size()));
-        }
+        glBindVertexArray(orbitGuides.vao);
+        for (int body = 0; body < static_cast<int>(std::size(bodies)); ++body)
+            glDrawArrays(GL_LINE_STRIP, body * orbitGuidePoints, orbitGuidePoints);
         glBindVertexArray(0);
     }
     for (int planet = 0; planet < 3; ++planet)
@@ -819,7 +822,7 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::vec3& cameraP
 void BlackHole::Release() {
     atmosphere.Release();
     galaxies.Release();
-    for (auto* mesh : {&sphere, &backgroundStars, &craftRing, &craftTrail, &photonPackets, &guides}) {
+    for (auto* mesh : {&sphere, &backgroundStars, &craftRing, &craftTrail, &photonPackets, &guides, &orbitGuides}) {
         if (mesh->vao)
             glDeleteVertexArrays(1, &mesh->vao);
         if (mesh->buffer)

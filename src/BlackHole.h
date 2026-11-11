@@ -53,6 +53,7 @@ private:
     Mesh craftTrail;
     Mesh photonPackets;
     Mesh guides;
+    Mesh orbitGuides;
     bool photonView = false;
     glm::vec3 photonDetector = glm::vec3(0);
     struct PhotonPacket {
