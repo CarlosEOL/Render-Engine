@@ -44,13 +44,3 @@ GLuint AssetManager::LoadTexture(const char* filePath, bool srgb) {
     stbi_image_free(data); // Free CPU memory
     return textureID;
 }
-
-AssetManager::AssetManager()
-{
-    hiddenTex = LoadTexture("assets/hidden.png");
-    cout<<"Loaded Hidden."<<endl;
-    rightTex = LoadTexture("assets/right.png");
-    cout<<"Loaded Right."<<endl;
-    wrongTex = LoadTexture("assets/wrong.png");
-    cout<<"Loaded Wrong."<<endl;
-}
