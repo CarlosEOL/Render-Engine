@@ -65,7 +65,7 @@ void main() {
     vec2 coordinate=uv;
     if(variant>0)coordinate.y=uv.y*.5+(variant==1?.5:0.0);
     vec4 image = texture(galaxy, coordinate);
-    color = vec4(image.rgb * image.a * 0.9 * opacity, 1);
+    color = vec4(image.rgb * image.a * 0.9 * opacity, 0);
 }
 )";
     program = compileShaderProgram(vertex, fragment);

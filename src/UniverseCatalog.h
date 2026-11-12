@@ -4,10 +4,13 @@
 #include <glm/glm.hpp>
 #include <unordered_map>
 #include <vector>
+#include <string>
 
 namespace Universe {
 inline constexpr std::uint64_t WorldSeed = 618;
-inline constexpr int StarCount = 7000;
+inline constexpr int StarCount = 16000;
+int GalaxyForStar(int index);
+std::string StarName(int index);
 enum class Population { LocalDisk, ThinDisk, SpiralArm, Bulge, Halo };
 Population StarPopulation(int index);
 struct Galaxy {
@@ -29,6 +32,7 @@ public:
   void Generate(std::uint64_t seed = WorldSeed);
   const std::vector<glm::dvec3> &Positions() const { return positions; }
   std::vector<int> Nearby(const glm::dvec3 &camera, double radiusAu = 3) const;
+  int Nearest(const glm::dvec3& camera) const;
 
 private:
   using Cell = std::array<std::int64_t, 3>;
@@ -38,5 +42,9 @@ private:
   static Cell CellAt(const glm::dvec3 &position);
   std::vector<glm::dvec3> positions;
   std::unordered_map<Cell, std::vector<int>, Hash> cells;
+  struct Node {int star,left=-1,right=-1,axis=0;};
+  std::vector<Node> tree;
+  int BuildTree(std::vector<int>& indices,int begin,int end,int depth);
+  void SearchTree(int node,const glm::dvec3& camera,int& nearest,double& squared) const;
 };
 } // namespace Universe

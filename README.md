@@ -3,7 +3,7 @@
 
 ## OpenGL build
 
-This branch is the complete **OpenGL** application, with the shared dark interface, improved seeded systems, click-to-select/G travel, atmosphere/Moon fixes and Kerr free-fall observer. Build `Render-Engine.vcxproj` for x64; the validated isolated output is `build/current/bin/Render-Engine.exe`.
+This branch is the complete **OpenGL** application, including the shared navigation windows, hierarchical satellite overview, magnitude limit, Milky Way/nebula models, stellar coronas and Earth cloud LOD. Build `Render-Engine.vcxproj` for x64; the validated output is `build/current/bin/Render-Engine.exe`.
 
 The native DX12 application and experimental DLSS integration are on the separate [build/dx12 branch](https://github.com/CarlosEOL/Render-Engine/tree/build/dx12). This OpenGL project has no DX12 or DLSS SDK dependency.
 
@@ -13,7 +13,7 @@ The native DX12 application and experimental DLSS integration are on the separat
 
 The app opens at a main menu. Choose **Planetorium** for either **Solar System - 1:1 scale** or the **Gargantua system**. Choose **Quantum Simulation** for 38 selectable examples: infinite-well states and superpositions, harmonic-oscillator states, coherent and squeezed states, free packets, 3D hydrogen orbitals, spin states, Bell states, and numerical tunneling/scattering experiments.
 
-**F10** returns to the main menu and pauses playback. **F2** toggles orbital trajectories, **F3** toggles information, **F4** browses all star systems, and **Shift+F4** browses only the current system's planets and other bodies. **Home** shows the overview. A single browser click selects without moving or aiming the camera. Select a body in the right-hand list and press **G**, double-click it, or click **Go to selection**. In free flight, **Shift+F / T** follows its position; **Shift+R** follows position and rotation. **Shift+L** faces the selected planet, or the nearest planet when no planet is selected. Following changes show a small fading notification. Both astronomical scenes use physical AU distances, double-precision camera coordinates and camera-relative rendering. Gargantua uses 100 million solar masses; Miller has Earth's radius. Its wider 23.7 AU orbit is an illustrative Schwarzschild layout, not the film's near-horizon Kerr orbit.
+**F10** returns to the main menu and pauses playback. **F2** toggles orbital trajectories, **F3** opens the object finder; **Shift+F3** searches nearby systems within a chosen radius; **F1** opens the parent/satellite overview and **I** toggles information, **F4** browses all star systems, and **Shift+F4** browses only the current system's planets and other bodies. **Home** shows the overview. A single browser click selects without moving or aiming the camera. Select a body in the right-hand list and press **G**, double-click it, or click **Go to selection**. In free flight, **Shift+F / T** follows its position; **Shift+R** follows position and rotation. **Shift+L** faces the selected planet, or the nearest planet when no planet is selected. Following changes show a small fading notification. Both astronomical scenes use physical AU distances, double-precision camera coordinates and camera-relative rendering. Gargantua uses 100 million solar masses; Miller has Earth's radius. Its wider 23.7 AU orbit is an illustrative Schwarzschild layout, not the film's near-horizon Kerr orbit.
 
 The solar preset includes the Sun, eight planets, Pluto, Ceres, Vesta, Eris, a representative Halley orbit, seven moons, and 4,096 representative main-belt/Kuiper-belt markers. Planet positions use fixed J2000 Keplerian elements; surfaces are procedural illustrations. This is not a current-date ephemeris or a complete survey catalogue. Solar-system time can advance by seconds, minutes, hours, days, 30-day months, or Julian years per real second. Quantum examples use separate dimensionless time rates of 0.1x to 4x; **Ctrl+R** restarts the selected state. Their 3D view occupies the upper 80% of the workspace, with a small graph below. **Home** frames the state. Hydrogen clouds sample the true 3D orbital probability; 1D states use illustrative transverse thickness.
 
@@ -21,13 +21,28 @@ See [the detailed changes and reasons](docs/SIMULATION_CHANGES.md) for every cha
 
 The interface uses a shared dark theme with clear selection/focus states, collapsible browsers and a compact Play/Pause plus Local/World clock area. [UI changes and reasons](docs/UI_POLISH_2026-11-12.md).
 
-Click a visible star while mouse capture is released to select it, including background stars seen from the Solar System. Press **G** to visit its seeded system. Generation now varies planetary architecture, frost-line composition, moons and galactic populations. The catalogue remains a sparse 7,000-star sample, with dormant inactive systems. [Generation, picking and assertion fix](docs/STAR_GENERATION_AND_SELECTION_2026-11-12.md).
+Click a visible star while mouse capture is released to select it, including background stars seen from the Solar System. Press **G** to visit its seeded system. Generation now varies planetary architecture, frost-line composition, moons and galactic populations. The catalogue remains a sparse 16,000-star sample, with dormant inactive systems. [Generation, picking and assertion fix](docs/STAR_GENERATION_AND_SELECTION_2026-11-12.md).
+
+## New navigation and sky features
+
+**F3** finds named stars, planets, moons, spacecraft, representative asteroids, galaxies, black holes and nebulae. A single click selects; **Go to** travels. **Shift+F3** searches nearby systems within a radius in light-years. **F1** browses the modeled parent/satellite hierarchy; **Back** ascends. Existing F4 side browsers remain available.
+
+Visit **Sagittarius A***, **TON 618**, the three generated galactic cores, **Orion / M42**, **Helix**, **Crab**, or **Veil** using the finder. TON 618's disk/outflow is an original reference-inspired illustration; its uncertain mass and cosmological distance assumptions are documented. Earth clouds blend from a distant shell to a local volume. Stellar corona PNGs supplement the existing prominences, including eclipses.
+
+[Every navigation and Milky Way change, with reasons](docs/MILKY_WAY_AND_NAVIGATION_2026-11-12.md) · [Optics, clouds, corona, magnitude and menu changes](docs/OPTICS_CLOUDS_CORONA_2026-11-12.md) · [Core/nebula sources and limits](docs/CORES_AND_NEBULAE_2026-11-12.md). [Validation results](docs/VALIDATION_2026-11-12_UNIVERSE_UI.md).
+
+![Jupiter and its modeled satellites](assets/screenshots/ui-jupiter-satellites.png)
+
+![Original stellar-corona eclipse](assets/screenshots/solar-eclipse-corona.png)
+
+![TON 618 illustrative local quasar view, auto exposure](assets/screenshots/ton-618-auto.png)
+
 
 ## Controls
 
 **F5 / View > Object editor** opens a compact, modeless editor for the selected object. Select Gargantua to adjust signed spin with a live slider, a numeric value, ±0.01 buttons or Reset. Numeric edits apply with Enter/Apply; slider arrows change spin by 0.0001. The supported range is -0.98…+0.98. Horizon and disk-inner-orbit distances update alongside it. Other object types are read-only. Editing does not move the camera or restart the simulation.
 
-- **Mouse wheel** changes flight speed gradually by 15% per notch; fractional wheel input is preserved. Scroll down to slow down. Physical flight speeds display in m/s, km/s or AU/s.
+- **Mouse wheel** changes flight speed gradually by 15% per notch; fractional wheel input is preserved. Scroll down to slow down. Physical flight speeds display in m/s, km/s, c, AU/s and ly/s. **Ctrl+wheel** adjusts the stellar magnitude limit by 0.20; larger values admit fainter stars.
 - **Space** or **Play / Pause** starts and pauses playback. The application starts paused. The disk, ocean waves, planet rotation, and orbits share the playback clock.
 - **< / >** (comma / period) selects seconds, minutes, hours, days, 30-day months or Julian years of simulated time per real second. Use day/month rates to watch the physically scaled Mann transfer. The title distinguishes camera-local elapsed time from distant/world coordinate time.
 - **Black hole / Model** switches the legacy scenes and resets the view.
@@ -38,7 +53,7 @@ Click a visible star while mouse capture is released to select it, including bac
 - **Right mouse button** toggles mouse-look capture. Hold **Shift + right mouse button** and move the mouse forward or backward to zoom; press the **middle mouse button** to reset the zoom. A small centre readout shows magnification and FOV, then fades after one second. **Esc** releases the cursor for the clickable Windows controls. Changing window focus also releases it.
 - **WASD** moves forward, backward, and sideways. **Q / E** rolls the free-flight camera left/right; **R / F** moves up/down along its local up axis. **Left Shift** gives a temporary 5× speed boost. Grounded cameras retain their gravity-aligned upright orientation; use **L** to lift off before rolling.
 - **[ / ]** or **Slower / Faster** halves or doubles flight speed. The title shows the selected speed. Camera speed operates independently of playback time.
-- **F1** switches between wireframe and shaded rendering.
+- **F1** opens the hierarchy overview. Click to select, **Open satellites** or double-click to browse moons, and **Back** to ascend to the parent system. **Shift+F1** retains the wireframe toggle. **F9** opens the separate controls panel.
 - **N / New terrain** changes legacy procedural detail. Miller remains ocean-only; Mann uses folded ice and Edmunds uses rocky desert relief. Regular generated systems retain their catalogue seeds.
 - **L / Land / lift off** places the free camera above the selected/nearest solid planet's terrain or sea surface, or releases it back into flight. The physical observer envelope uses Hubble's 13.2 m length and 4.2 m diameter, with conservative 6.6 m center clearance. Movement and mouse-look remain available. The surface rotates and orbits under the observer. Miller flyby approaches near the day/night boundary; a wide lens helps show the giant black-hole shadow from the surface.
 - **Left-click** with the cursor released selects a planet, star, spacecraft, or black hole. Its name appears in the title. **G / Go to selection** jumps close to its current position. Free-cam remains active after arrival.
@@ -74,13 +89,13 @@ The GPU traces Kerr photon paths by default, with dimensionless spin 0.8, frame 
 
 ### CPU and GPU work
 
-The GPU handles photon integration, disk appearance, redshift, Doppler effects, stellar colors/plasma, terrain detail, atmospheric scattering, ring particles, exposure and rasterization. The CPU updates the active system's cached orbital positions, nearby craft/Ranger states and clocks, camera navigation and draw submission. Distant catalogue stars have no per-frame orbital solver or plasma simulation.
+The GPU handles photon integration, disk appearance, redshift, Doppler effects, stellar colors/plasma, terrain detail, atmospheric scattering, ring particles, exposure and rasterization. The CPU updates the active system's cached orbital positions, nearby craft/Ranger states and clocks, camera navigation and draw submission. Distant catalogue stars have no per-frame orbital solver or plasma simulation. Lower magnitude limits reduce star rasterization; cached galaxy/nebula radiative transfer updates after translation, rather than on camera rotation.
 
 ## Deterministic galaxies and proximity detail
 
-World seed **618** defines a finite catalogue of **7,000 generated stars in four bounded galaxies**: a local Milky Way survey and three distant spiral/barred/elliptical groups. The authored Sun and Gargantua companions remain additional objects. Galaxy positions, orientation, size and stellar-system keys are repeatable. Every generated star lies inside its owning galaxy's ellipsoidal boundary. This is a sparse navigable sample, not billions of stars or infinite galaxy streaming.
+World seed **618** defines a finite catalogue of **16,000 generated stars in four bounded galaxies**: a local Milky Way survey and three distant spiral/barred/elliptical groups. The authored Sun and Gargantua companions remain additional objects. Galaxy positions, orientation, size and stellar-system keys are repeatable. Every generated star lies inside its owning galaxy's ellipsoidal boundary. This is a sparse navigable sample, not billions of stars or infinite galaxy streaming.
 
-An 8-AU spatial-cell index checks only 27 neighbouring cells. Approaching within 3 AU activates that star's seeded system without changing world camera coordinates. Revisiting regenerates the same planets. Resolved system bodies render only inside its detail range (at least 20 AU, extended for outer planets). Distant stars remain static GPU points with temperature/luminosity metadata and high/low coordinate components; a display brightness floor keeps the catalogue visible. That floor is a navigation aid, not calibrated photometry. The regression records zero planet-orbit evaluations outside the active system's detail range.
+An 8-AU spatial-cell index checks only 27 neighbouring cells. Approaching within 3 AU activates that star's seeded system without changing world camera coordinates. Revisiting regenerates the same planets. Resolved system bodies render only inside its detail range (at least 20 AU, extended for outer planets). Distant stars remain static GPU points with temperature/luminosity metadata and high/low coordinate components. A limiting-magnitude estimate rejects faint points on the GPU and uses the same threshold for picking. The display PSF is artistic; this is not calibrated passband photometry. A nearest-star k-d tree supports stable navigation references without integrating inactive systems. The regression records zero planet-orbit evaluations outside the active system's detail range.
 
 ## Landed surfaces, atmospheres and Saturn
 
@@ -94,9 +109,9 @@ Saturn has physically scaled D/C/B/A rings, a faint F ring, the Cassini Division
 
 Solar/generated-system camera clocks include the star's potential and the smoothly summed potentials of the planets, plus carried orbital/rotation motion when landed or following. Outside the H plunge, Gargantua uses its Schwarzschild clock factor with additional weak planetary potentials. No discrete nearest-planet clock switch occurs. Free-flight navigation is treated as position changes between local reference frames; superluminal navigation speed is not a physical spacecraft velocity. These approximate many-body clock contributions do not constitute a multi-body spacetime solution.
 
-Menus are grouped under **Scene**, **Time**, **Navigation**, **View** and **Performance**. Lens, exposure and stellar controls are nested under View. The browser occupies at most 30% of the window, and F3/F4 still independently hide information/browser content. The minimum window size is 900×640.
+Menus are grouped under **Scene**, **Time**, **Navigation**, **View** and **Performance**. Lens, exposure and stellar controls are nested under View. The browser occupies at most 30% of the window, and I/F4 independently hide information/browser content. F3, Shift+F3 and F1 open the dedicated navigation windows. The minimum window size is 900×640.
 
-This branch builds the OpenGL executable `build/current/bin/Render-Engine.exe`. CPU checks: `tests/RunSimulationChecks.cmd`. Either executable accepts `--render-check <output-directory>` for opt-in scene/UI checks. Generated outputs are ignored by Git. See [the DX12 migration record](https://github.com/CarlosEOL/Render-Engine/blob/build/dx12/docs/DX12_MIGRATION.md) for backend details.
+The OpenGL reference executable is `build/current/bin/Render-Engine.exe`; the native executable is `build/dx12/Debug/bin/Render-Engine-DX12.exe` (or `Release`). CPU checks: `tests/RunSimulationChecks.cmd`. Either executable accepts `--render-check <output-directory>` for opt-in scene/UI checks. Generated outputs are ignored by Git. See [the DX12 migration record](docs/DX12_MIGRATION.md) for backend details.
 
 The **Performance** menu offers 30/60/120 FPS and 50/75/100% black-hole resolution choices. Defaults are **30 FPS, 50% resolution and 160 ray steps**. Paused stationary views reuse the last rendered scene instead of tracing light again. Inactive systems stay dormant; catalogue stars are uploaded once. Orbit curves/positions are cached, belt markers update only when requested and sub-pixel bodies/atmospheres are culled. OpenGL resolution scaling remains spatial. DX12 also offers experimental DLSS Super Resolution; Ray Reconstruction and frame generation are not integrated. These choices bound work; no hardware-temperature improvement is claimed without measurement.
 
@@ -142,7 +157,7 @@ Endurance and Ranger interiors:
 | --- | --- |
 | ![Endurance interior](assets/screenshots/endurance-interior.png) | ![Ranger interior](assets/screenshots/ranger-interior.png) |
 
-See [all refinement changes and reasons](docs/REFINEMENT_2026-11-11.md), [the earlier change log](docs/SIMULATION_CHANGES.md) and [DX12 migration status](https://github.com/CarlosEOL/Render-Engine/blob/build/dx12/docs/DX12_MIGRATION.md).
+See [all refinement changes and reasons](docs/REFINEMENT_2026-11-11.md), [the earlier change log](docs/SIMULATION_CHANGES.md) and [DX12 migration status](docs/DX12_MIGRATION.md).
 
 The [November 12 atmosphere and Moon fixes](docs/ATMOSPHERE_AND_MOON_2026-11-12.md) protect Miller's atmospheric rim from foreground lens distortion in orbital views and give the Moon neutral regolith colours while retaining its terrain relief.
 

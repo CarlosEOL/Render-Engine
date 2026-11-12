@@ -20,7 +20,7 @@ uniform bool initialize;
 uniform float realSeconds;
 layout(location=0) out vec4 state;
 void main(){
-    float logSum=0,weightSum=0,highlight=0;
+    float logSum=0,weightSum=0,highlight=0;vec2 highlightPosition=vec2(.5);
     int hotCells=0;
     int diskHistogram[32];for(int i=0;i<32;++i)diskHistogram[i]=0;
     int diskSamples=0;
@@ -39,7 +39,7 @@ void main(){
             weightSum+=1.0;
         }
         float peak=max(c.r,max(c.g,c.b));
-        highlight=max(highlight,peak);
+        if(peak>highlight){highlight=peak;highlightPosition=uv;}
         if(peak>8.0)++hotCells;
         float diskDistance=length((uv-blackHoleHint.xy)*vec2(dimensions.x/dimensions.y,1));
         if(blackHoleHint.z>0 && diskDistance<blackHoleHint.z && peak>.5 && c.g<max(c.r,c.b)*1.15){
@@ -48,8 +48,21 @@ void main(){
     }
     float average=weightSum>0?exp2(logSum/weightSum):.0007;
     float target=log2(.22/max(average,.0001));
-    // A few isolated hot cells may clip; a resolved luminous area is protected.
-    if(hotCells<4)highlight=min(highlight,8.0);
+    // Follow the brightest coarse region down to source pixels. This is a
+    // radiance-only meter, independent of flare extraction and lens profile.
+    for(int mip=12;mip>=0;--mip){
+        if(float(mip)>=level)continue;
+        vec2 dimensionsAtMip=vec2(textureSize(scene,mip));
+        vec2 cell=floor(highlightPosition*dimensionsAtMip);float best=-1.0;
+        vec2 position=highlightPosition;
+        for(int y=-1;y<=1;++y)for(int x=-1;x<=1;++x){
+            vec2 uv=(cell+vec2(x,y)+.5)/dimensionsAtMip;
+            vec3 sample=textureLod(scene,uv,float(mip)).rgb;
+            float peak=max(sample.r,max(sample.g,sample.b));
+            if(peak>best){best=peak;position=uv;}
+        }
+        highlightPosition=position;highlight=max(highlight,best);
+    }
     if(highlight>0)target=min(target,log2(.90/highlight));
     // A beamed disk can span many stops. Meter its resolved emitting area,
     // allowing a small hot core to clip instead of hiding the entire disk.
@@ -59,7 +72,9 @@ void main(){
             accumulated+=diskHistogram[i];
             if(accumulated*4>=diskSamples*3){percentile=exp2(float(i)-15.5);break;}
         }
-        target=log2(.55/percentile);
+        // Meter the resolved luminous object, allowing its extreme beamed
+        // pixels to clip. A single hot pixel must not hide the rest of a disk.
+        target=log2(.65/percentile);
     }
     if(stellarHint.z>0){
         float samples[16];int count=0;
@@ -85,6 +100,8 @@ void main(){
             int trim=count/4;float surface=0;
             for(int i=trim;i<count-trim;++i)surface+=samples[i];
             surface/=float(count-2*trim);
+            // A resolved nearby continuum has a stable radiance calibration;
+            // subpixel catalogue display PSFs must not override its exposure.
             target=log2(.60/surface);
         }
     }

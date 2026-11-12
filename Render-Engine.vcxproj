@@ -164,6 +164,10 @@
     <ClCompile Include="src\OrbitalMechanics.cpp" />
     <ClCompile Include="src\PlanetTerrain.cpp" />
     <ClCompile Include="src\UniverseCatalog.cpp" />
+    <ClCompile Include="src\MilkyWayModel.cpp" />
+    <ClCompile Include="src\GalacticCore.cpp" />
+    <ClCompile Include="src\CelestialPhenomena.cpp" />
+    <ClCompile Include="src\MilkyWaySky.cpp" />
     <ClCompile Include="src\InterstellarWorlds.cpp" />
     <ClCompile Include="src\KerrSpacetime.cpp" />
     <ClCompile Include="src\Atmosphere.cpp" />
@@ -174,6 +178,9 @@
     <ClCompile Include="src\GalaxyBackground.cpp" />
     <ClCompile Include="src\StarSystem.cpp" />
     <ClCompile Include="src\StellarActivity.cpp" />
+    <ClCompile Include="src\ControlsPanel.cpp" />
+    <ClCompile Include="src\NavigationCatalog.cpp" />
+    <ClCompile Include="src\NavigationPanel.cpp" />
     <ClCompile Include="src\SolarSystem.cpp" />
     <ClCompile Include="src\ScenePanel.cpp" />
     <ClCompile Include="src\ObjectEditor.cpp" />
@@ -195,6 +202,10 @@
     <ClInclude Include="src\OrbitalMechanics.h" />
     <ClInclude Include="src\PlanetTerrain.h" />
     <ClInclude Include="src\UniverseCatalog.h" />
+    <ClInclude Include="src\MilkyWayModel.h" />
+    <ClInclude Include="src\GalacticCore.h" />
+    <ClInclude Include="src\CelestialPhenomena.h" />
+    <ClInclude Include="src\MilkyWaySky.h" />
     <ClInclude Include="src\InterstellarWorlds.h" />
     <ClInclude Include="src\KerrSpacetime.h" />
     <ClInclude Include="src\Atmosphere.h" />
@@ -206,6 +217,11 @@
     <ClInclude Include="src\GalaxyBackground.h" />
     <ClInclude Include="src\StarSystem.h" />
     <ClInclude Include="src\StellarActivity.h" />
+    <ClInclude Include="src\ControlsPanel.h" />
+    <ClInclude Include="src\NavigationCatalog.h" />
+    <ClInclude Include="src\NavigationPanel.h" />
+    <ClInclude Include="src\FlightUnits.h" />
+    <ClInclude Include="src\StellarPhotometry.h" />
     <ClInclude Include="src\Astronomy.h" />
     <ClInclude Include="src\ScenePanel.h" />
     <ClInclude Include="src\UiTheme.h" />
@@ -222,7 +238,11 @@
     <PostBuildEvent>
       <Command>if not exist "$(TargetDir)assets" mkdir "$(TargetDir)assets"
 copy /Y "$(ProjectDir)assets\galaxy.png" "$(TargetDir)assets\galaxy.png"
-copy /Y "$(ProjectDir)assets\galaxy-variants.png" "$(TargetDir)assets\galaxy-variants.png"</Command>
+copy /Y "$(ProjectDir)assets\galaxy-variants.png" "$(TargetDir)assets\galaxy-variants.png"
+if not exist "$(TargetDir)assets\stellar" mkdir "$(TargetDir)assets\stellar"
+copy /Y "$(ProjectDir)assets\stellar\corona.png" "$(TargetDir)assets\stellar\corona.png"
+if not exist "$(TargetDir)assets\ui" mkdir "$(TargetDir)assets\ui"
+copy /Y "$(ProjectDir)assets\ui\laboratories.png" "$(TargetDir)assets\ui\laboratories.png"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

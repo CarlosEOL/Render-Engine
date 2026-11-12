@@ -11,6 +11,7 @@
 #include "GalaxyBackground.h"
 #include "Astronomy.h"
 #include "UniverseCatalog.h"
+#include "MilkyWaySky.h"
 
 class BlackHole {
 public:
@@ -23,9 +24,17 @@ public:
     unsigned int LensingSourceDepthTexture() const { return sourceDepth; }
     void RenderBackground(const glm::mat4& vp,const glm::dvec3& camera,bool photons=false,
         double seconds=0,const glm::dvec3& detector=glm::dvec3(0)) const;
+    void RenderCore(const glm::mat4& vp,const glm::dvec3& localCamera,int coreId,double seconds) const;
     std::vector<int> NearbyStars(const glm::dvec3& camera) const { return catalogue.Nearby(camera); }
+    const Universe::Catalog& Catalogue() const {return catalogue;}
+    int NearestStar(const glm::dvec3& camera) const {return catalogue.Nearest(camera);}
     void SetStellarActivity(bool enabled) { stellarActivity.SetEnabled(enabled); }
+    void SetStellarCorona(bool enabled) {stellarActivity.SetCoronaEnabled(enabled);}
+    void SetMagnitudeLimit(float value){value=glm::clamp(value,-2.f,30.f);if(value!=magnitudeLimit){magnitudeLimit=value;skyCubeDirty=true;}}
     void SetWarmStellarColor(bool enabled) { stellarActivity.SetWarmColor(enabled); }
+    void InvalidateSky() const { milkyWay.Invalidate(); }
+    unsigned MilkyWayCacheBuilds() const { return milkyWay.CacheBuilds(); }
+    unsigned MilkyWayTexture() const { return milkyWay.Texture(); }
     void TriggerStellarFlare(double seconds) { stellarActivity.Trigger(seconds); }
     static glm::dvec3 PlanetPosition(double seconds, int planet = 0);
     double PlanetSurfaceRadius(const glm::vec3& worldDirection, double seconds, int planet = 0) const;
@@ -75,6 +84,8 @@ private:
 
     unsigned int program = 0;
     double spin=.8;
+    float magnitudeLimit=7;
+    std::vector<float> starLuminosities;
     int rayBudget=160;
     bool atmospheresEnabled=true;
     unsigned int lensProgram = 0;
@@ -85,9 +96,11 @@ private:
     unsigned int sourceColor = 0;
     unsigned int sourceDepth = 0;
     mutable int sourceWidth = 0, sourceHeight = 0;
-    void BuildSkyCube();
+    mutable glm::dvec3 skyCubeOrigin=glm::dvec3(0);
+    mutable bool skyCubeDirty=true,skyCubeAllocated=false;
+    void BuildSkyCube(const glm::dvec3& origin=glm::dvec3(0)) const;
     void RenderLensing(const glm::mat4& viewProjection,const glm::dvec3& camera,double seconds,const glm::vec3& beta,
-                       const glm::vec3& physicalBeta,bool physicalObserver) const;
+                       const glm::vec3& physicalBeta,bool physicalObserver,int coreId=-1) const;
     Mesh sphere;
     Mesh backgroundStars;
     Mesh craftRing;
@@ -131,6 +144,7 @@ private:
     Atmosphere atmosphere;
     StellarActivity stellarActivity;
     GalaxyBackground galaxies;
+    MilkyWaySky milkyWay;
     struct FlightSample {
         double time;
         OrbitalMechanics::ParticleState state;

@@ -27,6 +27,30 @@ uniform vec3 cameraPosition;
 uniform vec3 planetCenter;
 uniform vec3 lightPosition;
 uniform float planetRadius;
+uniform bool earthClouds;
+uniform float cloudTime;
+uniform mat3 cloudFrame;
+
+float cloudHash(vec3 p){p=fract(p*.1031);p+=dot(p,p.yzx+33.33);return fract((p.x+p.y)*p.z);}
+float cloudNoise(vec3 p){
+ vec3 b=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);
+ return mix(mix(mix(cloudHash(b),cloudHash(b+vec3(1,0,0)),f.x),mix(cloudHash(b+vec3(0,1,0)),cloudHash(b+vec3(1,1,0)),f.x),f.y),
+ mix(mix(cloudHash(b+vec3(0,0,1)),cloudHash(b+vec3(1,0,1)),f.x),mix(cloudHash(b+vec3(0,1,1)),cloudHash(b+vec3(1,1,1)),f.x),f.y),f.z);
+}
+float weather(vec3 p){
+ vec3 n=normalize(cloudFrame*p);n+=vec3(cloudTime*.0000007,0,cloudTime*.0000003);
+ float field=.58*cloudNoise(n*11.0)+.28*cloudNoise(n*29.0+17.0)+.14*cloudNoise(n*73.0+31.0);
+ return smoothstep(.43,.65,field);
+}
+float cloudDensity(vec3 p,float coverage){
+ float height=(length(p)-planetRadius)*149597870.7;
+ if(height<2.0 || height>12.0)return 0.0;
+ if(coverage<.03)return 0.0;
+ float profile=smoothstep(2.0,3.2,height)*(1.0-smoothstep(7.0,12.0,height));
+ vec3 local=cloudFrame*p*149597870.7;
+ float erosion=.65*cloudNoise(local*.13+vec3(cloudTime*.00001,0,0))+.35*cloudNoise(local*.47);
+ return max(0.0,coverage-erosion*.35)*profile*.75;
+}
 
 vec2 sphereInterval(vec3 origin, vec3 direction, float radius) {
     float along = dot(origin, direction);
@@ -56,12 +80,60 @@ void main() {
         }
         finish = min(finish, geometryDistance);
     }
-    vec2 ground = sphereInterval(origin, direction, planetRadius * 1.0035);
+    vec2 ground = sphereInterval(origin, direction, planetRadius);
     if (ground.x > 0.0 && ground.y >= ground.x)
         finish = min(finish, ground.x);
     if (finish <= start) {
         fragColor = vec4(background, source.a);
         return;
+    }
+    float sourceEligibility=source.a;
+    if(earthClouds){
+        // A shell approximation and a bounded volume share weather and optical
+        // depth. Fade by altitude; never replace the weather map on descent.
+        float altitudeKm=(length(origin)-planetRadius)*149597870.7;
+        float volumeWeight=1.0-smoothstep(60.0,200.0,altitudeKm);
+        vec2 cloudShell=sphereInterval(origin,direction,planetRadius+12000.0/149597870700.0);
+        vec2 cloudBase=sphereInterval(origin,direction,planetRadius+2000.0/149597870700.0);
+        float cloudBegin=max(0.0,cloudShell.x),cloudEnd=min(finish,cloudShell.y);
+        if(cloudBase.x>cloudBegin)cloudEnd=min(cloudEnd,cloudBase.x);
+        // From below the clouds, skip the empty cavity before entering the base.
+        if(length(origin)<planetRadius+2000.0/149597870700.0)cloudBegin=max(cloudBegin,cloudBase.y);
+        vec2 sheet=sphereInterval(origin,direction,planetRadius+5500.0/149597870700.0);
+        float sheetDistance=sheet.x>0.0?sheet.x:sheet.y;
+        float sheetT=1.0;vec3 sheetLight=vec3(0);
+        if(sheetDistance>=start && sheetDistance<finish){
+            vec3 p=origin+direction*sheetDistance;
+            float grazing=max(.10,abs(dot(normalize(p),direction)));
+            sheetT=exp(-weather(p)*2.8/grazing);
+            vec3 sun=normalize(lightPosition-planetCenter-p);
+            float illumination=smoothstep(-.12,.12,dot(normalize(p),sun));
+            sheetLight=vec3(.83,.87,.94)*(.025+.975*illumination)*(1.0-sheetT);
+        }
+        vec3 volumeLight=vec3(0);float volumeT=1.0;
+        if(volumeWeight>0.0 && cloudEnd>cloudBegin){
+            cloudEnd=min(cloudEnd,cloudBegin+200000.0/149597870700.0);
+            float coverage=weather(origin+direction*((cloudBegin+cloudEnd)*.5));
+            float step=(cloudEnd-cloudBegin)/24.0;
+            for(int i=0;i<24;++i){
+                if(coverage<.03)break;
+                vec3 p=origin+direction*(cloudBegin+(float(i)+.5)*step);
+                float density=cloudDensity(p,coverage);if(density<.001)continue;
+                vec3 sun=normalize(lightPosition-planetCenter-p);
+                float shadow=cloudDensity(p+sun*(3500.0/149597870700.0),coverage)*4.0;
+                float daylight=smoothstep(-.12,.10,dot(normalize(p),sun));
+                float phase=.25+.65*pow(max(dot(direction,sun),0.0),8.0);
+                vec3 lighting=vec3(.12,.17,.25)*(.08+.92*daylight)
+                    +vec3(1.0,.96,.88)*daylight*exp(-shadow)*(.55+phase);
+                float passing=exp(-density*step*149597870.7);
+                volumeLight+=volumeT*(1.0-passing)*lighting;volumeT*=passing;
+                if(volumeT<.01)break;
+            }
+            if(sheetDistance>cloudEnd){volumeLight+=volumeT*sheetLight;volumeT*=sheetT;}
+        }
+        float cloudT=mix(sheetT,volumeT,volumeWeight);
+        background=background*cloudT+mix(sheetLight,volumeLight,volumeWeight);
+        sourceEligibility*=cloudT;
     }
     const int samples = 12;
     float interval = (finish - start) / float(samples);
@@ -108,7 +180,7 @@ void main() {
         scattering+=transmittance*(1.0-segment)*(single+multiple);
         transmittance *= segment;
     }
-    fragColor = vec4(background * transmittance + scattering, source.a);
+    fragColor = vec4(background * transmittance + scattering, sourceEligibility);
 }
 )";
     program = compileShaderProgram(vertex, fragment);
@@ -126,7 +198,7 @@ void main() {
 
 void Atmosphere::Render(const glm::mat4& viewProjection, const glm::vec3& camera,
                         const glm::vec3& center, float radius, bool logarithmicDepth,
-                        const glm::vec3& lightPosition) const {
+                        const glm::vec3& lightPosition,bool earthClouds,double seconds,const glm::mat3& rotation) const {
     int viewport[4];
     glGetIntegerv(GL_VIEWPORT, viewport);
     if (viewport[2] <= 0 || viewport[3] <= 0)
@@ -170,16 +242,21 @@ void Atmosphere::Render(const glm::mat4& viewProjection, const glm::vec3& camera
     glUniform3fv(glGetUniformLocation(program, "planetCenter"), 1, glm::value_ptr(center));
     glUniform3fv(glGetUniformLocation(program, "lightPosition"), 1, glm::value_ptr(lightPosition));
     glUniform1f(glGetUniformLocation(program, "planetRadius"), radius);
+    glUniform1i(glGetUniformLocation(program,"earthClouds"),earthClouds);
+    glUniform1f(glGetUniformLocation(program,"cloudTime"),static_cast<float>(std::remainder(seconds,86400.0*100)));
+    const auto cloudFrame=glm::transpose(rotation);
+    glUniformMatrix3fv(glGetUniformLocation(program,"cloudFrame"),1,GL_FALSE,glm::value_ptr(cloudFrame));
     glUniform1i(glGetUniformLocation(program, "scene"), 0);
     glUniform1i(glGetUniformLocation(program, "sceneDepth"), 1);
     glUniform1i(glGetUniformLocation(program, "logarithmicDepth"), logarithmicDepth);
+    const bool blending=glIsEnabled(GL_BLEND);glDisable(GL_BLEND);
     glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
     glBindVertexArray(vao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindVertexArray(0);
     glDepthMask(GL_TRUE);
-    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_DEPTH_TEST);if(blending)glEnable(GL_BLEND);
     glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, 0);

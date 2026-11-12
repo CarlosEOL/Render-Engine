@@ -269,9 +269,6 @@ std::string QuantumSimulation::Information() const
                 "underlying equation is 1D. Dots are probability samples, not classical particle paths.\r\n";
     if (example.family == QuantumStates::Family::Numerical)
         text << "\r\nAmber curve: potential V (vertical chart span = 4 energy units).\r\n";
-    text << "\r\nSpace  Play / pause\r\n< >  Time rate\r\nCtrl+R  Restart selected state\r\nRMB  Look around\r\nWASD  "
-            "Fly\r\nQ/E  Roll\r\nR/F  Up/down\r\nHome  Frame state\r\nF3  Information panel\r\nF10  "
-            "Main menu\r\n";
     return text.str();
 }
 void QuantumSimulation::Release()

@@ -11,6 +11,9 @@
 #include <GLFW/glfw3native.h>
 #endif
 #include "InterstellarWorlds.h"
+#include "GalacticCore.h"
+#include "CelestialPhenomena.h"
+#include "MilkyWayModel.h"
 #include "ObjectLoader.h"
 #include "glad/glad.h"
 #ifdef RENDER_ENGINE_DX12
@@ -47,9 +50,9 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly)
 #ifdef _WIN32
     // Capture our own native controls without showing or moving a desktop
     // window. This complements the GPU-only scene captures below.
-    const auto captureUi=[&](const char* name){
+    const auto captureUi=[&](const char* name,void* target=nullptr){
         ++uiCaptures;
-        const HWND native=glfwGetWin32Window(window);RECT rect{};GetClientRect(native,&rect);
+        const HWND native=target?static_cast<HWND>(target):glfwGetWin32Window(window);RECT rect{};GetClientRect(native,&rect);
         HDC screen=GetDC(native),dc=CreateCompatibleDC(screen);
         BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
         info.bmiHeader.biWidth=rect.right;info.bmiHeader.biHeight=-rect.bottom;
@@ -58,7 +61,7 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly)
         ReleaseDC(native,screen);
         if(!bitmap || !dc){std::cerr<<"UI capture allocation failed\n";fail();if(bitmap)DeleteObject(bitmap);if(dc)DeleteDC(dc);return;}
         auto previous=SelectObject(dc,bitmap);UiTheme::Fill(dc,rect,UiTheme::Background);
-        if(!mainMenu.Visible()){
+        if(!target && !mainMenu.Visible()){
             std::vector<unsigned char> scene(static_cast<size_t>(rect.right)*rect.bottom*3);
             glReadBuffer(GL_FRONT);glPixelStorei(GL_PACK_ALIGNMENT,1);
             glReadPixels(0,0,rect.right,rect.bottom,GL_RGB,GL_UNSIGNED_BYTE,scene.data());
@@ -106,6 +109,23 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly)
     HandleInterfaceCommand(3011,BN_CLICKED);captureUi("ui-quantum-library-compact");
     glfwSetWindowSize(window,uiWidth,uiHeight);
     mainMenu.Show(AppMenu::Page::Home);
+    StartSolarSystem();
+    const auto finderCamera=starSystem.camera;const double finderTime=simulationTime;
+    navigationPanel.Toggle(NavigationPanel::Mode::Finder,false);navigationPanel.SetQuery("Earth");navigationPanel.Refresh();
+    captureUi("ui-object-finder",navigationPanel.NativeHandle());
+    const auto foundEarth=navigationCatalog.Find("Earth",simulationTime);
+    if(foundEarth.empty())fail();else {
+        ListView_SetItemState(GetDlgItem(static_cast<HWND>(navigationPanel.NativeHandle()),5),0,LVIS_SELECTED,LVIS_SELECTED);
+        if(!navigationSelectionValid || navigationSelection.name!="Earth" || starSystem.Selected()!=2){std::cerr<<"Click selection did not reach the selected object\n";fail();}
+        if(GetDlgItem(static_cast<HWND>(navigationPanel.NativeHandle()),7)){std::cerr<<"Redundant Select button remains\n";fail();}
+    }
+    if(starSystem.camera!=finderCamera || simulationTime!=finderTime){std::cerr<<"Object selection moved the camera\n";fail();}
+    navigationScope=navigationCatalog.Object(-2,2,simulationTime);
+    navigationPanel.Toggle(NavigationPanel::Mode::Overview,false);captureUi("ui-earth-satellites",navigationPanel.NativeHandle());
+    ActivateNavigation(NavigationPanel::Action::Back,{});navigationPanel.Refresh();captureUi("ui-solar-hierarchy",navigationPanel.NativeHandle());
+    navigationScope=navigationCatalog.Object(-2,4,simulationTime);navigationPanel.Refresh();captureUi("ui-jupiter-satellites",navigationPanel.NativeHandle());
+    navigationPanel.Toggle(NavigationPanel::Mode::Nearby,false);navigationPanel.SetQuery("20");navigationPanel.Refresh();captureUi("ui-nearby-systems",navigationPanel.NativeHandle());
+    navigationPanel.Hide();navigationSelectionValid=false;mainMenu.Show(AppMenu::Page::Home);
     if(uiOnly){
         StartSolarSystem();float dt=.016f;Update(dt);captureUi("ui-star-browser-and-clock");
         const bool before=simulationPlaying;HandleInterfaceCommand(2107,BN_CLICKED);
@@ -240,10 +260,10 @@ Connections: {
     if (!scenePanel.IsCurrentSystemBrowser() || pendingSystemTarget != activeSystemTarget)
         fail();
     KeyCallback(window, GLFW_KEY_F4, 0, GLFW_PRESS, GLFW_MOD_SHIFT);
-    KeyCallback(window, GLFW_KEY_F3, 0, GLFW_PRESS, 0);
+    KeyCallback(window, GLFW_KEY_I, 0, GLFW_PRESS, 0);
     if (scenePanel.Width() != 0)
         fail();
-    KeyCallback(window, GLFW_KEY_F3, 0, GLFW_PRESS, 0);
+    KeyCallback(window, GLFW_KEY_I, 0, GLFW_PRESS, 0);
     KeyCallback(window, GLFW_KEY_F4, 0, GLFW_PRESS, GLFW_MOD_SHIFT);
     capture("solar-overview");
 #ifdef _WIN32
@@ -254,6 +274,7 @@ Connections: {
     // A visible background star can be selected from inside another system.
     // This goes through the same screen-coordinate routine as a mouse click.
     visionProfile=0;fieldOfView=45;
+    SetMagnitudeLimit(20);
     const int clickedStar=47;
     cameraFront=glm::normalize(glm::vec3(blackHole.ResolveTarget(clickedStar,simulationTime).position-
         systemOriginAu-starSystem.camera));cameraUp={0,1,0};
@@ -273,6 +294,17 @@ Connections: {
     starSystem.SelectPlanet(2);
     starSystem.GoToSelected(simulationTime, cameraFront, cameraUp);
     capture("solar-earth");
+    const auto cloudEarth=starSystem.Position(2,simulationTime),cloudRadial=glm::normalize(-cloudEarth);
+    const auto cloudTangent=glm::normalize(glm::cross(cloudRadial,glm::dvec3(0,1,0)));
+    trajectories=false;lensFlareStrength=0;
+    for(double altitudeKm:{500.0,80.0,5.0}){
+        starSystem.camera=cloudEarth+cloudRadial*(Astronomy::earthRadiusAu+altitudeKm*1000/Astronomy::metresPerAu);
+        cameraFront=glm::vec3(altitudeKm>100?-cloudRadial:glm::normalize(cloudTangent+cloudRadial*.3));cameraUp=glm::vec3(altitudeKm>100?cloudTangent:cloudRadial);fieldOfView=65;
+        starSystem.SetEarthClouds(false);sceneCacheValid=false;const auto clear=capture(("earth-clouds-"+std::to_string(int(altitudeKm))+"km-off").c_str());
+        starSystem.SetEarthClouds(true);sceneCacheValid=false;const auto cloudy=capture(("earth-clouds-"+std::to_string(int(altitudeKm))+"km-on").c_str());
+        if(altitudeKm==500 && clear==cloudy){std::cerr<<"Earth cloud shell made no visible contribution\n";fail();}
+    }
+    starSystem.SelectPlanet(2);starSystem.GoToSelected(simulationTime,cameraFront,cameraUp);fieldOfView=45;
     const auto moon=std::find_if(starSystem.Planets().begin(),starSystem.Planets().end(),[](const auto& p){return p.name=="Moon";});
     if(moon==starSystem.Planets().end())return false;
     const int moonIndex=static_cast<int>(moon-starSystem.Planets().begin());
@@ -372,13 +404,13 @@ Connections: {
     lensFlareStrength=0;exposureEv=0;KeyCallback(window,1200,0,GLFW_PRESS,0);
     KeyCallback(window,1205,0,GLFW_PRESS,0);const auto hdrDiskOff=capture("black-hole-hdr-unassisted");
     KeyCallback(window,1204,0,GLFW_PRESS,0);const auto hdrDiskOn=capture("black-hole-hdr-visible");
-    if(displayBrightness(hdrDiskOn)<=displayBrightness(hdrDiskOff))fail();
+    if(hdrDiskOn!=hdrDiskOff){std::cerr<<"HDR depends on legacy disk lift\n";fail();}
     KeyCallback(window,1201,0,GLFW_PRESS,0);optics.SetAutoExposure(true);
     KeyCallback(window,1205,0,GLFW_PRESS,0);const auto pureDiskOff=capture("black-hole-auto-unassisted");
     KeyCallback(window,1204,0,GLFW_PRESS,0);const auto pureDiskOn=capture("black-hole-auto-visible");
     std::cout<<"Black hole display sums HDR "<<displayBrightness(hdrDiskOff)<<" -> "<<displayBrightness(hdrDiskOn)
         <<"; Auto "<<displayBrightness(pureDiskOff)<<" -> "<<displayBrightness(pureDiskOn)<<"\n";
-    if(displayBrightness(pureDiskOn)<=displayBrightness(pureDiskOff))fail();
+    if(displayBrightness(hdrDiskOn)<=displayBrightness(pureDiskOn)){std::cerr<<"HDR failed to preserve faint background light\n";fail();}
     KeyCallback(window,1200,0,GLFW_PRESS,0);lensFlareStrength=.45f;
     cameraPos={0,0,650};cameraFront={0,0,-1};cameraUp={0,1,0};fieldOfView=4;
     capture("gargantua-visible-from-mann-distance");
@@ -465,8 +497,8 @@ Connections: {
     const auto disabled=capture("solar-prominences-disabled");
     size_t exteriorPlasma=0;
     for(size_t i=0;i<active.size();i+=3)
-        if(disabled[i]<5 && disabled[i+1]<5 && disabled[i+2]<5
-            && (active[i]>20 || active[i+1]>20 || active[i+2]>20))++exteriorPlasma;
+        if(int(active[i])>int(disabled[i])+20 || int(active[i+1])>int(disabled[i+1])+20
+            || int(active[i+2])>int(disabled[i+2])+20)++exteriorPlasma;
     std::cout<<"Exterior plasma pixels: "<<exteriorPlasma<<"\n";
     if(exteriorPlasma<100)fail();
     KeyCallback(window,1321,0,GLFW_PRESS,0);
@@ -540,6 +572,22 @@ Connections: {
     optics.SetReferenceGlare(true);
     const auto referenceOn=capture("reference-glare-on");
     if(referenceOff==referenceOn)fail();
+    // A genuine line-of-sight eclipse: Moon covers the photosphere while the
+    // separate corona remains outside its silhouette. No scripted animation.
+    KeyCallback(window,1200,0,GLFW_PRESS,0);lensFlareStrength=0;exposureEv=0;
+    const auto eclipseMoon=starSystem.Position(13,simulationTime);
+    const double lunarRadius=starSystem.Planets()[13].radiusEarth*Astronomy::earthRadiusAu;
+    const auto eclipseRay=glm::normalize(eclipseMoon);
+    const double lunarDistance=lunarRadius*glm::length(eclipseMoon)/(Astronomy::solarRadiusAu*1.03-lunarRadius);
+    starSystem.camera=eclipseMoon+eclipseRay*lunarDistance;cameraFront=glm::vec3(-eclipseRay);cameraUp={0,1,0};fieldOfView=3;
+    starSystem.SetStellarActivity(false);starSystem.SetStellarCorona(false);sceneCacheValid=false;
+    const auto eclipseOff=capture("solar-eclipse-corona-off");
+    const auto centerRadiance=[&](){glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,optics.SceneInputTexture());GLint w,h;glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_WIDTH,&w);glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_HEIGHT,&h);std::vector<float> pixels(static_cast<size_t>(w)*h*4);glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_FLOAT,pixels.data());const auto p=(static_cast<size_t>(h/2)*w+w/2)*4;return glm::vec3(pixels[p],pixels[p+1],pixels[p+2]);};
+    const auto coveredOff=centerRadiance();
+    starSystem.SetStellarCorona(true);sceneCacheValid=false;const auto eclipseOn=capture("solar-eclipse-corona-on");
+    if(eclipseOff==eclipseOn || glm::length(centerRadiance()-coveredOff)>.00001f){std::cerr<<"Corona missing or leaking through the lunar silhouette\n";fail();}
+    starSystem.SetStellarActivity(true);starSystem.camera={0,0,.8};cameraFront=glm::normalize(glm::vec3(0,-.15,-1));cameraUp={0,1,0};fieldOfView=45;
+    SetMagnitudeLimit(7);lensFlareStrength=.45f;
     // Camera adaptation continues independently of paused scene dynamics.
     KeyCallback(window,1201,0,GLFW_PRESS,0);
     KeyCallback(window,1202,0,GLFW_PRESS,0);
@@ -955,12 +1003,32 @@ Connections: {
         && std::abs(settled[0]-settled[1])<.01f
         && brightening[0]>settled[0] && brightening[0]<brightening[1]
         && (initial[0]-darkening[0])>(brightening[0]-settled[0])
-        && black[0]==8 && unresolved[0]>resolved[0]+5 && probeError==GL_NO_ERROR;
+        && black[0]==8 && std::abs(unresolved[0]-resolved[0])<.01f && probeError==GL_NO_ERROR;
     std::cout<<"Exposure meter EV: "<<initial[0]<<" -> "<<darkening[0]
              <<" -> "<<settled[0]<<"; brightening "<<brightening[0]
              <<"; black "<<black[0]<<"; valid="<<meterValid<<"\n";
     if(!meterValid)fail();
     probe.Release();glDeleteTextures(1,&meterInput);
+    StartSolarSystem();trajectories=false;visionProfile=2;exposureEv=0;lensFlareStrength=.45f;
+    for(int core:{GalacticCores::firstId,GalacticCores::tonId}){
+        SelectCatalogue(core);EnterSelectedSystem(true);fieldOfView=55;
+        KeyCallback(window,1200,0,GLFW_PRESS,0);capture(core==GalacticCores::tonId?"ton-618-hdr":"sagittarius-a-hdr");
+        KeyCallback(window,1201,0,GLFW_PRESS,0);optics.SetAutoExposure(true);capture(core==GalacticCores::tonId?"ton-618-auto":"sagittarius-a-auto");
+    }
+    KeyCallback(window,1200,0,GLFW_PRESS,0);visionProfile=0;lensFlareStrength=0;
+    for(const auto& nebula:CelestialPhenomena::Nebulae()){
+        const auto found=navigationCatalog.Find(nebula.name,simulationTime);
+        if(found.empty()){fail();continue;}
+        ActivateNavigation(NavigationPanel::Action::Go,found.front());capture(("nebula-"+std::to_string(nebula.id-CelestialPhenomena::firstId)).c_str());
+    }
+    StartSolarSystem();trajectories=false;starSystem.camera={0,0,100};cameraFront=glm::normalize(glm::vec3(MilkyWayModel::CenterAu()));cameraUp={0,1,0};fieldOfView=75;
+    const unsigned beforeSky=blackHole.MilkyWayCacheBuilds();
+    SetMagnitudeLimit(3.6f);capture("magnitude-limit-3-60");
+    SetMagnitudeLimit(7);capture("magnitude-limit-7-00");
+    SetMagnitudeLimit(10.2f);capture("magnitude-limit-10-20");
+    cameraFront=glm::normalize(glm::vec3(MilkyWayModel::Orientation()[1]));capture("milky-way-galactic-pole");
+    if(blackHole.MilkyWayCacheBuilds()>beforeSky+1){std::cerr<<"Sky rebaked on rotation or magnitude changes\n";fail();}
+    SetMagnitudeLimit(7);
     std::cout<<"Render checks "<<(success?"PASSED":"FAILED")<<": "<<captures<<" scene captures; "<<uiCaptures<<" UI captures; "<<failedLines.size()<<" assertion locations failed\n";
     return success;
 }

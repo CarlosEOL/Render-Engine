@@ -14,6 +14,7 @@ struct Planet {
   Surface surface;
 };
 const Planet &Get(int index);
+OrbitalMechanics::Orbit CompanionOrbit(int index);
 float Elevation(const glm::vec3 &direction, int planet, float phase);
 const char *ShaderFunctions();
 OrbitalMechanics::Orbit DepartureOrbit();

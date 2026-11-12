@@ -14,6 +14,7 @@
 #include <random>
 #include <sstream>
 #include <stdexcept>
+#include "GalacticCore.h"
 
 unsigned int compileShaderProgram(const char *, const char *);
 
@@ -120,6 +121,7 @@ StarSystem::Star StarSystem::DescribeStar(int id, const std::string &name)
 
 void StarSystem::Generate(int id, const std::string &name)
 {
+    coreId=-1;
     InvalidateCaches();
     solarSystem = false;
     asteroids.clear();
@@ -218,6 +220,13 @@ void StarSystem::Generate(int id, const std::string &name)
     speedAu = 0.1;
 }
 
+void StarSystem::LoadCore(int id){
+    const auto core=GalacticCores::Get(id);InvalidateCaches();coreId=id;solarSystem=false;
+    planets.clear();asteroids.clear();selected=landedPlanet=-1;landed=following=followingRotation=false;
+    star={id,core.name,core.classification,core.massSolar,core.RadiusAu()/Astronomy::solarRadiusAu,0,0,0};
+    camera={0,core.RadiusAu()*3,core.RadiusAu()*14};speedAu=core.RadiusAu()*.2;
+}
+
 glm::dvec3 StarSystem::Position(int planet, double seconds) const
 {
     if (planet < 0)
@@ -240,6 +249,7 @@ void StarSystem::InvalidateCaches() {
 }
 
 double StarSystem::DetailRadiusAu() const {
+    if(IsCore())return GalacticCores::Get(coreId).RadiusAu()*10000;
     double radius=20;
     for(const auto& planet:planets)radius=std::max(radius,planet.orbit.semiMajorAxis*(1+planet.orbit.eccentricity)*3);
     return radius;
@@ -367,6 +377,7 @@ void StarSystem::Move(GLFWwindow *window, float realSeconds, glm::vec3 &front, g
 
 void StarSystem::GoToSelected(double seconds, glm::vec3 &front, glm::vec3 &up)
 {
+    if(IsCore()){Overview(front,up);return;}
     landed = following = followingRotation = false;
     const auto target = Position(selected, seconds);
     const double radius = selected < 0 ? star.radiusSolar * Astronomy::solarRadiusAu
@@ -383,6 +394,7 @@ void StarSystem::GoToSelected(double seconds, glm::vec3 &front, glm::vec3 &up)
 
 void StarSystem::Overview(glm::vec3 &front, glm::vec3 &up)
 {
+    if(IsCore()){const auto radius=GalacticCores::Get(coreId).RadiusAu();camera={0,radius*(coreId==GalacticCores::tonId?6:3),radius*(coreId==GalacticCores::tonId?26:14)};front=glm::normalize(glm::vec3(-camera));up={0,1,0};if(coreId==GalacticCores::tonId)CameraMotion::Roll(front,up,glm::radians(16.f));return;}
     landed = following = followingRotation = false;
     double outer = 0;
     for (const auto &body : planets)
@@ -462,6 +474,7 @@ bool StarSystem::Pick(const glm::vec3 &direction, double seconds, double toleran
 }
 
 double StarSystem::ObserverClockRate(double seconds) const {
+    if(IsCore())return std::sqrt(std::max(0.0,1-GalacticCores::Get(coreId).RadiusAu()/std::max(glm::length(camera),1e-15)));
     if(!InDetailRange())return 1;
     const double c2=Astronomy::lightSpeedAu*Astronomy::lightSpeedAu;
     double potential=star.massSolar*Astronomy::solarGravityAu/std::max(glm::length(camera),star.radiusSolar*Astronomy::solarRadiusAu);
@@ -487,6 +500,7 @@ double StarSystem::ObserverClockRate(double seconds) const {
 
 std::string StarSystem::Information(double seconds) const
 {
+    if(IsCore())return GalacticCores::Information(coreId);
     std::ostringstream text;
     text<<std::setprecision(12)<<"Camera clock / distant clock: "<<ObserverClockRate(seconds)<<"\n";
     text << star.name << "\n"
@@ -510,9 +524,7 @@ std::string StarSystem::Information(double seconds) const
              << " days\n"
              << "Temperature  " << body.temperature << " K\n";
     }
-    text << "\nQ/E  Roll\nR/F  Up/down\nT  Follow position\nShift+R  Follow rotation\nF2  Orbit paths\nF3  Information\nF4  All star systems\nShift+F4  Current system only\nHome  Overview\nG  Go to selection\nL "
-            " Land / lift off\n"
-         << (landed      ? "\nStanding on surface"
+    text         << (landed      ? "\nStanding on surface"
              : following ? (followingRotation?"\nFollowing translation and rotation":"\nFollowing position")
                          : "\nFree camera");
     if(landed)text<<"\nHigh-detail surface: 100 m around camera\nCoarser terrain beyond 100 m\n";
@@ -571,10 +583,10 @@ uniform int surfacePalette;
 uniform float bodyRadiusKm;
 void main() {
     if (bodyKind == 4) {
-        color=vec4(albedo,1); gl_FragDepth=0; return;
+        color=vec4(albedo,0); gl_FragDepth=0; return;
     }
     gl_FragDepth=log2(1.0+length(relativePosition)*1e12)/log2(1.0+20000.0*1e12);
-    if (bodyKind == 3) { color=vec4(albedo,1); return; }
+    if (bodyKind == 3) { color=vec4(albedo,0); return; }
     vec3 radial=normalize(localPosition);
     if (bodyKind == 0) {
         float mu=dot(normalize(mat3(model)*radial),normalize(-relativePosition));
@@ -630,7 +642,7 @@ void main() {
         }
     }
     float specular=water*pow(max(dot(normal,normalize(light+view)),0.0),100.0);
-    color=vec4(material*(.012+diffuse)+specular,1);
+    color=vec4(material*(.012+diffuse)+specular,0);
 }
 )";
     program = compileShaderProgram(vertex.c_str(), fragment.c_str());
@@ -681,6 +693,7 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
     if (!program || planets.empty())
         return;
     if(!InDetailRange())return;
+    glDisable(GL_BLEND); // Opaque reflected light writes RGB and zero flare eligibility.
     double clearance = glm::length(camera) - star.radiusSolar * Astronomy::solarRadiusAu;
     for (int planet = 0; planet < static_cast<int>(planets.size()); ++planet)
     {
@@ -844,7 +857,7 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
         const auto center = glm::vec3(Position(planet, seconds) - camera);
         atmosphere.Render(vp, glm::vec3(0), center,
                           static_cast<float>(planets[planet].radiusEarth * Astronomy::earthRadiusAu), true,
-                          glm::vec3(-camera));
+                          glm::vec3(-camera),earthCloudsEnabled && solarSystem && planet==2,seconds,glm::mat3(Rotation(planet,seconds)));
     }
     const auto clip = vp * glm::vec4(glm::vec3(Position(selected, seconds) - camera), 1);
     if (showSelection && clip.w > 0)

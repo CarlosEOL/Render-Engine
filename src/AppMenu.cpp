@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <windows.h>
 #include "UiTheme.h"
+#include "stb_image.h"
+#include <filesystem>
 
 void AppMenu::Create(void *nativeParent, const std::vector<std::string> &names)
 {
@@ -31,11 +33,21 @@ void AppMenu::Create(void *nativeParent, const std::vector<std::string> &names)
     add(L"STATIC", L"Render Engine", 3001, SS_LEFT);
     add(L"STATIC", L"Two laboratories. One universe to explore.", 3002, SS_LEFT);
     add(L"STATIC",L"SIMULATION LABORATORY",3005,SS_LEFT);
-    add(L"STATIC",L"WASD  Move     /     Right mouse  Look     /     Space  Play or pause     /     F10  Return here",3004,SS_LEFT);
     SendDlgItemMessageW(window,3005,WM_SETFONT,reinterpret_cast<WPARAM>(UiTheme::Font(window,11,FW_SEMIBOLD)),TRUE);
-    SendDlgItemMessageW(window,3004,WM_SETFONT,reinterpret_cast<WPARAM>(UiTheme::Font(window,11)),TRUE);
     add(L"BUTTON", L"Planetorium\nExplore celestial systems", 3010, BS_MULTILINE | WS_TABSTOP);
     add(L"BUTTON", L"Quantum Simulation\nExplore particle states", 3011, BS_MULTILINE | WS_TABSTOP);
+    // One original illustration, shared by the two quiet card accents.
+    wchar_t executable[32768];const auto pathLength=GetModuleFileNameW(nullptr,executable,32768);
+    if(pathLength && pathLength<32768){
+        const auto path=std::filesystem::path(executable).parent_path()/"assets/ui/laboratories.png";
+        int width=0,height=0,channels=0;stbi_set_flip_vertically_on_load(false);
+        auto* image=stbi_load(path.string().c_str(),&width,&height,&channels,4);stbi_set_flip_vertically_on_load(true);
+        if(image){BITMAPINFO info={};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);info.bmiHeader.biWidth=width;info.bmiHeader.biHeight=-height;info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;info.bmiHeader.biCompression=BI_RGB;unsigned char* pixels=nullptr;
+            artBitmap=CreateDIBSection(nullptr,&info,DIB_RGB_COLORS,reinterpret_cast<void**>(&pixels),nullptr,0);
+            if(pixels){for(size_t i=0;i<static_cast<size_t>(width)*height;++i){pixels[i*4]=image[i*4+2];pixels[i*4+1]=image[i*4+1];pixels[i*4+2]=image[i*4];pixels[i*4+3]=255;}for(int id:{3010,3011})SetPropW(GetDlgItem(window,id),L"RenderEngineCardArt",static_cast<HANDLE>(artBitmap));}
+            stbi_image_free(image);
+        }
+    }
     add(L"BUTTON", L"Solar System - 1:1 scale\nSun, eight planets, moons, dwarf planets and asteroids", 3012,
         BS_MULTILINE | WS_TABSTOP);
     add(L"BUTTON", L"Gargantua system\nMiller, Mann, Edmunds and spacecraft", 3013, BS_MULTILINE | WS_TABSTOP);
@@ -62,7 +74,7 @@ void AppMenu::Show(Page next)
     for (auto control : controls)
     {
         const int id = GetDlgCtrlID(static_cast<HWND>(control));
-        const bool common = id <= 3002 || id==3004 || id==3005;
+        const bool common = id <= 3002 || id==3005;
         const bool show = common || (page == Page::Home && (id == 3010 || id == 3011)) ||
                           (page == Page::Planetorium && (id == 3012 || id == 3013 || id == 3003)) ||
                           (page == Page::Quantum && (id == 3020 || id == 3021 || id == 3014)) ||
@@ -130,8 +142,6 @@ void AppMenu::Resize(int width, int height)
     place(3014, half + gap, y + listHeight + 16, half, static_cast<int>(42 * scale));
     place(3015, 0, y + (page == Page::Quantum ? listHeight+static_cast<int>(12*scale) : cardHeight+static_cast<int>((compact?24:76)*scale)), static_cast<int>(130 * scale),
           static_cast<int>(42 * scale));
-    place(3004,0,std::min(height-top-static_cast<int>(32*scale),y+(page==Page::Quantum?listHeight:cardHeight)+static_cast<int>(125*scale)),w,static_cast<int>(30*scale));
-    ShowWindow(GetDlgItem(window,3004),visible && !(compact && page==Page::Quantum)?SW_SHOW:SW_HIDE);
     InvalidateRect(window, nullptr, TRUE);
 }
 
@@ -154,6 +164,7 @@ void AppMenu::Release()
     for (auto control : controls)
         DestroyWindow(static_cast<HWND>(control));
     controls.clear();
+    if(artBitmap)DeleteObject(static_cast<HBITMAP>(artBitmap));artBitmap=nullptr;
     for (auto object : {font, titleFont, brush})
         if (object)
             DeleteObject(static_cast<HGDIOBJ>(object));
