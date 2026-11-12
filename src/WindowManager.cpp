@@ -328,7 +328,9 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
         if(mods&GLFW_MOD_SHIFT){showWireframe=!showWireframe;glPolygonMode(GL_FRONT_AND_BACK,showWireframe?GL_LINE:GL_FILL);}
         else manager.OpenNavigation(NavigationPanel::Mode::Overview);return;
     }
-    if (key == GLFW_KEY_I) { manager.scenePanel.ToggleInformation(); manager.ResizeInterface(); return; }
+    if ((key == GLFW_KEY_F2 && (mods & GLFW_MOD_SHIFT)) || key == 1362) {
+        manager.scenePanel.ToggleInformation(); manager.ResizeInterface(); return;
+    }
     if (key == GLFW_KEY_F2) { manager.trajectories=!manager.trajectories; return; }
     if (key == GLFW_KEY_F5) { manager.SetMouseCaptured(false);manager.RefreshObjectEditor();manager.objectEditor.Toggle();return; }
     if (manager.quantumMode) {
@@ -1085,6 +1087,9 @@ void WindowManager::HandleInterfaceCommand(int id,int notification) {
     } else if(id>=2110 && id<=2112){SetMagnitudeLimit(id==2111?7.f:limitingMagnitude+(id==2110?-.2f:.2f));
     } else if(id==2107){
         KeyCallback(window,GLFW_KEY_SPACE,0,GLFW_PRESS,0);RefreshPanel();UpdateTitle();
+        // The native button takes focus on click; return it before the next
+        // viewport mouse press so GLFW does not discard that look gesture.
+        SetFocus(glfwGetWin32Window(window));
     } else if (id==2104) {
         KeyCallback(window,GLFW_KEY_G,0,GLFW_PRESS,0);
         SetFocus(glfwGetWin32Window(window));
@@ -2103,7 +2108,7 @@ void WindowManager::MakeNewWindow() {
     AppendMenuW(navigationMenu,MF_STRING,GLFW_KEY_F8,L"Cycle vehicle view (F8)");
     AppendMenuW(navigationMenu,MF_STRING,GLFW_KEY_B,L"Boost (B)");
     AppendMenuW(viewMenu,MF_STRING,GLFW_KEY_F2,L"Orbits (F2)");
-    AppendMenuW(viewMenu,MF_STRING,GLFW_KEY_I,L"Object information (I)");
+    AppendMenuW(viewMenu,MF_STRING,1362,L"Object information (Shift+F2)");
     AppendMenuW(viewMenu,MF_STRING,GLFW_KEY_F3,L"Find object (F3)");
     AppendMenuW(viewMenu,MF_STRING,1361,L"Nearby systems (Shift+F3)");
     AppendMenuW(viewMenu,MF_STRING,GLFW_KEY_F1,L"System overview (F1)");

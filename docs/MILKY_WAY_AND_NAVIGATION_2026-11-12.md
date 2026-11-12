@@ -14,12 +14,12 @@ The Milky Way is now an observation-constrained structural illustration, with a 
 | `src/InterstellarWorlds.h/.cpp` | Share the authored companion-star orbital elements between the renderer and navigation metadata. | Keep search distances and parent views consistent with the moving companions. |
 | `src/FlightUnits.h` | Shared gradual wheel stepping and labels in m/s, km/s, c, AU/s and ly/s, using double precision. | Remove inconsistent units and float truncation between the title, toast and different scene modes. |
 | `src/WindowManager.h/.cpp` | Wire the browsers, navigation actions, nearby reference selection, dormant-system frame rebasing, core/nebula travel and new key assignments. Near a planet, navigation distances use that planet's local position. During interstellar flight, use a nearby star and rebase with hysteresis. | Maintain local precision, stable selection and free flight while changing spatial reference. Distant planetary orbit evaluations remain disabled. |
-| `src/ControlsPanel.h/.cpp` | Separate F9 controls window; move shortcut text out of star, black-hole and quantum information. | Keep astronomical information readable. The information panel now uses I because the newer request reserves F3 for the finder. |
+| `src/ControlsPanel.h/.cpp` | Separate F9 controls window; move shortcut text out of star, black-hole and quantum information. | Keep astronomical information readable. The information panel uses Shift+F2; F3 is reserved for the finder. |
 | `src/StarSystem.h/.cpp`, `src/SolarSystem.cpp` | Add core-only system metadata and camera framing; expose the existing small-body orbital elements for explicit queries. | Reuse local coordinates and navigation without attaching random planets or stellar surface shaders to a black hole. |
 | `src/ScenePanel.h/.cpp` | Compact magnitude readout and three controls above the clock. | Keep the active limiting magnitude visible without adding keybind text to object information. |
 | `Render-Engine.vcxproj`, `Render-Engine.DX12.vcxproj` | Register shared files and copy new PNG assets beside both executables. | Keep OpenGL and DX12 behavior and asset lookup consistent, including launches outside the repository directory. |
 | `tests/SimulationChecks.cpp`, `tests/RunSimulationChecks.cmd` | Coordinate round trips, nearest-tree versus exhaustive search, local precision at huge anchors, findable unvisited planets/small bodies, parent/Back relationships, Jupiter's four modeled moons, radius validation and flight-unit checks. | Test behavior rather than just successful compilation. |
-| `src/RenderChecks.cpp` | Native finder/nearby/satellite screenshots; ensure selection does not move the camera; new core, cloud, eclipse, nebula and magnitude captures. Update former F3 information checks to I. | Exercise the actual new controls and rendered output, including the revised exposure policy. |
+| `src/RenderChecks.cpp` | Native finder/nearby/satellite screenshots; ensure selection does not move the camera; new core, cloud, eclipse, nebula and magnitude captures. Check Shift+F2 information separately from F2 trajectories. | Exercise the actual new controls and rendered output, including the revised exposure policy. |
 
 ## Controls
 
@@ -29,7 +29,7 @@ The Milky Way is now an observation-constrained structural illustration, with a 
 | Shift+F1 | Legacy wireframe toggle. |
 | F3 | Object finder by name. |
 | Shift+F3 | Nearby systems within a supplied radius in light-years. |
-| I | Object information. |
+| Shift+F2 | Object information. |
 | F4 / Shift+F4 | Existing all-system / current-system side browsers remain available. |
 | F9 | Separate controls panel. |
 | G / Go to | Travel to the selected object. |
@@ -37,6 +37,8 @@ The Milky Way is now an observation-constrained structural illustration, with a 
 | Ctrl+Wheel / Ctrl+[ / Ctrl+] | Change stellar magnitude limit by 0.20. |
 
 The overview shows the **modeled parent hierarchy**, not every body exerting a nonzero gravitational force. Satellite barycentres are mass-weighted display/navigation references; they do not turn the existing Keplerian solver into a mutually interacting N-body solver. Thumbnails are lightweight illustrative icons. The redundant Select button was removed; a single item click selects without moving the camera.
+
+Input follow-up: `WindowManager.cpp` binds Object Information to **Shift+F2** and gives the View menu its own command so it does not toggle F2 orbit paths. `ControlsPanel.cpp` and README show the same shortcut. Clicking the sidebar Play/Pause button returns focus to the viewport, preventing the next mouse-look gesture from being lost during a focus transition. `RenderChecks.cpp` exercises both shortcuts, the menu action, and mouse look after actual native Play and Pause button clicks.
 
 The name finder matches case-insensitively and ignores punctuation. Full generated planet/moon names expand their parent system on demand. A generic query such as “moon” lists authored matches; it does not instantiate every unvisited system to build a global wildcard index. Small bodies use stable names `Solar asteroid 0001` through `Solar asteroid 4096`; these are representative seeded bodies, not identifications of real catalogued asteroids. Saturn's visual ring particles are not separate catalogue objects.
 

@@ -110,6 +110,36 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly)
     glfwSetWindowSize(window,uiWidth,uiHeight);
     mainMenu.Show(AppMenu::Page::Home);
     StartSolarSystem();
+    const HWND inputWindow=glfwGetWin32Window(window);
+    const HWND information=GetDlgItem(inputWindow,2102);
+    const auto informationShown=[&](){return (GetWindowLongPtrW(information,GWL_STYLE)&WS_VISIBLE)!=0;};
+    const bool initialInformation=informationShown(),initialTrajectories=trajectories;
+    KeyCallback(window,GLFW_KEY_F2,0,GLFW_PRESS,GLFW_MOD_SHIFT);
+    if(informationShown()==initialInformation || trajectories!=initialTrajectories)fail();
+    KeyCallback(window,GLFW_KEY_F2,0,GLFW_PRESS,GLFW_MOD_SHIFT);
+    KeyCallback(window,GLFW_KEY_F2,0,GLFW_PRESS,0);
+    if(informationShown()!=initialInformation || trajectories==initialTrajectories)fail();
+    KeyCallback(window,GLFW_KEY_F2,0,GLFW_PRESS,0);
+    HandleInterfaceCommand(1362,0);
+    if(informationShown()==initialInformation || trajectories!=initialTrajectories)fail();
+    HandleInterfaceCommand(1362,0);
+    const bool initialPlayback=simulationPlaying;
+    const auto inputFront=cameraFront,inputUp=cameraUp;
+    const HWND playButton=GetDlgItem(inputWindow,2107);
+    for(int click=0;click<2;++click){
+        SetFocus(playButton);SendMessageW(playButton,BM_CLICK,0,0);
+        if(GetFocus()!=inputWindow || !isFocused || simulationPlaying!=(click==0?!initialPlayback:initialPlayback)){
+            std::cerr<<"Play/pause click did not restore viewport input\n";fail();
+        }
+        SetMouseCaptured(false);
+        const auto beforeLook=cameraFront;
+        MouseButtonCallback(window,GLFW_MOUSE_BUTTON_RIGHT,GLFW_PRESS,0);
+        MouseCallback(window,100,100);MouseCallback(window,120,100);
+        if(cameraFront==beforeLook){std::cerr<<"Mouse look stopped after Play/pause\n";fail();}
+        SetMouseCaptured(false);
+    }
+    cameraFront=inputFront;cameraUp=inputUp;
+    std::cout<<"Input checks: Shift+F2 information, F2 orbits, menu action and Play/pause mouse look\n";
     const auto finderCamera=starSystem.camera;const double finderTime=simulationTime;
     navigationPanel.Toggle(NavigationPanel::Mode::Finder,false);navigationPanel.SetQuery("Earth");navigationPanel.Refresh();
     captureUi("ui-object-finder",navigationPanel.NativeHandle());
@@ -260,10 +290,10 @@ Connections: {
     if (!scenePanel.IsCurrentSystemBrowser() || pendingSystemTarget != activeSystemTarget)
         fail();
     KeyCallback(window, GLFW_KEY_F4, 0, GLFW_PRESS, GLFW_MOD_SHIFT);
-    KeyCallback(window, GLFW_KEY_I, 0, GLFW_PRESS, 0);
+    KeyCallback(window, GLFW_KEY_F2, 0, GLFW_PRESS, GLFW_MOD_SHIFT);
     if (scenePanel.Width() != 0)
         fail();
-    KeyCallback(window, GLFW_KEY_I, 0, GLFW_PRESS, 0);
+    KeyCallback(window, GLFW_KEY_F2, 0, GLFW_PRESS, GLFW_MOD_SHIFT);
     KeyCallback(window, GLFW_KEY_F4, 0, GLFW_PRESS, GLFW_MOD_SHIFT);
     capture("solar-overview");
 #ifdef _WIN32
