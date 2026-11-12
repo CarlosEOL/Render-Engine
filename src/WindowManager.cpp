@@ -7,6 +7,8 @@
 #include "glad/glad.h"
 #include "UiTheme.h"
 #include "FlightUnits.h"
+#include "GalacticCore.h"
+#include "CelestialPhenomena.h"
 #include "WindowManager.h"
 #include "InterstellarWorlds.h"
 #include "ObjectLoader.h"
@@ -258,6 +260,7 @@ void WindowManager::ScrollCallback(GLFWwindow* window, double, double yOffset) {
     auto& manager = *static_cast<WindowManager*>(glfwGetWindowUserPointer(window));
     if (yOffset == 0.0 || manager.mainMenu.Visible())
         return;
+    if(glfwGetKey(window,GLFW_KEY_LEFT_CONTROL)==GLFW_PRESS || glfwGetKey(window,GLFW_KEY_RIGHT_CONTROL)==GLFW_PRESS){manager.SetMagnitudeLimit(manager.limitingMagnitude+static_cast<float>(yOffset)*.2f);return;}
     const double factor = std::pow(1.15,glm::clamp(yOffset,-8.0,8.0));
     if (manager.inStarSystem) {
         manager.starSystem.speedAu = FlightUnits::Step(manager.starSystem.speedAu,yOffset);
@@ -283,6 +286,9 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
         return;
     }
 #endif
+    if(key==1370 || key==1371 || key==1372){manager.SetMagnitudeLimit(key==1371?7.f:manager.limitingMagnitude+(key==1370?-.2f:.2f));return;}
+    if((mods&GLFW_MOD_CONTROL) && (key==GLFW_KEY_LEFT_BRACKET || key==GLFW_KEY_RIGHT_BRACKET)){manager.SetMagnitudeLimit(manager.limitingMagnitude+(key==GLFW_KEY_LEFT_BRACKET?-.2f:.2f));return;}
+    if(key==1326 || key==1327){manager.starSystem.SetStellarCorona(key==1326);manager.blackHole.SetStellarCorona(key==1326);return;}
     if(key==1202 || key==1203){manager.optics.SetAutoExposure(key==1202);manager.UpdateTitle();return;}
     if(key==1204 || key==1205){manager.optics.SetBlackHoleVisibility(key==1204);return;}
     if(key==1223 || key==1224){manager.optics.SetReferenceGlare(key==1223);return;}
@@ -315,7 +321,14 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
     if(key>=1340 && key<=1342){manager.blackHole.SetRayBudget(key==1340?96:key==1341?160:256);manager.RefreshPanel();return;}
     if(key>=1220 && key<=1222){manager.lensFlareStrength=key==1220?0:key==1221?.45f:1;return;}
     if (key == GLFW_KEY_F9) { manager.SetMouseCaptured(false);manager.controlsPanel.Toggle();return; }
-    if (key == GLFW_KEY_F3) { manager.scenePanel.ToggleInformation(); manager.ResizeInterface(); return; }
+    if(key==GLFW_KEY_F3 || key==1360 || key==1361){
+        manager.OpenNavigation((mods&GLFW_MOD_SHIFT) || key==1361?NavigationPanel::Mode::Nearby:NavigationPanel::Mode::Finder);return;
+    }
+    if(key==GLFW_KEY_F1){
+        if(mods&GLFW_MOD_SHIFT){showWireframe=!showWireframe;glPolygonMode(GL_FRONT_AND_BACK,showWireframe?GL_LINE:GL_FILL);}
+        else manager.OpenNavigation(NavigationPanel::Mode::Overview);return;
+    }
+    if (key == GLFW_KEY_I) { manager.scenePanel.ToggleInformation(); manager.ResizeInterface(); return; }
     if (key == GLFW_KEY_F2) { manager.trajectories=!manager.trajectories; return; }
     if (key == GLFW_KEY_F5) { manager.SetMouseCaptured(false);manager.RefreshObjectEditor();manager.objectEditor.Toggle();return; }
     if (manager.quantumMode) {
@@ -359,6 +372,7 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
         manager.ResizeInterface(); return;
     }
     if (key==706) { manager.PrepareCurrentBrowser(); manager.scenePanel.ToggleBrowser(true); manager.ResizeInterface(); return; }
+    if(key==GLFW_KEY_G && manager.navigationSelectionValid && (manager.navigationSelection.kind==NavigationEntry::Kind::Nebula || manager.navigationSelection.kind==NavigationEntry::Kind::Galaxy || manager.navigationSelection.kind==NavigationEntry::Kind::Asteroid || manager.navigationSelection.kind==NavigationEntry::Kind::Barycentre || manager.navigationSelection.kind==NavigationEntry::Kind::Craft)){manager.GoToNavigation(manager.navigationSelection);return;}
     if (key==GLFW_KEY_G) {
         if (manager.pendingSystemTarget!=0) { manager.EnterSelectedSystem(false); return; }
         if (manager.inStarSystem) {
@@ -711,6 +725,7 @@ void WindowManager::ResizeInterface() {
 void WindowManager::OpenMainMenu() {
     objectEditor.Hide();
     controlsPanel.Hide();
+    navigationPanel.Hide();
     interiorVehicle=0;
     simulationPlaying=false;
     SetMouseCaptured(false);
@@ -760,6 +775,7 @@ void WindowManager::StartSolarSystem() {
         if (id==9) continue;
         catalogue.push_back({id,blackHole.ResolveTarget(id,simulationTime).name});
     }
+    for(int core=0;core<GalacticCores::count;++core){const auto item=GalacticCores::Get(GalacticCores::firstId+core);catalogue.push_back({item.id,item.name});}
     scenePanel.SetCatalogue(std::move(catalogue));
     std::vector<std::string> bodies={"Sun"};
     for (const auto& body:starSystem.Planets()) bodies.push_back(body.name);
@@ -787,6 +803,7 @@ void WindowManager::StartGargantua() {
 #endif
     std::vector<std::pair<int,std::string>> catalogue={{-2,"Sun / Solar System"},{0,"Gargantua / Black hole"}};
     for (int id=4;id<10+Universe::StarCount;++id) if (id!=9) catalogue.push_back({id,blackHole.ResolveTarget(id,simulationTime).name});
+    for(int core=0;core<GalacticCores::count;++core){const auto item=GalacticCores::Get(GalacticCores::firstId+core);catalogue.push_back({item.id,item.name});}
     scenePanel.SetCatalogue(std::move(catalogue));
     SelectCatalogue(0);
     scenePanel.SetCurrentSystemName("Gargantua system");scenePanel.ShowBrowser(true);
@@ -828,12 +845,14 @@ void WindowManager::SelectCatalogue(int id) {
         cameraPos={0,0,quantum.ViewDistance()};cameraFront={0,0,-1};cameraUp={0,1,0};
         RefreshPanel(); return;
     }
+    navigationSelectionValid=false;
     pendingSystemTarget=id;
     if (id==0) {
         scenePanel.SetPlanets({"Gargantua","Miller's planet","Mann's planet","Edmunds' planet","Orbiting star 1","Orbiting star 2","Orbiting star 3","Orbiting star 4","Orbiting star 5","Spacecraft"});
         selectedTarget=0;
     } else {
-        if (id==-2) previewSystem.LoadSolarSystem();
+        if(GalacticCores::IsCore(id))previewSystem.LoadCore(id);
+        else if (id==-2) previewSystem.LoadSolarSystem();
         else previewSystem.Generate(id,blackHole.ResolveTarget(id,simulationTime).name);
         std::vector<std::string> names={previewSystem.Host().name};
         for (const auto& planet:previewSystem.Planets()) names.push_back(planet.name);
@@ -848,7 +867,8 @@ void WindowManager::EnterSelectedSystem(bool overview) {
     interiorVehicle=0;
     if (!inStarSystem || activeSystemTarget!=pendingSystemTarget) {
         blackHole.InvalidateSky();
-        if (pendingSystemTarget==-2) starSystem.LoadSolarSystem();
+        if(GalacticCores::IsCore(pendingSystemTarget))starSystem.LoadCore(pendingSystemTarget);
+        else if (pendingSystemTarget==-2) starSystem.LoadSolarSystem();
         else starSystem.Generate(pendingSystemTarget,previewSystem.Host().name);
         starSystem.SelectPlanet(previewSystem.Selected());
         activeSystemTarget=pendingSystemTarget;
@@ -861,30 +881,108 @@ void WindowManager::EnterSelectedSystem(bool overview) {
 }
 
 void WindowManager::UpdateNearbySystem(){
-    if(!blackHoleReady || quantumMode || interiorVehicle || (!inStarSystem && !showBlackHole))return;
+    if(!blackHoleReady || quantumMode || interiorVehicle || observerGravity || horizonReached || (!inStarSystem && !showBlackHole))return;
     if(inStarSystem && (starSystem.IsLanded() || starSystem.IsFollowing()))return;
-    const auto worldCamera=inStarSystem?systemOriginAu+starSystem.camera:cameraPos;
-    const auto nearby=blackHole.NearbyStars(worldCamera);
-    int nearest=-1;double distance=3;
-    for(int id:nearby){
-        const double d=glm::length(blackHole.ResolveTarget(id,simulationTime).position-worldCamera);
-        if(d<distance){nearest=id;distance=d;}
-    }
-    if(nearest<0 || (inStarSystem && nearest==activeSystemTarget))return;
-    const auto direction=cameraFront,up=cameraUp;
-    const double flightSpeed=inStarSystem?starSystem.speedAu:cameraSpeed;
+    const auto oldAnchor=inStarSystem?systemOriginAu:glm::dvec3(0),oldLocal=inStarSystem?starSystem.camera:cameraPos;
+    const auto worldCamera=oldAnchor+oldLocal;
+    const int nearest=blackHole.NearestStar(worldCamera);
+    // Sun and the authored fictional Gargantua preset have separate local
+    // scenes at the same legacy origin. Enter the Sun explicitly from there.
+    if(!inStarSystem && nearest==-2)return;
+    const auto position=nearest==-2?glm::dvec3(0):blackHole.Catalogue().Positions()[nearest-10];
+    const double distance=glm::length((oldAnchor-position)+oldLocal);
+    const bool arrival=distance<3;
+    const bool rebase=inStarSystem && !starSystem.InDetailRange() && distance<glm::length(starSystem.camera)*.9;
+    if((!arrival && !rebase) || (inStarSystem && nearest==activeSystemTarget))return;
+    const auto direction=cameraFront,up=cameraUp;const double flightSpeed=inStarSystem?starSystem.speedAu:cameraSpeed;
+    const int previousSelection=pendingSystemTarget;
     SelectCatalogue(nearest);EnterSelectedSystem(false);
-    starSystem.camera=worldCamera-systemOriginAu;starSystem.speedAu=flightSpeed;
-    starSystem.Update(simulationTime,cameraFront,cameraUp);
-    cameraFront=direction;cameraUp=up;
+    starSystem.camera=(oldAnchor-systemOriginAu)+oldLocal;starSystem.speedAu=flightSpeed;
+    starSystem.Update(simulationTime,cameraFront,cameraUp);cameraFront=direction;cameraUp=up;
+    if(rebase && previousSelection!=nearest)SelectCatalogue(previousSelection);
     sceneCacheValid=false;SyncCameraAngles();
+}
+void WindowManager::UpdateNavigationAnchor(){
+    if(quantumMode || !blackHoleReady)return;
+    if(inStarSystem && starSystem.InDetailRange()){
+        navigationAnchorAu=systemOriginAu;navigationLocalAu=glm::dvec3(0);navigationAnchorName=starSystem.Host().name;
+        int nearest=-1;double best=1e100;
+        for(int i=0;i<static_cast<int>(starSystem.Planets().size());++i){
+            const auto& body=starSystem.Planets()[i];const auto local=starSystem.Position(i,simulationTime);
+            const double radius=body.radiusEarth*Astronomy::earthRadiusAu,distance=glm::length(starSystem.camera-local);
+            const double parentMass=body.parent<0?starSystem.Host().massSolar*332946.0487:starSystem.Planets()[body.parent].massEarth;
+            const double hill=body.orbit.semiMajorAxis*std::cbrt(body.massEarth/(3*parentMass));
+            if(distance<std::max(radius*12,hill*.5) && distance/radius<best){nearest=i;best=distance/radius;}
+        }
+        if(nearest>=0){navigationLocalAu=starSystem.Position(nearest,simulationTime);navigationAnchorName=starSystem.Planets()[nearest].name;}
+    }else{
+        const auto world=inStarSystem?systemOriginAu+starSystem.camera:cameraPos;const int id=blackHole.NearestStar(world);
+        navigationAnchorAu=id==-2?glm::dvec3(0):blackHole.Catalogue().Positions()[id-10];navigationLocalAu=glm::dvec3(0);navigationAnchorName=id==-2?"Sun":Universe::StarName(id-10);
+    }
+}
+NavigationEntry WindowManager::CurrentNavigationObject(){
+    if(navigationSelectionValid)return navigationSelection;
+    const int system=pendingSystemTarget;
+    const int body=system==0?selectedTarget:inStarSystem && activeSystemTarget==system?starSystem.Selected():previewSystem.Selected();
+    return navigationCatalog.Object(system,body,simulationTime);
+}
+void WindowManager::OpenNavigation(NavigationPanel::Mode mode){
+    if(quantumMode){ShowStatusToast("Open Planetorium to browse celestial objects");return;}
+    SetMouseCaptured(false);
+    if(mode==NavigationPanel::Mode::Overview){const auto selected=CurrentNavigationObject();navigationScope=selected.kind==NavigationEntry::Kind::Planet || selected.kind==NavigationEntry::Kind::Galaxy?selected:navigationCatalog.System(pendingSystemTarget);}
+    navigationPanel.Toggle(mode);
+}
+void WindowManager::ActivateNavigation(NavigationPanel::Action action,const NavigationEntry& entry){
+    using Kind=NavigationEntry::Kind;
+    if(action==NavigationPanel::Action::Back){navigationScope=navigationCatalog.Parent(navigationScope,simulationTime);return;}
+    if(action==NavigationPanel::Action::Current){navigationScope=CurrentNavigationObject();if(navigationPanel.CurrentMode()==NavigationPanel::Mode::Finder)navigationPanel.SetQuery(navigationScope.name);return;}
+    if(action==NavigationPanel::Action::Open){navigationScope=entry;return;}
+    if(entry.kind!=Kind::Nebula && entry.kind!=Kind::Galaxy && entry.kind!=Kind::Universe && entry.kind!=Kind::Group){
+        SelectCatalogue(entry.system);
+        if(entry.kind==Kind::Planet || entry.kind==Kind::Barycentre){
+            if(entry.system==0)selectedTarget=entry.body;
+            else{previewSystem.SelectPlanet(entry.body);if(inStarSystem && activeSystemTarget==entry.system)starSystem.SelectPlanet(entry.body);}
+        }else if(entry.kind==Kind::Craft)selectedTarget=9;
+    }
+    navigationSelection=entry;navigationSelectionValid=true;sceneCacheValid=false;RefreshPanel();UpdateTitle();
+    if(action==NavigationPanel::Action::Go){GoToNavigation(entry);navigationPanel.Hide();}
+}
+void WindowManager::GoToNavigation(const NavigationEntry& entry){
+    using Kind=NavigationEntry::Kind;
+    if(entry.kind==Kind::Universe || entry.kind==Kind::Group){navigationScope=entry;return;}
+    if(entry.kind==Kind::Nebula){
+        const auto& nebula=CelestialPhenomena::Get(entry.system);const int nearest=blackHole.NearestStar(nebula.positionAu);
+        SelectCatalogue(nearest);EnterSelectedSystem(false);
+        const double distance=nebula.radiusLy*Astronomy::auPerLightYear*3;
+        const auto toward=glm::normalize(nebula.positionAu);starSystem.camera=(nebula.positionAu-systemOriginAu)-toward*distance;
+        cameraFront=glm::vec3(toward);cameraUp={0,1,0};fieldOfView=55;starSystem.speedAu=distance*.08;blackHole.InvalidateSky();
+    }
+    else if(entry.kind==Kind::Galaxy){SelectCatalogue(GalacticCores::firstId+entry.system);EnterSelectedSystem(true);const auto galaxy=Universe::GalaxyAt(entry.system);starSystem.camera=galaxy.rotation*glm::dvec3(0,galaxy.axesAu.x*1.7,galaxy.axesAu.x*1.7);cameraFront=glm::normalize(glm::vec3(-starSystem.camera));cameraUp=glm::vec3(galaxy.rotation[2]);starSystem.speedAu=galaxy.axesAu.x*.2;}
+    else if(entry.kind==Kind::Craft){
+        inStarSystem=false;showBlackHole=true;pendingSystemTarget=0;interiorVehicle=0;landed=observerGravity=followSelected=followSpacecraft=followPlanet=false;
+        const auto pose=blackHole.CockpitPose(entry.body-8,simulationTime);cameraPos=pose.position+pose.rotation*glm::dvec3(0,30,100)/Astronomy::metresPerAu;cameraFront=glm::normalize(glm::vec3(pose.position-cameraPos));cameraUp=glm::vec3(pose.rotation[1]);cameraSpeed=2/Astronomy::metresPerAu;selectedTarget=9;
+    }else{
+        if(entry.system==0){
+            inStarSystem=false;showBlackHole=true;interiorVehicle=0;landed=observerGravity=followSelected=followSpacecraft=followPlanet=false;
+            const auto target=blackHole.ResolveTarget(entry.body<0?0:entry.body,simulationTime);
+            cameraPos=target.position+glm::dvec3(0,0,std::max(static_cast<double>(target.radius)*6,100.0/Astronomy::metresPerAu));cameraFront={0,0,-1};cameraUp={0,1,0};cameraSpeed=target.radius*.25;sceneCacheValid=false;SyncCameraAngles();RefreshPanel();return;
+        }
+        EnterSelectedSystem(false);
+        if(entry.kind==Kind::Asteroid || entry.kind==Kind::Barycentre){
+            const double distance=entry.kind==Kind::Asteroid?10000/Astronomy::metresPerAu:std::max(.00001,entry.diameterKm*3000/Astronomy::metresPerAu);
+            starSystem.camera=entry.localAu+glm::dvec3(0,0,distance);cameraFront={0,0,-1};cameraUp={0,1,0};trajectories=true;
+        }
+    }
+    navigationSelection=entry;navigationSelectionValid=true;
+    sceneCacheValid=false;SyncCameraAngles();RefreshPanel();UpdateTitle();
 }
 
 void WindowManager::RefreshObjectEditor(){
     if(!objectEditor.NativeHandle())return;
     std::string name="No object selected";
-    const bool editable=blackHoleReady && !quantumMode && pendingSystemTarget==0 && selectedTarget==0;
-    if(quantumMode)name="Quantum state";
+    const bool editable=blackHoleReady && !quantumMode && pendingSystemTarget==0 && selectedTarget==0 && (!navigationSelectionValid || navigationSelection.system==0 && navigationSelection.kind==NavigationEntry::Kind::Core);
+    if(navigationSelectionValid)name=navigationSelection.name;
+    else if(quantumMode)name="Quantum state";
     else if(pendingSystemTarget!=0){
         const auto& system=inStarSystem && activeSystemTarget==pendingSystemTarget?starSystem:previewSystem;
         const int body=system.Selected();
@@ -895,6 +993,7 @@ void WindowManager::RefreshObjectEditor(){
 
 void WindowManager::RefreshPanel() {
     RefreshObjectEditor();
+    scenePanel.SetMagnitude(limitingMagnitude);
     if (mainMenu.Visible()) return;
     std::ostringstream playback;
     if(quantumMode)playback<<"STATE t = "<<std::fixed<<std::setprecision(3)<<quantum.Time()<<"\r\n"<<(simulationPlaying?"PLAYING":"PAUSED")<<"  |  "<<quantumRates[quantumRateIndex]<<"x";
@@ -905,10 +1004,14 @@ void WindowManager::RefreshPanel() {
         playback<<"\r\n"<<(simulationPlaying?"PLAYING":"PAUSED")<<"  |  "<<timeRates[timeRateIndex]<<"x time";
     }
     scenePanel.SetPlayback(simulationPlaying,playback.str());
+    if(navigationSelectionValid && navigationSelection.kind==NavigationEntry::Kind::Nebula){scenePanel.SetInformation(CelestialPhenomena::Information(navigationSelection.system));return;}
+    if(navigationSelectionValid && (navigationSelection.kind==NavigationEntry::Kind::Galaxy || navigationSelection.kind==NavigationEntry::Kind::Asteroid || navigationSelection.kind==NavigationEntry::Kind::Barycentre)){scenePanel.SetInformation(navigationSelection.name+"\n"+navigationSelection.type+"\nParent: "+navigationSelection.parent);return;}
     if (quantumMode) scenePanel.SetInformation(quantum.Information());
     else if (pendingSystemTarget!=0) {
         const auto& system=inStarSystem && activeSystemTarget==pendingSystemTarget?starSystem:previewSystem;
         auto info=system.Information(simulationTime);
+        if(!navigationAnchorName.empty())info+="\nNavigation reference: "+navigationAnchorName+"\n";
+        if(navigationSelectionValid){std::ostringstream distance;distance<<std::setprecision(8)<<navigationSelection.Distance(navigationAnchorAu,navigationLocalAu)/Astronomy::auPerLightYear;info+="Selected distance from reference: "+distance.str()+" ly\n";}
         if (system.IsSolarSystem()) info+="\n1:1 physical radii and distances\nJ2000 frozen Keplerian elements\n4096 representative belt/KBO markers\nPlanet surfaces are procedural illustrations.\n";
         scenePanel.SetInformation(info);
     } else {
@@ -979,6 +1082,7 @@ void WindowManager::HandleInterfaceCommand(int id,int notification) {
             RefreshPanel();
         }
         if (notification==LBN_DBLCLK) HandleInterfaceCommand(2104,0);
+    } else if(id>=2110 && id<=2112){SetMagnitudeLimit(id==2111?7.f:limitingMagnitude+(id==2110?-.2f:.2f));
     } else if(id==2107){
         KeyCallback(window,GLFW_KEY_SPACE,0,GLFW_PRESS,0);RefreshPanel();UpdateTitle();
     } else if (id==2104) {
@@ -1020,6 +1124,7 @@ void WindowManager::UpdateTitle() {
           << ':' << std::setw(2) << worldSeconds / 60 % 60 << ':' << std::setw(2) << worldSeconds % 60
           << std::setfill(' ') << " | " << timeRates[timeRateIndex] << "x time"
           << " | Speed " << _UTILITY_::SpeedLabel(inStarSystem?starSystem.speedAu:cameraSpeed,inStarSystem || showBlackHole)
+          << " | Mag limit "<<std::fixed<<std::setprecision(2)<<limitingMagnitude
           << (showBlackHole ? std::string(" | Craft ") + blackHole.SpacecraftStatus() : "")
           << (showBlackHole ? " | Light age " + std::to_string(
               blackHole.SpacecraftLightAge(cameraPos, simulationTime)) + " s" : "")
@@ -1091,7 +1196,7 @@ void WindowManager::MouseButtonCallback(GLFWwindow* window, int button, int acti
 }
 
 void WindowManager::SelectAtScreen(double x,double y) {
-    auto& manager=*this;
+    auto& manager=*this;navigationSelectionValid=false;
         int width, height;
         glfwGetWindowSize(window, &width, &height);
         width-=manager.scenePanel.Width();
@@ -1113,7 +1218,7 @@ void WindowManager::SelectAtScreen(double x,double y) {
             }else{
                 const int star=manager.blackHole.PickCatalogueStar(manager.systemOriginAu+manager.starSystem.camera,
                     direction,tolerance,manager.activeSystemTarget);
-                if(star>=10)manager.SelectCatalogue(star);
+                if(star>=10 || star==-2)manager.SelectCatalogue(star);
             }
         }
         else {
@@ -1317,16 +1422,7 @@ void WindowManager::ProcessCamera(GLFWwindow* window, const float& deltaTime) {
             cameraPos = glm::normalize(cameraPos + glm::dvec3(0,0,1e-12)) * static_cast<double>(minimumRadius);
     }
 
-    static bool togglePressed = false;
-    if (glfwGetKey(window, GLFW_KEY_F1) == GLFW_PRESS && !togglePressed) {
-        showWireframe = !showWireframe;
-        togglePressed = true;
-        glPolygonMode(GL_FRONT_AND_BACK, showWireframe ? GL_LINE : GL_FILL);
-        shaderProgram = showWireframe ? flatShader : phongShader;
-    }
-    if (glfwGetKey(window, GLFW_KEY_F1) == GLFW_RELEASE) {
-        togglePressed = false;
-    }
+
 }
 
 unsigned int WindowManager::shaderProgram = 0, WindowManager::flatShader = 0, WindowManager::phongShader = 0;
@@ -1706,6 +1802,7 @@ void WindowManager::Update(float& dT) {
     }
     ProcessCamera(window, dT);
     UpdateNearbySystem();
+    UpdateNavigationAnchor();
     if(!falling){
         if(inStarSystem)cameraClockRate=starSystem.ObserverClockRate(simulationTime);
         else if(showBlackHole){
@@ -1750,16 +1847,16 @@ void WindowManager::Update(float& dT) {
     const auto preciseCamera=inStarSystem?starSystem.camera:cameraPos;
     optics.SetStellarHint(glm::vec3(-1,-1,0));
     optics.SetBlackHoleHint(glm::vec3(-1,-1,0));
-    if(showBlackHole && !inStarSystem){
-        const auto offset=-cameraPos;const double along=glm::dot(offset,glm::dvec3(cameraFront));
+    if((showBlackHole && !inStarSystem) || (inStarSystem && starSystem.IsCore())){
+        const auto offset=inStarSystem?-starSystem.camera:-cameraPos;const double along=glm::dot(offset,glm::dvec3(cameraFront));
         if(along>0){
             const auto right=glm::normalize(glm::cross(cameraFront,cameraUp)),up=glm::normalize(glm::cross(right,cameraFront));
             const double halfHeight=along*std::tan(glm::radians(static_cast<double>(fieldOfView))*.5);
             optics.SetBlackHoleHint(glm::vec3(.5+.5*glm::dot(offset,glm::dvec3(right))/(halfHeight*aspectRatio),
-                .5+.5*glm::dot(offset,glm::dvec3(up))/halfHeight,BlackHole::HorizonRadius()*4.3/(halfHeight*2)));
+                .5+.5*glm::dot(offset,glm::dvec3(up))/halfHeight,(inStarSystem?GalacticCores::Get(activeSystemTarget).RadiusAu()*(activeSystemTarget==GalacticCores::tonId?12:4.3):BlackHole::HorizonRadius()*4.3)/(halfHeight*2)));
         }
     }
-    if(inStarSystem) {
+    if(inStarSystem && !starSystem.IsCore()) {
         const auto offset=-starSystem.camera;
         const double along=glm::dot(offset,glm::dvec3(cameraFront));
         if(along>0) {
@@ -1789,7 +1886,7 @@ void WindowManager::Update(float& dT) {
     }
     lastSceneSignature=signature;
 
-    if(showBlackHole && !inStarSystem)
+    if((showBlackHole && !inStarSystem) || (inStarSystem && starSystem.IsCore()))
         glViewport(0,0,glm::max(1,static_cast<int>(sceneWidth*blackHoleResolution)),glm::max(1,static_cast<int>(fullHeight*blackHoleResolution)));
 #ifdef RENDER_ENGINE_DX12
     if(NativeDX12::ReconstructionNeedsFrame())glViewport(0,0,reconstructionSize.x,reconstructionSize.y);
@@ -1800,13 +1897,14 @@ void WindowManager::Update(float& dT) {
 
     if (inStarSystem && starSystemReady) {
         glPolygonMode(GL_FRONT_AND_BACK,GL_FILL);
-        if(blackHoleReady){
+        if(blackHoleReady && !starSystem.IsCore()){
             const auto skyProjection=glm::perspective(glm::radians(fieldOfView),aspectRatio,.00001f,20000.f);
             const auto skyView=glm::lookAt(glm::vec3(0),cameraFront,cameraUp);
             blackHole.RenderBackground(skyProjection*skyView,systemOriginAu+starSystem.camera);
             if(photonView)blackHole.RenderBackground(skyProjection*skyView,systemOriginAu+starSystem.camera,true,simulationTime,systemOriginAu+starSystem.camera);
         }
-        starSystem.Render(fieldOfView,aspectRatio,cameraFront,cameraUp,simulationTime,trajectories,photonView,pendingSystemTarget==activeSystemTarget);
+        if(starSystem.IsCore())blackHole.RenderCore(glm::perspective(glm::radians(fieldOfView),aspectRatio,.00001f,20000.f)*glm::lookAt(glm::vec3(0),cameraFront,cameraUp),starSystem.camera,activeSystemTarget,simulationTime);
+        else starSystem.Render(fieldOfView,aspectRatio,cameraFront,cameraUp,simulationTime,trajectories,photonView,pendingSystemTarget==activeSystemTarget);
         if(pendingSystemTarget>=10 && pendingSystemTarget!=activeSystemTarget)
             blackHole.RenderCatalogueSelection(projection*glm::lookAt(glm::vec3(0),cameraFront,cameraUp),
                 systemOriginAu+starSystem.camera,pendingSystemTarget,simulationTime);
@@ -1925,6 +2023,7 @@ void WindowManager::MakeNewWindow() {
     flatShader = compileShaderProgram(flatVertexSrc, flatFragmentSrc);
     phongShader = compileShaderProgram(phongVertextSrc, phongFragmentSrc);
     blackHoleReady = blackHole.Initialize();
+    if(blackHoleReady)navigationCatalog.Initialize(blackHole.Catalogue());
     if(!vehicleInterior.Initialize())blackHoleReady=false;
     opticsReady=optics.Initialize();
     InitializeOverlay();
@@ -2004,11 +2103,19 @@ void WindowManager::MakeNewWindow() {
     AppendMenuW(navigationMenu,MF_STRING,GLFW_KEY_F8,L"Cycle vehicle view (F8)");
     AppendMenuW(navigationMenu,MF_STRING,GLFW_KEY_B,L"Boost (B)");
     AppendMenuW(viewMenu,MF_STRING,GLFW_KEY_F2,L"Orbits (F2)");
-    AppendMenuW(viewMenu,MF_STRING,GLFW_KEY_F3,L"Information (F3)");
+    AppendMenuW(viewMenu,MF_STRING,GLFW_KEY_I,L"Object information (I)");
+    AppendMenuW(viewMenu,MF_STRING,GLFW_KEY_F3,L"Find object (F3)");
+    AppendMenuW(viewMenu,MF_STRING,1361,L"Nearby systems (Shift+F3)");
+    AppendMenuW(viewMenu,MF_STRING,GLFW_KEY_F1,L"System overview (F1)");
     AppendMenuW(viewMenu,MF_STRING,GLFW_KEY_F9,L"Controls (F9)");
     AppendMenuW(viewMenu,MF_STRING,GLFW_KEY_F4,L"Star systems (F4)");
     AppendMenuW(viewMenu,MF_STRING,706,L"Current system (Shift+F4)");
     AppendMenuW(viewMenu,MF_STRING,GLFW_KEY_F6,L"Photon view (F6)");
+    const HMENU magnitudeMenu=CreatePopupMenu();
+    AppendMenuW(magnitudeMenu,MF_STRING,1370,L"Show fewer stars (Ctrl+[)");
+    AppendMenuW(magnitudeMenu,MF_STRING,1371,L"Reset magnitude limit to 7.00");
+    AppendMenuW(magnitudeMenu,MF_STRING,1372,L"Show fainter stars (Ctrl+])");
+    AppendMenuW(viewMenu,MF_POPUP,reinterpret_cast<UINT_PTR>(magnitudeMenu),L"Star magnitude limit");
     AppendMenuW(viewMenu,MF_STRING,GLFW_KEY_F5,L"Object editor (F5)");
     const HMENU visionMenu = CreatePopupMenu();
     AppendMenuW(visionMenu, MF_STRING, 1000, L"Free camera");
@@ -2019,6 +2126,8 @@ void WindowManager::MakeNewWindow() {
     AppendMenuW(visionMenu, MF_STRING, 1005, L"Ideal 200mm telephoto");
     AppendMenuW(visionMenu, MF_STRING, 1006, L"ZEISS Distagon 35mm f/2 (Lensfun)");
     AppendMenuW(visionMenu,MF_SEPARATOR,0,nullptr);
+    AppendMenuW(visionMenu,MF_STRING,1326,L"Stellar corona sprites on (default)");
+    AppendMenuW(visionMenu,MF_STRING,1327,L"Stellar corona sprites off");
     AppendMenuW(visionMenu,MF_STRING,1220,L"Flare off");
     AppendMenuW(visionMenu,MF_STRING,1221,L"Subtle flare - default");
     AppendMenuW(visionMenu,MF_STRING,1222,L"Standard flare");
@@ -2114,12 +2223,19 @@ void WindowManager::MakeNewWindow() {
     if(!objectEditor.Create(nativeWindow,[this](double spin){
         blackHole.SetSpin(spin);sceneCacheValid=false;RefreshPanel();UpdateTitle();
     }))std::cerr<<"Object editor could not be created\n";
+    if(!navigationPanel.Create(nativeWindow,
+        [this](NavigationPanel::Mode mode,const std::string& query,double radius){
+            if(mode==NavigationPanel::Mode::Finder)return navigationCatalog.Find(query,simulationTime);
+            if(mode==NavigationPanel::Mode::Nearby){const auto anchor=inStarSystem?systemOriginAu:glm::dvec3(0);const auto local=inStarSystem?starSystem.camera:cameraPos;return navigationCatalog.Nearby(anchor,local,radius,simulationTime);}
+            navigationPanel.SetScopeName(navigationScope.name);return navigationCatalog.Children(navigationScope,simulationTime);
+        },[this](NavigationPanel::Action action,const NavigationEntry& entry){ActivateNavigation(action,entry);}))std::cerr<<"Navigation panels could not be created\n";
     if(!controlsPanel.Create(nativeWindow))std::cerr<<"Controls panel could not be created\n";
     OpenMainMenu();
 #endif
 }
 
 void WindowManager::ReleaseGraphics() {
+    navigationPanel.Release();
     controlsPanel.Release();
     objectEditor.Release();
     vehicleInterior.Release();
@@ -2152,4 +2268,9 @@ void WindowManager::ReleaseGraphics() {
 
 bool WindowManager::isClosed() {
     return glfwWindowShouldClose(window);
+}
+
+void WindowManager::SetMagnitudeLimit(float value){
+    limitingMagnitude=glm::clamp(value,-2.f,30.f);blackHole.SetMagnitudeLimit(limitingMagnitude);sceneCacheValid=false;
+    std::ostringstream message;message<<"Magnitude limit "<<std::fixed<<std::setprecision(2)<<limitingMagnitude;ShowStatusToast(message.str(),false);RefreshPanel();UpdateTitle();
 }

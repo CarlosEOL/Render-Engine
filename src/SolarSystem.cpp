@@ -8,6 +8,7 @@
 // J2000 elements are held fixed; this is a Keplerian model, not a live ephemeris.
 void StarSystem::LoadSolarSystem()
 {
+    coreId=-1;
     InvalidateCaches();
     solarSystem = true;
     planets.clear();

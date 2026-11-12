@@ -2,6 +2,7 @@
 #include "VehicleInterior.h"
 #include "ObjectEditor.h"
 #include "ControlsPanel.h"
+#include "NavigationPanel.h"
 #include "KerrSpacetime.h"
 
 #include <vector>
@@ -83,6 +84,7 @@ private:
     void ShowSpeedToast(double speed, bool starSystem);
     void ShowStatusToast(const std::string& text,bool compact=true);
     void ShowZoomToast(bool force=false);
+    void SetMagnitudeLimit(float value);
     void RenderSpeedToast();
     void ApplyVisionProfile(int profile);
     void LookAtPlanet();
@@ -101,12 +103,23 @@ private:
     void SyncCameraAngles();
     void PrepareCurrentBrowser();
     void UpdateNearbySystem();
+    void OpenNavigation(NavigationPanel::Mode mode);
+    NavigationEntry CurrentNavigationObject();
+    void ActivateNavigation(NavigationPanel::Action action,const NavigationEntry& entry);
+    void GoToNavigation(const NavigationEntry& entry);
+    void UpdateNavigationAnchor();
     int frameLimit = 30;
     float blackHoleResolution = .5f;
     float lensFlareStrength = .45f;
     bool sceneCacheValid = false;
     bool idleFrame = false;
     std::array<double,24> lastSceneSignature = {};
+    NavigationCatalog navigationCatalog;
+    NavigationPanel navigationPanel;
+    NavigationEntry navigationScope,navigationSelection;
+    bool navigationSelectionValid=false;
+    std::string navigationAnchorName;
+    glm::dvec3 navigationAnchorAu=glm::dvec3(0),navigationLocalAu=glm::dvec3(0);
     ControlsPanel controlsPanel;
     AppMenu mainMenu;
     ScenePanel scenePanel;
@@ -133,6 +146,7 @@ private:
     int visionProfile = 0;
     float lensAspect = static_cast<float>(WIDTH) / HEIGHT;
     float exposureEv = 0.0f;
+    float limitingMagnitude=7;
     bool hdrMode = true;
     bool landed = false;
     bool observerGravity = false;

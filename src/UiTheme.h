@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <dwmapi.h>
+#pragma comment(lib,"msimg32.lib")
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -57,6 +58,19 @@ inline void PaintButton(HWND control,HDC dc){
     Fill(dc,r,Background);
     Rounded(dc,r,pressed?RGB(26,57,65):hover?RGB(25,39,55):Raised,
         focus?accent:hover?RGB(70,102,120):Border,Px(control,14));
+    if(card){
+        const auto art=static_cast<HBITMAP>(GetPropW(control,L"RenderEngineCardArt"));
+        if(art){
+            BITMAP info;GetObjectW(art,sizeof(info),&info);HDC source=CreateCompatibleDC(dc);auto previous=SelectObject(source,art);
+            const int x=r.right*43/100,y=pad/2,w=r.right-x-pad/2,h=r.bottom-Px(control,48);
+            const int half=info.bmWidth/2,offset=id==3011?half:0;
+            const int saved=SaveDC(dc);
+            // Fade into the plain card rather than adding another visible box.
+            for(int i=0;i<20;++i){int left=w*i/20,right=w*(i+1)/20;BLENDFUNCTION blend={AC_SRC_OVER,0,static_cast<BYTE>((hover?125:95)*std::min(1.0,i/8.0)),0};
+                AlphaBlend(dc,x+left,y,right-left,h,source,offset+half*i/20,0,half*(i+1)/20-half*i/20,info.bmHeight,blend);}
+            RestoreDC(dc,saved);SelectObject(source,previous);DeleteDC(source);
+        }
+    }
     auto label=Label(control);
     if(!card){
         RECT text=r;InflateRect(&text,-Px(control,8),0);

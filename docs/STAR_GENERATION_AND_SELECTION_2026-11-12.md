@@ -1,5 +1,8 @@
 # Star systems and direct selection — November 12, 2026
 
+Follow-up: the newer browser keys, magnitude cutoff, menu imagery and satellite cards are recorded in [the navigation update](MILKY_WAY_AND_NAVIGATION_2026-11-12.md) and [the optics/menu update](OPTICS_CLOUDS_CORONA_2026-11-12.md). The details below preserve the earlier milestone.
+
+
 Click a visible catalogue star with mouse capture released to select it. Its information appears in the right panel and a green marker identifies the destination. **G** visits the star's generated system. Selecting alone does not move or aim the camera. This now works while viewing the Solar System or another generated system, as well as in the Gargantua scene.
 
 ## Every change and reason

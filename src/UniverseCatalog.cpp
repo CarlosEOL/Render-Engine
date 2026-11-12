@@ -61,6 +61,11 @@ int Universe::GalaxyForStar(int index){
   if(index<0 || index>=StarCount)throw std::invalid_argument("Unknown star catalogue entry");
   return index<1600 || index>=7000?0:1+(index-1600)/1800;
 }
+std::string Universe::StarName(int index){
+  if(index<1024)return "Local star "+std::to_string(index+1);
+  if(GalaxyForStar(index)==0)return "Milky Way star "+std::to_string(index+1);
+  return "Galaxy "+std::to_string(GalaxyForStar(index))+" star "+std::to_string((index-1600)%1800+1);
+}
 Universe::Population Universe::StarPopulation(int index) {
   if(index<0 || index>=StarCount)throw std::invalid_argument("Unknown star catalogue entry");
   if(index<1024)return Population::LocalDisk;

@@ -72,7 +72,9 @@ void main(){
             accumulated+=diskHistogram[i];
             if(accumulated*4>=diskSamples*3){percentile=exp2(float(i)-15.5);break;}
         }
-        target=min(target,log2(.55/percentile));
+        // Meter the resolved luminous object, allowing its extreme beamed
+        // pixels to clip. A single hot pixel must not hide the rest of a disk.
+        target=log2(.65/percentile);
     }
     if(stellarHint.z>0){
         float samples[16];int count=0;
@@ -98,7 +100,9 @@ void main(){
             int trim=count/4;float surface=0;
             for(int i=trim;i<count-trim;++i)surface+=samples[i];
             surface/=float(count-2*trim);
-            target=min(target,log2(.60/surface));
+            // A resolved nearby continuum has a stable radiance calibration;
+            // subpixel catalogue display PSFs must not override its exposure.
+            target=log2(.60/surface);
         }
     }
     target=clamp(target,-18.0,8.0);

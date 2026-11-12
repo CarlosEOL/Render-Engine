@@ -33,5 +33,6 @@ class AppMenu
     void *font = nullptr;
     void *titleFont = nullptr;
     void *brush = nullptr;
+    void *artBitmap = nullptr;
     std::vector<void *> controls;
 };

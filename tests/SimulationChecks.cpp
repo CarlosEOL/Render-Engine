@@ -6,6 +6,12 @@
 #include "PlanetTerrain.h"
 #include "InterstellarWorlds.h"
 #include "KerrSpacetime.h"
+#include "MilkyWayModel.h"
+#include "NavigationCatalog.h"
+#include "GalacticCore.h"
+#include "FlightUnits.h"
+#include "StellarPhotometry.h"
+#include "CelestialPhenomena.h"
 #include <algorithm>
 #include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
@@ -221,6 +227,49 @@ int main()
     Require(layouts.size()>70 && leadingGiants>50 && rockOnly>20 && moons>100,"System architecture diversity collapsed");
     std::cout<<"Generation survey: "<<layouts.size()<<" primary layouts; "<<leadingGiants<<" leading giants; "<<moons<<" moons\n";
     Universe::Catalog catalogue;catalogue.Generate();
+    Require(std::abs(glm::determinant(MilkyWayModel::Orientation())-1)<1e-12,"Galactic frame is not orthonormal/right-handed");
+    Require(glm::length(MilkyWayModel::ToModelKpc(glm::dvec3(0))-glm::dvec3(8.277,0,0))<1e-12,"Sun is not at the measured Galactic radius");
+    const auto sample=glm::dvec3(2,.3,-4);
+    Require(glm::length(MilkyWayModel::ToModelKpc(MilkyWayModel::ToWorldAu(sample))-sample)<1e-12,"Galactic coordinate round trip failed");
+    for(int i=0;i<32;++i){
+        const auto point=catalogue.Positions()[i*461]+glm::dvec3(31,-11,13)*Astronomy::auPerLightYear;
+        int closest=-2;double best=glm::dot(point,point);
+        for(int j=0;j<Universe::StarCount;++j){const auto delta=catalogue.Positions()[j]-point;double distance=glm::dot(delta,delta);if(distance<best){best=distance;closest=j+10;}}
+        Require(catalogue.Nearest(point)==closest,"Nearest-star tree disagrees with full catalogue");
+    }
+    Require(FlightUnits::Label(1/Astronomy::metresPerAu).find("m/s")!=std::string::npos
+        && FlightUnits::Label(Astronomy::lightSpeedAu).find("c")!=std::string::npos
+        && FlightUnits::Label(1).find("AU/s")!=std::string::npos
+        && FlightUnits::Label(Astronomy::auPerLightYear).find("ly/s")!=std::string::npos,"Flight units do not span physical scales");
+    Require(std::abs(FlightUnits::Step(FlightUnits::Step(1,1),-1)-1)<1e-12,"Wheel steps are not reversible");
+    const double pc=206264.80624709636;
+    Require(std::abs(StellarPhotometry::ApparentMagnitude(1,10*pc)-4.74)<1e-12
+        && std::abs(StellarPhotometry::ApparentMagnitude(1,100*pc)-9.74)<1e-12
+        && std::abs(StellarPhotometry::ApparentMagnitude(100,10*pc)+.26)<1e-12,"Magnitude does not follow luminosity/distance scaling");
+    NavigationCatalog navigator;navigator.Initialize(catalogue);
+    const auto earthSearch=navigator.Find("Earth",0),moonSearch=navigator.Find("Moon",0),tonSearch=navigator.Find("TON 618",0);
+    Require(!earthSearch.empty() && earthSearch[0].name=="Earth","Object finder lost Earth");
+    Require(!moonSearch.empty() && moonSearch[0].parent=="Earth","Moon hierarchy lost Earth parent");
+    const auto jovian=navigator.Find("Jupiter",0);
+    const auto satellites=navigator.Children(jovian[0],0);
+    Require(std::count_if(satellites.begin(),satellites.end(),[](const auto& e){return e.parent=="Jupiter";})==4,"Jupiter satellite overview is incomplete");
+    Require(navigator.Parent(moonSearch[0]).name=="Earth" && navigator.Parent(jovian[0]).name=="Sun","Hierarchy Back did not reach the physical parent");
+    Require(!tonSearch.empty() && tonSearch[0].system==GalacticCores::tonId && GalacticCores::Get(GalacticCores::tonId).massSolar>4e10,"TON 618 is absent or incorrectly scaled");
+    const auto generatedName=Universe::StarName(37);StarSystem named;named.Generate(47,generatedName);
+    Require(!navigator.Find(named.Planets().back().name,0).empty(),"Unvisited generated planet is not findable by name");
+    Require(!navigator.Find("Solar asteroid 4096",0).empty(),"Small-body name lookup failed");
+    Require(!navigator.Find("Earth satellite barycentre",0).empty(),"Computed barycentre cannot be found by its name");
+    for(const auto& nebula:CelestialPhenomena::Nebulae()){
+        Require(!navigator.Find(nebula.name,0).empty(),"Nebula is not findable by name");
+        Require(Universe::GalaxyAt(0).Contains(nebula.positionAu) && nebula.radiusLy>0,"Nebula has invalid Galactic coordinates or size");
+    }
+    const auto nearby=navigator.Nearby(glm::dvec3(0),glm::dvec3(1,0,0),20,0);
+    Require(!nearby.empty() && std::is_sorted(nearby.begin(),nearby.end(),[](const auto& a,const auto& b){return a.distanceAu<b.distanceAu;}),"Nearby search is not distance sorted");
+    const glm::dvec3 distant(1e15,1e15,1e15);NavigationEntry precision;precision.anchorAu=distant;precision.localAu={.0000000001,0,0};
+    Require(precision.Distance(distant,glm::dvec3(0))==1e-10,"Hierarchical distance flattened local precision");
+    bool rejected=false;try{navigator.Nearby(glm::dvec3(0),glm::dvec3(0),-1,0);}catch(const std::invalid_argument&){rejected=true;}
+    Require(rejected,"Nearby search accepted a negative radius");
+    std::cout<<"Navigation checks: coordinate precision, nearest-star tree, global names, planetary satellites, TON 618 and flight units passed\n";
     Require(catalogue.Positions().size()==Universe::StarCount,"Stellar catalogue size changed");
     for(int index=0;index<4;++index){
         const auto first=Universe::GalaxyAt(index),again=Universe::GalaxyAt(index);

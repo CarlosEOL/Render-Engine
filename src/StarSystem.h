@@ -49,9 +49,12 @@ class StarSystem
     static Star DescribeStar(int id, const std::string &name);
     void Generate(int id, const std::string &name);
     void LoadSolarSystem();
+    void LoadCore(int id);
+    bool IsCore() const {return coreId>=0;}
     bool Initialize();
     void SetStellarActivity(bool enabled) { stellarActivity.SetEnabled(enabled); }
     void SetStellarCorona(bool enabled) {stellarActivity.SetCoronaEnabled(enabled);}
+    void SetEarthClouds(bool enabled){earthCloudsEnabled=enabled;}
     void SetWarmStellarColor(bool enabled) { stellarActivity.SetWarmColor(enabled); }
     void TriggerStellarFlare(double seconds) { stellarActivity.Trigger(seconds); }
     void Release();
@@ -79,6 +82,7 @@ class StarSystem
     {
         return planets;
     }
+    const std::vector<OrbitalMechanics::Orbit>& AsteroidOrbits() const {return asteroids;}
     size_t AsteroidCount() const
     {
         return asteroids.size();
@@ -120,6 +124,8 @@ class StarSystem
     std::vector<Planet> planets;
     std::vector<OrbitalMechanics::Orbit> asteroids;
     bool solarSystem = false;
+    bool earthCloudsEnabled=true;
+    int coreId=-1;
     double GravityFor(int planet) const;
     glm::dvec3 RelativePosition(int planet, double seconds) const;
     void InvalidateCaches();

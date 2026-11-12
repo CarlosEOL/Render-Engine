@@ -14,6 +14,7 @@
 #include <random>
 #include <sstream>
 #include <stdexcept>
+#include "GalacticCore.h"
 
 unsigned int compileShaderProgram(const char *, const char *);
 
@@ -120,6 +121,7 @@ StarSystem::Star StarSystem::DescribeStar(int id, const std::string &name)
 
 void StarSystem::Generate(int id, const std::string &name)
 {
+    coreId=-1;
     InvalidateCaches();
     solarSystem = false;
     asteroids.clear();
@@ -218,6 +220,13 @@ void StarSystem::Generate(int id, const std::string &name)
     speedAu = 0.1;
 }
 
+void StarSystem::LoadCore(int id){
+    const auto core=GalacticCores::Get(id);InvalidateCaches();coreId=id;solarSystem=false;
+    planets.clear();asteroids.clear();selected=landedPlanet=-1;landed=following=followingRotation=false;
+    star={id,core.name,core.classification,core.massSolar,core.RadiusAu()/Astronomy::solarRadiusAu,0,0,0};
+    camera={0,core.RadiusAu()*3,core.RadiusAu()*14};speedAu=core.RadiusAu()*.2;
+}
+
 glm::dvec3 StarSystem::Position(int planet, double seconds) const
 {
     if (planet < 0)
@@ -240,6 +249,7 @@ void StarSystem::InvalidateCaches() {
 }
 
 double StarSystem::DetailRadiusAu() const {
+    if(IsCore())return GalacticCores::Get(coreId).RadiusAu()*10000;
     double radius=20;
     for(const auto& planet:planets)radius=std::max(radius,planet.orbit.semiMajorAxis*(1+planet.orbit.eccentricity)*3);
     return radius;
@@ -367,6 +377,7 @@ void StarSystem::Move(GLFWwindow *window, float realSeconds, glm::vec3 &front, g
 
 void StarSystem::GoToSelected(double seconds, glm::vec3 &front, glm::vec3 &up)
 {
+    if(IsCore()){Overview(front,up);return;}
     landed = following = followingRotation = false;
     const auto target = Position(selected, seconds);
     const double radius = selected < 0 ? star.radiusSolar * Astronomy::solarRadiusAu
@@ -383,6 +394,7 @@ void StarSystem::GoToSelected(double seconds, glm::vec3 &front, glm::vec3 &up)
 
 void StarSystem::Overview(glm::vec3 &front, glm::vec3 &up)
 {
+    if(IsCore()){const auto radius=GalacticCores::Get(coreId).RadiusAu();camera={0,radius*(coreId==GalacticCores::tonId?6:3),radius*(coreId==GalacticCores::tonId?26:14)};front=glm::normalize(glm::vec3(-camera));up={0,1,0};if(coreId==GalacticCores::tonId)CameraMotion::Roll(front,up,glm::radians(16.f));return;}
     landed = following = followingRotation = false;
     double outer = 0;
     for (const auto &body : planets)
@@ -462,6 +474,7 @@ bool StarSystem::Pick(const glm::vec3 &direction, double seconds, double toleran
 }
 
 double StarSystem::ObserverClockRate(double seconds) const {
+    if(IsCore())return std::sqrt(std::max(0.0,1-GalacticCores::Get(coreId).RadiusAu()/std::max(glm::length(camera),1e-15)));
     if(!InDetailRange())return 1;
     const double c2=Astronomy::lightSpeedAu*Astronomy::lightSpeedAu;
     double potential=star.massSolar*Astronomy::solarGravityAu/std::max(glm::length(camera),star.radiusSolar*Astronomy::solarRadiusAu);
@@ -487,6 +500,7 @@ double StarSystem::ObserverClockRate(double seconds) const {
 
 std::string StarSystem::Information(double seconds) const
 {
+    if(IsCore())return GalacticCores::Information(coreId);
     std::ostringstream text;
     text<<std::setprecision(12)<<"Camera clock / distant clock: "<<ObserverClockRate(seconds)<<"\n";
     text << star.name << "\n"
@@ -843,7 +857,7 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
         const auto center = glm::vec3(Position(planet, seconds) - camera);
         atmosphere.Render(vp, glm::vec3(0), center,
                           static_cast<float>(planets[planet].radiusEarth * Astronomy::earthRadiusAu), true,
-                          glm::vec3(-camera),solarSystem && planet==2,seconds,glm::mat3(Rotation(planet,seconds)));
+                          glm::vec3(-camera),earthCloudsEnabled && solarSystem && planet==2,seconds,glm::mat3(Rotation(planet,seconds)));
     }
     const auto clip = vp * glm::vec4(glm::vec3(Position(selected, seconds) - camera), 1);
     if (showSelection && clip.w > 0)

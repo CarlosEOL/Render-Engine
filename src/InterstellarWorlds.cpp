@@ -4,6 +4,12 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <stdexcept>
+
+OrbitalMechanics::Orbit InterstellarWorlds::CompanionOrbit(int index){
+  static const OrbitalMechanics::Orbit orbits[]={{50,.03,.45,.1,2.2},{80,.12,.83,1.4,4.5},{120,.15,.72,2.3,.4},{180,.11,1.10,.3,3.4},{250,.13,.57,2.8,5.7}};
+  if(index<0 || index>=5)throw std::invalid_argument("Unknown companion star");return orbits[index];
+}
 
 const InterstellarWorlds::Planet &InterstellarWorlds::Get(int index) {
   // Physical AU/radii; outer orbital elements and masses are explicit model

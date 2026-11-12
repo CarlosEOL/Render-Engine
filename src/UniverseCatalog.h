@@ -4,11 +4,13 @@
 #include <glm/glm.hpp>
 #include <unordered_map>
 #include <vector>
+#include <string>
 
 namespace Universe {
 inline constexpr std::uint64_t WorldSeed = 618;
 inline constexpr int StarCount = 16000;
 int GalaxyForStar(int index);
+std::string StarName(int index);
 enum class Population { LocalDisk, ThinDisk, SpiralArm, Bulge, Halo };
 Population StarPopulation(int index);
 struct Galaxy {

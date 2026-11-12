@@ -42,10 +42,10 @@ float weather(vec3 p){
  float field=.58*cloudNoise(n*11.0)+.28*cloudNoise(n*29.0+17.0)+.14*cloudNoise(n*73.0+31.0);
  return smoothstep(.43,.65,field);
 }
-float cloudDensity(vec3 p){
+float cloudDensity(vec3 p,float coverage){
  float height=(length(p)-planetRadius)*149597870.7;
  if(height<2.0 || height>12.0)return 0.0;
- float coverage=weather(p);if(coverage<.03)return 0.0;
+ if(coverage<.03)return 0.0;
  float profile=smoothstep(2.0,3.2,height)*(1.0-smoothstep(7.0,12.0,height));
  vec3 local=cloudFrame*p*149597870.7;
  float erosion=.65*cloudNoise(local*.13+vec3(cloudTime*.00001,0,0))+.35*cloudNoise(local*.47);
@@ -80,7 +80,7 @@ void main() {
         }
         finish = min(finish, geometryDistance);
     }
-    vec2 ground = sphereInterval(origin, direction, planetRadius * (earthClouds?1.0:1.0035));
+    vec2 ground = sphereInterval(origin, direction, planetRadius);
     if (ground.x > 0.0 && ground.y >= ground.x)
         finish = min(finish, ground.x);
     if (finish <= start) {
@@ -113,13 +113,14 @@ void main() {
         vec3 volumeLight=vec3(0);float volumeT=1.0;
         if(volumeWeight>0.0 && cloudEnd>cloudBegin){
             cloudEnd=min(cloudEnd,cloudBegin+200000.0/149597870700.0);
-            float step=(cloudEnd-cloudBegin)/32.0;
-            for(int i=0;i<32;++i){
+            float coverage=weather(origin+direction*((cloudBegin+cloudEnd)*.5));
+            float step=(cloudEnd-cloudBegin)/24.0;
+            for(int i=0;i<24;++i){
+                if(coverage<.03)break;
                 vec3 p=origin+direction*(cloudBegin+(float(i)+.5)*step);
-                float density=cloudDensity(p);if(density<.001)continue;
+                float density=cloudDensity(p,coverage);if(density<.001)continue;
                 vec3 sun=normalize(lightPosition-planetCenter-p);
-                float shadow=cloudDensity(p+sun*(1500.0/149597870700.0))*1.5
-                    +cloudDensity(p+sun*(4500.0/149597870700.0))*3.0;
+                float shadow=cloudDensity(p+sun*(3500.0/149597870700.0),coverage)*4.0;
                 float daylight=smoothstep(-.12,.10,dot(normalize(p),sun));
                 float phase=.25+.65*pow(max(dot(direction,sun),0.0),8.0);
                 vec3 lighting=vec3(.12,.17,.25)*(.08+.92*daylight)
@@ -128,6 +129,7 @@ void main() {
                 volumeLight+=volumeT*(1.0-passing)*lighting;volumeT*=passing;
                 if(volumeT<.01)break;
             }
+            if(sheetDistance>cloudEnd){volumeLight+=volumeT*sheetLight;volumeT*=sheetT;}
         }
         float cloudT=mix(sheetT,volumeT,volumeWeight);
         background=background*cloudT+mix(sheetLight,volumeLight,volumeWeight);
