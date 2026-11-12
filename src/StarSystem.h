@@ -28,6 +28,7 @@ class StarSystem
     };
     struct Planet
     {
+        enum class Palette { Climate, Lunar };
         std::string name;
         std::string classification;
         OrbitalMechanics::Orbit orbit;
@@ -42,6 +43,7 @@ class StarSystem
         bool atmosphere;
         glm::vec3 color;
         int parent = -1;
+        Palette palette = Palette::Climate;
     };
 
     static Star DescribeStar(int id, const std::string &name);
