@@ -13,7 +13,7 @@ public:
     unsigned Texture() const { return texture; }
 private:
     void Bake(const glm::dvec3& worldCamera) const;
-    unsigned bakeProgram=0,displayProgram=0,vao=0,texture=0,framebuffer=0;
+    unsigned bakeProgram=0,displayProgram=0,vao=0,texture=0,framebuffer=0,illustration=0;
     mutable glm::dvec3 bakedCamera{};
     mutable double lastBake=-1;
     mutable bool valid=false;

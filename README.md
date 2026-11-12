@@ -189,3 +189,16 @@ The shared sphere mesh in **src/BlackHole.cpp** uses higher tessellation to reso
 - **src/WindowManager.cpp and src/WindowManager.h** add terrain regeneration, landing constraints, free-cam gravity, mouse picking, G travel, separate local/world clocks, and a light-age readout. Surface mouse-look uses the local up direction. Near clipping changes during landing to show nearby ground. Far clipping expands during space flight to include the generated star groups. Reset and flyby controls clear gravity and landing constraints. Pointing at a destination changes selection while the simulation continues.
 - **src/BlackHole.cpp and src/BlackHole.h** add a bounded GPU point buffer for 128 photon markers and a detector marker. Packets use straight illustrative paths and playback time scaled by estimated travel duration. This debug view samples the disk and craft. The disk image itself continues to use the separate Schwarzschild ray integrator.
 - **Render-Engine.vcxproj** registers the terrain and atmosphere source/header files so the normal Visual Studio build includes both features.
+
+
+## Milky Way appearance
+
+The Milky Way now uses NASA/JPL's detailed PIA10748 artist concept within its exterior LOD and illustrative 3D stellar/dust field. The face-on view shows blue-white arms, a warm central bar and pink star-forming regions; inside the disk, local stellar emissivity and dust extinction preserve the Galactic band. Catalogue stars remain separate selectable objects.
+
+Actual engine captures (HDR):
+
+![Milky Way exterior rendered by the engine](assets/screenshots/milky-way-face-on.png)
+
+![Milky Way dust band from the Solar neighbourhood](assets/screenshots/milky-way-solar-dust-lanes.png)
+
+Appearance artwork: **Courtesy NASA/JPL-Caltech**, [PIA10748](https://www.jpl.nasa.gov/images/pia10748-our-milky-way-gets-a-makeover-artist-concept/). This is an artist's reconstruction. [Every change, reason, memory tradeoff and validation result](docs/MILKY_WAY_QUALITY_2026-11-12.md).

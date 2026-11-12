@@ -242,7 +242,10 @@ copy /Y "$(ProjectDir)assets\galaxy-variants.png" "$(TargetDir)assets\galaxy-var
 if not exist "$(TargetDir)assets\stellar" mkdir "$(TargetDir)assets\stellar"
 copy /Y "$(ProjectDir)assets\stellar\corona.png" "$(TargetDir)assets\stellar\corona.png"
 if not exist "$(TargetDir)assets\ui" mkdir "$(TargetDir)assets\ui"
-copy /Y "$(ProjectDir)assets\ui\laboratories.png" "$(TargetDir)assets\ui\laboratories.png"</Command>
+copy /Y "$(ProjectDir)assets\ui\laboratories.png" "$(TargetDir)assets\ui\laboratories.png"
+if not exist "$(TargetDir)assets\galactic" mkdir "$(TargetDir)assets\galactic"
+copy /Y "$(ProjectDir)assets\galactic\milky-way-nasa.jpg" "$(TargetDir)assets\galactic\milky-way-nasa.jpg"
+copy /Y "$(ProjectDir)assets\galactic\CREDITS.md" "$(TargetDir)assets\galactic\CREDITS.md"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

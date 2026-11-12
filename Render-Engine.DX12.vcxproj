@@ -35,6 +35,9 @@ if not exist "$(OutDir)assets\stellar" mkdir "$(OutDir)assets\stellar"
 copy /Y "$(ProjectDir)assets\stellar\corona.png" "$(OutDir)assets\stellar\" &gt;nul
 if not exist "$(OutDir)assets\ui" mkdir "$(OutDir)assets\ui"
 copy /Y "$(ProjectDir)assets\ui\laboratories.png" "$(OutDir)assets\ui\" &gt;nul
+if not exist "$(OutDir)assets\galactic" mkdir "$(OutDir)assets\galactic"
+copy /Y "$(ProjectDir)assets\galactic\milky-way-nasa.jpg" "$(OutDir)assets\galactic\"
+copy /Y "$(ProjectDir)assets\galactic\CREDITS.md" "$(OutDir)assets\galactic\CREDITS.md" &gt;nul
 copy /Y "$(ProjectDir)..\External_Lib\build\ShaderTranslator\Release\ShaderTranslator.dll" "$(OutDir)" &gt;nul
 copy /Y "$(ProjectDir)..\External_Lib\lib\assimp-vc143-mtd.dll" "$(OutDir)" &gt;nul</Command></PostBuildEvent>
   </ItemDefinitionGroup>
