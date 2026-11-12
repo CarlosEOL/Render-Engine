@@ -100,6 +100,7 @@ uniform vec2 texel;
 uniform float exposureGain;
 uniform bool hdrMode;
 uniform vec3 blackHoleHint;
+uniform vec3 stellarHint;
 
 float undoTca(float distorted, vec3 terms) {
     float radius = distorted;
@@ -165,13 +166,20 @@ void main() {
     vec3 opticalLight=vec3(0);
     // Analytic optical signatures, not measured coating/internal reflection data.
     if(profile>0 && flareStrength>0) {
-        float strongest=0.0;int primary=-1;
+        float strongest=0.0;int primary=-1,host=-1;
         for(int i=0;i<8;++i){
             vec4 candidate=texelFetch(flareSources,ivec2(i*2,0),0);
             // A resolved nearby photosphere wins ties over a distant point.
             float rank=candidate.z*(1.0+min(candidate.w*40.0,2.0));
             if(rank>strongest){strongest=rank;primary=i;}
+            if(candidate.z>0.0 && stellarHint.z>0.0
+                && length((candidate.xy-stellarHint.xy)*vec2(texel.y/texel.x,1))<max(texel.y*4.0,stellarHint.z*.15))host=i;
         }
+        // Catalogue PSFs use a visibility grade, so their peak pixel values
+        // cannot outrank a genuinely visible nearby photosphere by themselves.
+        if(host>=0){primary=host;vec4 source=texelFetch(flareSources,ivec2(host*2,0),0);strongest=source.z*(1.0+min(source.w*40.0,2.0));}
+        float primaryBrightness=primary>=0?texelFetch(flareSources,ivec2(primary*2,0),0).z:0.0;
+        float primaryEnergy=min(2.5,log2(1.0+primaryBrightness))*.65*flareStrength;
         for(int source=0;source<8;++source) {
             vec4 emitter=texelFetch(flareSources,ivec2(source*2,0),0);
             if(emitter.z<=0)continue;
@@ -190,7 +198,7 @@ void main() {
             float rank=emitter.z*(1.0+min(emitter.w*40.0,2.0));
             // Independent optical centers: weaker sources never move the main
             // star's flare, and their combined ghost energy stays subordinate.
-            if(source!=primary)energy*=.12*pow(clamp(rank/max(strongest,.0001),0.0,1.0),2.0);
+            if(source!=primary)energy=min(energy*.12*pow(clamp(rank/max(strongest,.0001),0.0,1.0),2.0),primaryEnergy*.08);
             float sourceRadius=emitter.w;
             float coreRadius=.018+sourceRadius*.7;
             float halo=coreRadius*coreRadius/(r*r+coreRadius*coreRadius)*exp(-r/(coreRadius*4.0));
@@ -498,6 +506,7 @@ void CameraOptics::Render(int profile, float fieldOfView, float exposureEv, bool
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glUseProgram(program);
     glUniform3fv(glGetUniformLocation(program,"blackHoleHint"),1,glm::value_ptr(diskHint));
+    glUniform3fv(glGetUniformLocation(program,"stellarHint"),1,glm::value_ptr(stellarHint));
     glUniform1i(glGetUniformLocation(program, "scene"), 0);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, flareTexture);
