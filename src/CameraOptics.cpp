@@ -96,6 +96,7 @@ uniform vec2 sensorScale;
 uniform vec2 texel;
 uniform float exposureGain;
 uniform bool hdrMode;
+uniform vec3 blackHoleHint;
 
 float undoTca(float distorted, vec3 terms) {
     float radius = distorted;
@@ -253,6 +254,10 @@ void main() {
         // Apply the shoulder to peak radiance, preserving highlight hue ratios.
         float peak=max(color.r,max(color.g,color.b));
         float mappedPeak=clamp((peak*(2.51*peak+.03))/(peak*(2.43*peak+.59)+.14),0.0,1.0);
+        float diskDistance=length((uv-blackHoleHint.xy)*vec2(texel.y/texel.x,1));
+        float diskWeight=blackHoleHint.z>0?1.0-smoothstep(blackHoleHint.z,blackHoleHint.z*1.2,diskDistance):0;
+        // Lift resolved dim disk detail; zero radiance remains exactly black.
+        mappedPeak=mix(mappedPeak,pow(mappedPeak,.65),diskWeight);
         color*=mappedPeak/max(peak,.000001);
     } else
         color = clamp(color, 0.0, 1.0);
@@ -472,10 +477,12 @@ void CameraOptics::Render(int profile, float fieldOfView, float exposureEv, bool
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
     }
-    if(adaptive) exposureMeter.Update(sceneTexture,stellarHint,realSeconds);
+    const glm::vec3 diskHint=blackHoleVisibility?blackHoleHint:glm::vec3(-1,-1,0);
+    if(adaptive) exposureMeter.Update(sceneTexture,stellarHint,realSeconds,diskHint);
     else exposureMeter.Reset();
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glUseProgram(program);
+    glUniform3fv(glGetUniformLocation(program,"blackHoleHint"),1,glm::value_ptr(diskHint));
     glUniform1i(glGetUniformLocation(program, "scene"), 0);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, flareTexture);

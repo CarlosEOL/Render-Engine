@@ -2,6 +2,7 @@
 
 #include <glm/mat4x4.hpp>
 #include <array>
+#include <cmath>
 #include <vector>
 #include <string>
 #include "OrbitalMechanics.h"
@@ -14,7 +15,7 @@
 class BlackHole {
 public:
     bool Initialize();
-    void SetSpin(double value) { spin=glm::clamp(value,-.98,.98); }
+    void SetSpin(double value) { if(std::isfinite(value))spin=glm::clamp(value,-.98,.98); }
     double Spin() const { return spin; }
     void SetRayBudget(int value) { rayBudget=glm::clamp(value,64,384); }
     int RayBudget() const { return rayBudget; }

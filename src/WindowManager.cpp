@@ -264,6 +264,7 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
     if (key == GLFW_KEY_F10 || key == 3030) { manager.OpenMainMenu(); return; }
     if (manager.mainMenu.Visible()) return;
     if(key==1202 || key==1203){manager.optics.SetAutoExposure(key==1202);manager.UpdateTitle();return;}
+    if(key==1204 || key==1205){manager.optics.SetBlackHoleVisibility(key==1204);return;}
     if(key==1223 || key==1224){manager.optics.SetReferenceGlare(key==1223);return;}
     if(key==1324 || key==1325){
         manager.starSystem.SetWarmStellarColor(key==1324);
@@ -295,6 +296,7 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
     if(key>=1220 && key<=1222){manager.lensFlareStrength=key==1220?0:key==1221?.45f:1;return;}
     if (key == GLFW_KEY_F3) { manager.scenePanel.ToggleInformation(); manager.ResizeInterface(); return; }
     if (key == GLFW_KEY_F2) { manager.trajectories=!manager.trajectories; return; }
+    if (key == GLFW_KEY_F5) { manager.SetMouseCaptured(false);manager.RefreshObjectEditor();manager.objectEditor.Toggle();return; }
     if (manager.quantumMode) {
         if (key==GLFW_KEY_SPACE) manager.simulationPlaying=!manager.simulationPlaying;
         else if ((key==GLFW_KEY_R && (mods&GLFW_MOD_CONTROL)) || key==703) manager.quantum.Select(manager.quantum.Selected());
@@ -696,6 +698,7 @@ void WindowManager::ResizeInterface() {
 }
 
 void WindowManager::OpenMainMenu() {
+    objectEditor.Hide();
     interiorVehicle=0;
     simulationPlaying=false;
     SetMouseCaptured(false);
@@ -864,7 +867,21 @@ void WindowManager::UpdateNearbySystem(){
     sceneCacheValid=false;SyncCameraAngles();
 }
 
+void WindowManager::RefreshObjectEditor(){
+    if(!objectEditor.NativeHandle())return;
+    std::string name="No object selected";
+    const bool editable=blackHoleReady && !quantumMode && pendingSystemTarget==0 && selectedTarget==0;
+    if(quantumMode)name="Quantum state";
+    else if(pendingSystemTarget!=0){
+        const auto& system=inStarSystem && activeSystemTarget==pendingSystemTarget?starSystem:previewSystem;
+        const int body=system.Selected();
+        name=body>=0?system.Planets()[body].name:system.Host().name;
+    }else if(selectedTarget>=0)name=selectedTarget==0?"Gargantua":blackHole.ResolveTarget(selectedTarget,simulationTime).name;
+    objectEditor.SetObject(name,editable,blackHole.Spin(),BlackHole::HorizonRadius());
+}
+
 void WindowManager::RefreshPanel() {
+    RefreshObjectEditor();
     if (mainMenu.Visible()) return;
     if (quantumMode) scenePanel.SetInformation(quantum.Information());
     else if (pendingSystemTarget!=0) {
@@ -904,7 +921,7 @@ void WindowManager::RefreshPanel() {
         }
         if(landed)info+="\nHigh-detail surface: 100 m around camera\nCoarser terrain beyond 100 m\n";
         info+="\nMann: frozen world, 50-650 AU orbit\nEdmunds: rocky world, 1200 AU semimajor axis\nSpacecraft: departure near Mann, gravity-driven inbound coast and finite-fuel periapsis burn\nUse > for day/month/year rates to follow the long transfer.\nEarth and Saturn are in the Solar System preset.\n";
-        info+="\nPhysical AU distances and body radii\nMiller radius: 6371 km (Earth scale)\nMiller orbit: 23.7 AU, 12 horizons\nWider illustrative spacing; Kerr spin is unmodeled.\nObserver envelope: Hubble 13.2 x 4.2 m\n\nQ/E  Roll\nR/F  Up/down\nShift+F / T  Follow position\nShift+R  Follow rotation\nShift+L  Look at planet\nF8  Vehicle interior / free flight\nSpace  Play / pause\nF2  Orbit paths\nF3  Information\nF4  All star systems\nShift+F4  Current system only\nHome  Overview\nG  Go to selection\nL  Land / lift off\nF6  Photon samples\nF10  Main menu\nWheel  Flight speed +/-15%\nShift+RMB  Drag to zoom\nMMB  Reset zoom\n";
+        info+="\nPhysical AU distances and body radii\nMiller radius: 6371 km (Earth scale)\nMiller orbit: 23.7 AU, 12 horizons\nWider illustrative orbit; vehicle dynamics use Schwarzschild.\nObserver envelope: Hubble 13.2 x 4.2 m\n\nQ/E  Roll\nR/F  Up/down\nShift+F / T  Follow position\nShift+R  Follow rotation\nShift+L  Look at planet\nF8  Vehicle interior / free flight\nSpace  Play / pause\nF2  Orbit paths\nF3  Information\nF4  All star systems\nShift+F4  Current system only\nHome  Overview\nG  Go to selection\nL  Land / lift off\nF6  Photon samples\nF10  Main menu\nWheel  Flight speed +/-15%\nShift+RMB  Drag to zoom\nMMB  Reset zoom\n";
         scenePanel.SetInformation(info);
     }
 }
@@ -1704,6 +1721,16 @@ void WindowManager::Update(float& dT) {
 
     const auto preciseCamera=inStarSystem?starSystem.camera:cameraPos;
     optics.SetStellarHint(glm::vec3(-1,-1,0));
+    optics.SetBlackHoleHint(glm::vec3(-1,-1,0));
+    if(showBlackHole && !inStarSystem){
+        const auto offset=-cameraPos;const double along=glm::dot(offset,glm::dvec3(cameraFront));
+        if(along>0){
+            const auto right=glm::normalize(glm::cross(cameraFront,cameraUp)),up=glm::normalize(glm::cross(right,cameraFront));
+            const double halfHeight=along*std::tan(glm::radians(static_cast<double>(fieldOfView))*.5);
+            optics.SetBlackHoleHint(glm::vec3(.5+.5*glm::dot(offset,glm::dvec3(right))/(halfHeight*aspectRatio),
+                .5+.5*glm::dot(offset,glm::dvec3(up))/halfHeight,BlackHole::HorizonRadius()*4.3/(halfHeight*2)));
+        }
+    }
     if(inStarSystem) {
         const auto offset=-starSystem.camera;
         const double along=glm::dot(offset,glm::dvec3(cameraFront));
@@ -1932,6 +1959,7 @@ void WindowManager::MakeNewWindow() {
     AppendMenuW(viewMenu,MF_STRING,GLFW_KEY_F4,L"Star systems (F4)");
     AppendMenuW(viewMenu,MF_STRING,706,L"Current system (Shift+F4)");
     AppendMenuW(viewMenu,MF_STRING,GLFW_KEY_F6,L"Photon view (F6)");
+    AppendMenuW(viewMenu,MF_STRING,GLFW_KEY_F5,L"Object editor (F5)");
     const HMENU visionMenu = CreatePopupMenu();
     AppendMenuW(visionMenu, MF_STRING, 1000, L"Free camera");
     AppendMenuW(visionMenu, MF_STRING, 1001, L"Human vision (approx.)");
@@ -1953,6 +1981,8 @@ void WindowManager::MakeNewWindow() {
     AppendMenuW(exposureMenu, MF_STRING, 1201, L"Pure exposure / auto adaptation (F7)");
     AppendMenuW(exposureMenu,MF_STRING,1202,L"Auto exposure on - default (Pure mode)");
     AppendMenuW(exposureMenu,MF_STRING,1203,L"Auto exposure off / manual EV");
+    AppendMenuW(exposureMenu,MF_STRING,1204,L"Black hole visibility assist on - default");
+    AppendMenuW(exposureMenu,MF_STRING,1205,L"Black hole visibility assist off");
     AppendMenuW(exposureMenu, MF_SEPARATOR, 0, nullptr);
     const wchar_t* exposureNames[] = {L"-8 EV", L"-4 EV", L"-2 EV", L"0 EV", L"+2 EV", L"+4 EV", L"+8 EV", L"+12 EV", L"+16 EV"};
     for (int level = 0; level < 9; ++level)
@@ -2020,11 +2050,15 @@ void WindowManager::MakeNewWindow() {
             SetWindowLongPtrW(control,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(InterfaceKeyProcedure))));
         return TRUE;
     },0);
+    if(!objectEditor.Create(nativeWindow,[this](double spin){
+        blackHole.SetSpin(spin);sceneCacheValid=false;RefreshPanel();UpdateTitle();
+    }))std::cerr<<"Object editor could not be created\n";
     OpenMainMenu();
 #endif
 }
 
 void WindowManager::ReleaseGraphics() {
+    objectEditor.Release();
     vehicleInterior.Release();
     quantum.Release();
     starSystem.Release();

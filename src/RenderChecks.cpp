@@ -1,3 +1,9 @@
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <commctrl.h>
+#endif
 #include "WindowManager.h"
 #include "glad/glad.h"
 #include <filesystem>
@@ -136,6 +142,54 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
     KeyCallback(window,1332,0,GLFW_PRESS,0);
     const auto spinning=capture("gargantua-kerr-spin-08");
     if(nonSpinning==spinning){std::cerr<<"Kerr spin did not alter light propagation\n";success=false;}
+    const auto cameraBeforeEditor=cameraPos;const auto timeBeforeEditor=simulationTime;
+    KeyCallback(window,GLFW_KEY_F5,0,GLFW_PRESS,0);
+    if(!objectEditor.Visible() || !objectEditor.Editable())success=false;
+#ifdef _WIN32
+    const auto editor=static_cast<HWND>(objectEditor.NativeHandle());
+    if(!editor)return false;
+    SetDlgItemTextA(editor,ObjectEditor::SpinValue,"0.650000");
+    SendMessageW(editor,WM_COMMAND,MAKEWPARAM(ObjectEditor::Apply,BN_CLICKED),0);
+    if(blackHole.Spin()!=.65 || sceneCacheValid)success=false;
+    const auto editedSpin=capture("object-editor-spin-065");
+    if(editedSpin==spinning)success=false;
+    for(const char* invalid:{"1.0","nan","infinity","0.4junk",""}){
+        SetDlgItemTextA(editor,ObjectEditor::SpinValue,invalid);
+        SendMessageW(editor,WM_COMMAND,MAKEWPARAM(ObjectEditor::Apply,BN_CLICKED),0);
+        if(blackHole.Spin()!=.65)success=false;
+    }
+    SendDlgItemMessageW(editor,ObjectEditor::SpinSlider,TBM_SETPOS,TRUE,-5000);
+    SendMessageW(editor,WM_HSCROLL,TB_THUMBTRACK,reinterpret_cast<LPARAM>(GetDlgItem(editor,ObjectEditor::SpinSlider)));
+    if(blackHole.Spin()!=-.5)success=false;
+    capture("object-editor-reverse-spin");
+    KeyCallback(window,1331,0,GLFW_PRESS,0);
+    char editorValue[40];GetDlgItemTextA(editor,ObjectEditor::SpinValue,editorValue,40);
+    if(std::string(editorValue)!="0.500000")success=false;
+    SelectCatalogue(10);
+    if(objectEditor.Editable() || IsWindowEnabled(GetDlgItem(editor,ObjectEditor::SpinSlider)))success=false;
+    SendMessageW(editor,WM_COMMAND,MAKEWPARAM(ObjectEditor::Reset,BN_CLICKED),0);
+    if(blackHole.Spin()!=.5)success=false;
+    SelectCatalogue(0);
+    SendMessageW(editor,WM_COMMAND,MAKEWPARAM(ObjectEditor::Reset,BN_CLICKED),0);
+    if(blackHole.Spin()!=.8)success=false;
+#endif
+    KeyCallback(window,GLFW_KEY_F5,0,GLFW_PRESS,0);
+    if(objectEditor.Visible() || cameraPos!=cameraBeforeEditor || simulationTime!=timeBeforeEditor)success=false;
+    const auto displayBrightness=[](const auto& pixels){double sum=0;for(auto value:pixels)sum+=value;return sum;};
+    lensFlareStrength=0;exposureEv=0;KeyCallback(window,1200,0,GLFW_PRESS,0);
+    KeyCallback(window,1205,0,GLFW_PRESS,0);const auto hdrDiskOff=capture("black-hole-hdr-unassisted");
+    KeyCallback(window,1204,0,GLFW_PRESS,0);const auto hdrDiskOn=capture("black-hole-hdr-visible");
+    if(displayBrightness(hdrDiskOn)<=displayBrightness(hdrDiskOff))success=false;
+    KeyCallback(window,1201,0,GLFW_PRESS,0);optics.SetAutoExposure(true);
+    KeyCallback(window,1205,0,GLFW_PRESS,0);const auto pureDiskOff=capture("black-hole-auto-unassisted");
+    KeyCallback(window,1204,0,GLFW_PRESS,0);const auto pureDiskOn=capture("black-hole-auto-visible");
+    std::cout<<"Black hole display sums HDR "<<displayBrightness(hdrDiskOff)<<" -> "<<displayBrightness(hdrDiskOn)
+        <<"; Auto "<<displayBrightness(pureDiskOff)<<" -> "<<displayBrightness(pureDiskOn)<<"\n";
+    if(displayBrightness(pureDiskOn)<=displayBrightness(pureDiskOff))success=false;
+    KeyCallback(window,1200,0,GLFW_PRESS,0);lensFlareStrength=.45f;
+    cameraPos={0,0,650};cameraFront={0,0,-1};cameraUp={0,1,0};fieldOfView=4;
+    capture("gargantua-visible-from-mann-distance");
+    ResetView();
     KeyCallback(window, 701, 0, GLFW_PRESS, 0);
     capture("miller-orbit");
     ToggleLanding();
@@ -430,6 +484,33 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
     capture("mann-spacecraft-departure");
     simulationTime=111*Astronomy::secondsPerDay;
     capture("gargantua-spacecraft-periapsis");
+    cameraPos=blackHole.SpacecraftPosition()+glm::normalize(blackHole.SpacecraftPosition())*(500/Astronomy::metresPerAu);
+    lastSpacecraftPosition=blackHole.SpacecraftPosition();cameraUp={0,1,0};
+    cameraFront=glm::normalize(glm::vec3(blackHole.ObservedSpacecraftPosition(cameraPos,simulationTime)-cameraPos));
+    const auto nearKerrShip=capture("endurance-close-kerr");
+    KeyCallback(window,1330,0,GLFW_PRESS,0);
+    const auto nearStaticShip=capture("endurance-close-schwarzschild");
+    GLint inspectionViewport[4];glGetIntegerv(GL_VIEWPORT,inspectionViewport);
+    int solidShipPixels=0;
+    for(int y=inspectionViewport[3]/2-100;y<inspectionViewport[3]/2+100;++y)
+        for(int x=inspectionViewport[2]/2-100;x<inspectionViewport[2]/2+100;++x){
+            const size_t i=(static_cast<size_t>(y)*inspectionViewport[2]+x)*3;
+            if(i+2>=nearKerrShip.size())continue;
+            const int r=nearKerrShip[i],g=nearKerrShip[i+1],b=nearKerrShip[i+2];
+            if(r>60 && std::abs(r-g)<15 && std::abs(g-b)<15){
+                ++solidShipPixels;
+                for(int c=0;c<3;++c)if(std::abs(int(nearKerrShip[i+c])-int(nearStaticShip[i+c]))>2)success=false;
+            }
+        }
+    std::cout<<"Foreground ship pixels stable across spin: "<<solidShipPixels<<"\n";
+    if(solidShipPixels<100)success=false;
+    glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,optics.SceneTexture());
+    GLint hdrWidth,hdrHeight;glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_WIDTH,&hdrWidth);
+    glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_HEIGHT,&hdrHeight);
+    std::vector<float> shipHdr(static_cast<size_t>(hdrWidth)*hdrHeight*4);
+    glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_FLOAT,shipHdr.data());glBindTexture(GL_TEXTURE_2D,0);
+    for(float value:shipHdr)if(!std::isfinite(value)){std::cerr<<"Nonfinite ship HDR radiance\n";success=false;break;}
+    KeyCallback(window,1332,0,GLFW_PRESS,0);
     simulationTime=180*Astronomy::secondsPerDay;
     capture("gargantua-spacecraft-escape");
     if(blackHole.SpacecraftEnergy()<=0 || !blackHole.RangersDetached())success=false;

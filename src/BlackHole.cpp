@@ -205,13 +205,17 @@ void main() {
         tint/=max(max(tint.r,tint.g),max(tint.b,.00001));
         fragColor = vec4(tint * flux, 1.0);
     } else if (surface == 5) {
-        vec3 normal = normalize(cross(dFdx(relativePosition), dFdy(relativePosition)));
+        // AU-scale derivatives underflow when crossed/squared on metre-sized
+        // craft. Compute the face normal in metres before normalization.
+        vec3 faceNormal=cross(dFdx(relativePosition*149597870700.0),dFdy(relativePosition*149597870700.0));
+        vec3 normal=faceNormal*inversesqrt(max(dot(faceNormal,faceNormal),1e-16));
         vec3 viewDirection = normalize(-relativePosition);
         if (dot(normal, viewDirection) < 0.0)
             normal = -normal;
         vec3 lightDirection = normalize(vec3(1.0, 1.0, 2.0) - worldPosition);
         float diffuse = max(dot(normal, lightDirection), 0.0);
-        float specular = pow(max(dot(normal, normalize(lightDirection + viewDirection)), 0.0), 24.0);
+        vec3 halfVector=lightDirection+viewDirection;
+        float specular=dot(halfVector,halfVector)>1e-12?pow(max(dot(normal,normalize(halfVector)),0.0),24.0):0.0;
         fragColor = vec4(bodyColor * (0.22 + 0.78 * diffuse) + 0.5 * specular, 1.0);
     } else if (surface == 6) {
         vec3 normal = normalize(mat3(transpose(inverse(model))) * localPosition);
@@ -302,7 +306,9 @@ void main() {
     float angularZ=cross(kx,kp).z;
     vec2 originalUv=screenPosition*.5+.5;
     float originalDepth=texture(sourceDepth,originalUv).r;
-    if(originalDepth<.99999 && depthDistance(originalDepth)<max(0.0,length(cameraPosition)-3.0*horizonRadius)) {
+    const float localSceneRadius=1000000.0/149597870700.0;
+    float backgroundStart=max(localSceneRadius,length(cameraPosition)-3.0*horizonRadius);
+    if(originalDepth<.99999 && depthDistance(originalDepth)<backgroundStart) {
         fragColor=texture(sourceScene,originalUv);gl_FragDepth=originalDepth;return;
     }
     float observerRadius = length(cameraPosition);
@@ -339,6 +345,10 @@ void main() {
             break;
 
         float interval = clamp(radius * (spinning?.04:.055), 0.003, spinning?.75:.45);
+        // AU-sized fixed steps exhausted the budget before a ray from Mann's
+        // distance ever reached Gargantua. Resolve the weak-field approach
+        // proportionally, retaining fine steps around the disk and photon shell.
+        if(radius>diskRadii.y*2.0)interval=max(interval,radius*.06);
         float diskFraction = (radius - diskRadii.x) / (diskRadii.y - diskRadii.x);
         float planeDistance = abs(dot(position, diskAxis));
         // Resolve the vertical plasma structure with fine steps through the slab.
@@ -437,7 +447,7 @@ void main() {
             vec2 mappedUv=mapped.xy/mapped.w*.5+.5;
             if(min(mappedUv.x,mappedUv.y)>0 && max(mappedUv.x,mappedUv.y)<1) {
                 float mappedDepth=texture(sourceDepth,mappedUv).r;
-                if(mappedDepth>=.99999 || depthDistance(mappedDepth)>max(0.0,length(cameraPosition)-3.0*horizonRadius)) {
+                if(mappedDepth>=.99999 || depthDistance(mappedDepth)>backgroundStart) {
                     vec4 source=texture(sourceScene,mappedUv);
                     radiance=source.rgb;
                     opticalEligibility=source.a;

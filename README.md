@@ -13,6 +13,8 @@ See [the detailed changes and reasons](docs/SIMULATION_CHANGES.md) for every cha
 
 ## Controls
 
+**F5 / View > Object editor** opens a compact, modeless editor for the selected object. Select Gargantua to adjust signed spin with a live slider, a numeric value, ±0.01 buttons or Reset. Numeric edits apply with Enter/Apply; slider arrows change spin by 0.0001. The supported range is -0.98…+0.98. Horizon and disk-inner-orbit distances update alongside it. Other object types are read-only. Editing does not move the camera or restart the simulation.
+
 - **Mouse wheel** changes flight speed gradually by 15% per notch; fractional wheel input is preserved. Scroll down to slow down. Physical flight speeds display in m/s, km/s or AU/s.
 - **Space** or **Play / Pause** starts and pauses playback. The application starts paused. The disk, ocean waves, planet rotation, and orbits share the playback clock.
 - **< / >** (comma / period) selects seconds, minutes, hours, days, 30-day months or Julian years of simulated time per real second. Use day/month rates to watch the physically scaled Mann transfer. The title distinguishes camera-local elapsed time from distant/world coordinate time.
@@ -93,6 +95,8 @@ The **Performance** menu offers 30/60/120 FPS and 50/75/100% black-hole resoluti
 **F7 / Pure exposure** enables GPU automatic exposure by default. It meters the scene before optical effects and samples the visible host star's surface independently of flare detection. It darkens quickly toward bright objects and brightens more gradually after looking away. The camera adapts using real elapsed time even when the simulation is paused or accelerated. **EV becomes exposure compensation** in this mode. **Exposure / HDR > Auto exposure off / manual EV** restores fixed exposure; HDR retains its existing manual EV/tone mapping. Empty black space stays black and exposure gain is bounded; tiny unresolved stars may clip without forcing the entire scene black. The meter uses heuristic render-unit brightness rather than calibrated physical sensor response.
 
 Lens glare is composited after scene exposure and tone mapping. Changing flare strength, the reference-glare switch or lens profile cannot feed back into automatic exposure or darken the underlying scene. Glare still adds local light, and actual changes in visible scene brightness can still change automatic exposure. Trimmed stellar-surface samples keep exposure steady while the same star moves around the frame.
+
+**View > Exposure / HDR > Black hole visibility assist** defaults on. In HDR it lifts dim disk detail near the black hole while keeping zero radiance black. In Pure Auto mode it meters the resolved luminous disk with a robust brightness percentile, allowing a small beamed core to clip instead of forcing the rest of the disk into darkness. This is a display/metering option; it does not change physical emission or feed lens glare into exposure. Switch it off for the previous tone curve and highlight protection.
 
 ## Stellar activity
 

@@ -13,7 +13,10 @@ class CameraOptics
     bool IsAutoExposure() const { return autoExposure; }
     void SetReferenceGlare(bool value) { referenceGlare = value; }
     void SetStellarHint(const glm::vec3& value) { stellarHint = value; }
+    void SetBlackHoleHint(const glm::vec3& value) { blackHoleHint=value; }
+    void SetBlackHoleVisibility(bool value) { blackHoleVisibility=value;exposureMeter.Reset(); }
     void Release();
+    unsigned int SceneTexture() const { return sceneTexture; }
     static const char *Name(int profile);
     static float FieldOfView(int profile, float aspect);
     static glm::vec2 MapScreen(int profile, const glm::vec2 &screen, float aspect, float fieldOfView);
@@ -28,8 +31,10 @@ class CameraOptics
     unsigned int flareProgram = 0, flareFramebuffer = 0, flareTexture = 0;
     bool frameActive = false;
     bool autoExposure = true, referenceGlare = true;
+    bool blackHoleVisibility=true;
     ExposureMeter exposureMeter;
     glm::vec3 stellarHint = glm::vec3(-1,-1,0);
+    glm::vec3 blackHoleHint=glm::vec3(-1,-1,0);
     mutable int width = 0;
     mutable int height = 0;
 };

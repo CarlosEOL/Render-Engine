@@ -176,6 +176,7 @@
     <ClCompile Include="src\StellarActivity.cpp" />
     <ClCompile Include="src\SolarSystem.cpp" />
     <ClCompile Include="src\ScenePanel.cpp" />
+    <ClCompile Include="src\ObjectEditor.cpp" />
     <ClCompile Include="src\AppMenu.cpp" />
     <ClCompile Include="src\QuantumStates.cpp" />
     <ClCompile Include="src\QuantumSimulation.cpp" />
@@ -207,6 +208,7 @@
     <ClInclude Include="src\StellarActivity.h" />
     <ClInclude Include="src\Astronomy.h" />
     <ClInclude Include="src\ScenePanel.h" />
+    <ClInclude Include="src\ObjectEditor.h" />
     <ClInclude Include="src\AppMenu.h" />
     <ClInclude Include="src\QuantumStates.h" />
     <ClInclude Include="src\QuantumSimulation.h" />

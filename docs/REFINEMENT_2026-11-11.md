@@ -1,8 +1,25 @@
 # Refinement changes and reasons — November 11, 2026
 
+## Follow-up: object editor and black-hole visibility
+
+| Files | Change and reason |
+| --- | --- |
+| `src/ObjectEditor.h/.cpp` (new) | Adds a compact modeless Win32 editor bound to the current selection. Signed spin uses a live slider, validated numeric input, fine steps and reset. Derived horizon/ISCO distances update from shared Kerr equations. Other objects are read-only, and unfinished numeric input is preserved between information refreshes. This makes spin editable without camera travel, simulation reset or shader recompilation. |
+| `src/WindowManager.h/.cpp`, `Render-Engine.vcxproj` | Registers the editor, adds F5/View entry, synchronizes presets/selection, invalidates the paused scene after edits, releases editor resources and hides it at the main menu. Corrects stale information text that incorrectly said all Kerr spin was unmodeled. |
+| `src/BlackHole.h` | Rejects nonfinite spin updates so invalid values cannot reach GPU metric calculations. The existing ±0.98 bound remains. |
+| `src/ExposureMeter.h/.cpp` | Adds a projected black-hole region and a bounded 32-bin histogram of its resolved emitting area. A 75th-percentile disk brightness replaces maximum-highlight protection only when enough disk samples are available. A small, strongly beamed hotspot may clip while the broader disk remains visible. Metering remains GPU-only and independent of lens-flare extraction. |
+| `src/CameraOptics.h/.cpp` | Adds optional black-hole visibility assistance: a bounded HDR detail lift near the disk and the new Pure Auto metering hint. Zero input remains zero. It uses existing textures, adds no full-resolution buffer and does not modify the simulated disk's emission. |
+| `src/RenderChecks.cpp` | Exercises native editor input, reverse spin, invalid values, preset synchronization, read-only selection, unchanged camera/time and paused rendering. Compares assisted/unassisted HDR and Pure Auto disk visibility. |
+| `src/BlackHole.cpp` — Endurance | Computes spacecraft derivative normals in metres with guarded normalization. The old AU-scale cross product could underflow and produce invalid lighting/missing surfaces. Guards the specular half vector as well. Nearby geometry within 1,000 km is preserved by both source and destination lens-depth tests, preventing local ship pixels from being reused as warped background. This is a local optical approximation, not an assertion that gravity never bends light from a spacecraft. |
+| `src/BlackHole.cpp` — distant rays | Allows proportional steps outside twice the disk radius. The previous fixed maximum step exhausted the ray budget before reaching Gargantua from Mann's distance. Fine strong-field/disk integration remains unchanged. |
+| `src/RenderChecks.cpp` — ship/range checks | Compares close-up ship pixels with spin 0 and 0.8, requires at least 100 stable neutral ship pixels, checks the HDR scene for nonfinite components, and captures Gargantua from 650 AU. This separates ship shading/foreground masking from the legitimately changing lensed sky. |
+| `README.md`, this log | Explain the controls, supported spin range and the artistic display adjustment separately from physical simulation. |
+
 This is the file-by-file record for the latest refinement batch. Earlier implementations and their replacements remain in [SIMULATION_CHANGES.md](SIMULATION_CHANGES.md). The current renderer is OpenGL; [DX12_MIGRATION.md](DX12_MIGRATION.md) records the separate migration status.
 
-Final verification: Debug x64 build passed; CPU simulation checks passed; **72 GPU captures passed with zero OpenGL errors**. Identical seeded revisits and cool-star before/after-landing images match byte for byte. Inactive-system orbital evaluations are zero. The zoom overlay changes pixels while visible and returns exactly to the original image when expired. Seven verified, lossless engine captures are embedded in the README.
+Follow-up verification: Debug x64 build passed; **81 GPU captures passed with zero OpenGL errors**. The close Endurance view contains no nonfinite HDR components; 14,679 ship pixels match across spin changes. Both assisted HDR and assisted Pure Auto produce greater disk-region brightness than their unassisted controls. Native editor validation and paused-scene updates pass.
+
+Earlier checkpoint verification: CPU simulation checks and 72 GPU captures passed. Identical seeded revisits and cool-star before/after-landing images match byte for byte. Inactive-system orbital evaluations are zero. The zoom overlay changes pixels while visible and returns exactly to the original image when expired. Seven verified, lossless engine captures are embedded in the README.
 
 ## Stars, galaxies and CPU load
 

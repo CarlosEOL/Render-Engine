@@ -1,5 +1,6 @@
 #pragma once
 #include "VehicleInterior.h"
+#include "ObjectEditor.h"
 
 #include <vector>
 #include <array>
@@ -92,6 +93,7 @@ private:
     void SelectCatalogue(int id);
     void EnterSelectedSystem(bool overview);
     void RefreshPanel();
+    void RefreshObjectEditor();
     void ResizeInterface();
     void SyncCameraAngles();
     void PrepareCurrentBrowser();
@@ -117,6 +119,7 @@ private:
     glm::dvec3 systemOriginAu = glm::dvec3(0);
     double cameraClockRate=1;
     VehicleInterior vehicleInterior;
+    ObjectEditor objectEditor;
     int interiorVehicle=0;
     glm::dmat3 lastCabinRotation=glm::dmat3(1);
     int quantumRateIndex = 2;

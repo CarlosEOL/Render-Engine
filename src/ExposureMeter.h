@@ -6,7 +6,7 @@ class ExposureMeter {
 public:
   bool Initialize();
   void Update(unsigned int scene, const glm::vec3 &stellarHint,
-              float realSeconds) const;
+              float realSeconds,const glm::vec3& blackHoleHint=glm::vec3(-1,-1,0)) const;
   void Reset() const { valid = false; }
   unsigned int Texture() const { return textures[current]; }
   void Release();

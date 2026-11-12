@@ -14,6 +14,7 @@ void main(){
   const char *fragment = R"(#version 330 core
 uniform sampler2D scene;
 uniform vec3 stellarHint;
+uniform vec3 blackHoleHint;
 uniform sampler2D history;
 uniform bool initialize;
 uniform float realSeconds;
@@ -21,6 +22,8 @@ layout(location=0) out vec4 state;
 void main(){
     float logSum=0,weightSum=0,highlight=0;
     int hotCells=0;
+    int diskHistogram[32];for(int i=0;i<32;++i)diskHistogram[i]=0;
+    int diskSamples=0;
     vec2 dimensions=vec2(textureSize(scene,0));
     float level=max(0.0,ceil(log2(max(dimensions.x/64.0,dimensions.y/36.0))));
     ivec2 size=textureSize(scene,int(level));
@@ -38,12 +41,26 @@ void main(){
         float peak=max(c.r,max(c.g,c.b));
         highlight=max(highlight,peak);
         if(peak>8.0)++hotCells;
+        float diskDistance=length((uv-blackHoleHint.xy)*vec2(dimensions.x/dimensions.y,1));
+        if(blackHoleHint.z>0 && diskDistance<blackHoleHint.z && peak>.5 && c.g<max(c.r,c.b)*1.15){
+            int bin=clamp(int(floor(log2(peak)))+16,0,31);++diskHistogram[bin];++diskSamples;
+        }
     }
     float average=weightSum>0?exp2(logSum/weightSum):.0007;
     float target=log2(.22/max(average,.0001));
     // A few isolated hot cells may clip; a resolved luminous area is protected.
     if(hotCells<4)highlight=min(highlight,8.0);
     if(highlight>0)target=min(target,log2(.90/highlight));
+    // A beamed disk can span many stops. Meter its resolved emitting area,
+    // allowing a small hot core to clip instead of hiding the entire disk.
+    if(diskSamples>=8){
+        int accumulated=0;float percentile=.5;
+        for(int i=0;i<32;++i){
+            accumulated+=diskHistogram[i];
+            if(accumulated*4>=diskSamples*3){percentile=exp2(float(i)-15.5);break;}
+        }
+        target=log2(.55/percentile);
+    }
     if(stellarHint.z>0){
         float samples[16];int count=0;
         float aspect=dimensions.x/dimensions.y;
@@ -112,7 +129,7 @@ void main(){
 }
 
 void ExposureMeter::Update(unsigned int scene, const glm::vec3 &stellarHint,
-                           float seconds) const {
+                           float seconds,const glm::vec3& blackHoleHint) const {
   if (!program)
     return;
   int viewport[4], oldFramebuffer, oldProgram, oldVao, activeTexture,
@@ -139,6 +156,7 @@ void ExposureMeter::Update(unsigned int scene, const glm::vec3 &stellarHint,
   glDisable(GL_DEPTH_TEST);
   glDisable(GL_BLEND);
   glUseProgram(program);
+  glUniform3fv(glGetUniformLocation(program,"blackHoleHint"),1,glm::value_ptr(blackHoleHint));
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_2D, scene);
   glActiveTexture(GL_TEXTURE2);
