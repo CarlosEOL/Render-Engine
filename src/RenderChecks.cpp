@@ -24,9 +24,10 @@
 #include <iostream>
 #include <set>
 #include <source_location>
+#include <chrono>
 
 // Optional hidden-window GPU smoke checks; normal application startup never runs this.
-bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly)
+bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,bool galaxyOnly)
 {
     if (!blackHoleReady || !starSystemReady || !quantumReady || !opticsReady)
         return false;
@@ -169,8 +170,10 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly)
         std::cout<<"[Capture] "<<name<<"\n";
         if(!keepToast)speedToastUntil = 0;
         float dt = .016f;
+        const auto renderStart=std::chrono::steady_clock::now();
         Update(dt);
         glFinish();
+        if(galaxyOnly)std::cout<<"Galaxy frame including bake/readiness: "<<std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-renderStart).count()<<" ms\n";
         if(selectedTarget==9 && showBlackHole){
             const auto relative=blackHole.ObservedSpacecraftPosition(cameraPos,simulationTime)-cameraPos;
             std::cout<<"Craft distance="<<glm::length(relative)*Astronomy::metresPerAu
@@ -209,6 +212,47 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly)
             fail();
         return pixels;
     };
+    const auto checkGalaxy=[&](){
+        StartSolarSystem();scenePanel.SetVisible(false);ResizeInterface();
+        trajectories=false;visionProfile=0;lensFlareStrength=0;fieldOfView=75;
+        KeyCallback(window,1200,0,GLFW_PRESS,0);exposureEv=0;
+        SetMagnitudeLimit(10.2f);
+        const auto galaxyView=[&](const glm::dvec3& modelCamera,const glm::dvec3& modelAim,const char* name){
+            const auto world=MilkyWayModel::ToWorldAu(modelCamera);
+            starSystem.camera=world-systemOriginAu;
+            cameraFront=glm::normalize(glm::vec3(MilkyWayModel::Orientation()*(modelAim-modelCamera)));
+            const auto north=glm::vec3(MilkyWayModel::Orientation()[1]);
+            cameraUp=std::abs(glm::dot(cameraFront,north))>.98f?glm::vec3(MilkyWayModel::Orientation()[2]):north;
+            blackHole.InvalidateSky();sceneCacheValid=false;
+            return capture(name);
+        };
+        fieldOfView=65;
+        const auto face=galaxyView({0,32,0},{0,0,0},"milky-way-face-on");
+        size_t blueArms=0,warmCore=0;
+        for(size_t p=0;p<face.size();p+=3){
+            if(face[p+2]>face[p]*1.15 && face[p+2]>35)++blueArms;
+            if(face[p]>face[p+2]*1.12 && face[p]>70)++warmCore;
+        }
+        std::cout<<"Milky Way color structure: blue-arm pixels="<<blueArms<<"; warm-core pixels="<<warmCore<<"\n";
+        if(blueArms<500 || warmCore<50)fail();
+        const auto builds=blackHole.MilkyWayCacheBuilds();
+        cameraFront=glm::normalize(cameraFront+cameraUp*.15f);sceneCacheValid=false;
+        capture("milky-way-face-on-rotated");
+        if(blackHole.MilkyWayCacheBuilds()!=builds){std::cerr<<"Galaxy cache rebuilt on rotation\n";fail();}
+        galaxyView({0,16,27},{0,0,0},"milky-way-inclined");
+        galaxyView({0,0,34},{0,0,0},"milky-way-edge-on");
+        fieldOfView=100;
+        const auto interior=galaxyView({MilkyWayModel::solarRadiusKpc,.000001,0},{0,0,0},"milky-way-solar-dust-lanes");
+        int viewWidth,viewHeight;glfwGetFramebufferSize(window,&viewWidth,&viewHeight);
+        double polar=0;for(int x=0;x<viewWidth;++x)for(int c=0;c<3;++c)polar+=interior[(static_cast<size_t>(viewHeight-1)*viewWidth+x)*3+c];
+        polar/=viewWidth*3;
+        std::cout<<"Interior off-plane mean display value="<<polar<<"\n";
+        if(polar>40){std::cerr<<"Interior galaxy became an all-sky fog\n";fail();}
+        galaxyView({7,.42,0},{5,0,0},"milky-way-volume-transition-low");
+        galaxyView({7,1.48,0},{5,0,0},"milky-way-volume-transition-high");
+        std::cout<<"Galaxy checks "<<(success?"PASSED":"FAILED")<<": "<<captures<<" scene captures; "<<failedLines.size()<<" assertion locations failed\n";
+    };
+    if(galaxyOnly){checkGalaxy();return success;}
     // Check many seeds before GPU captures. A range error must become a
     // named failure, not an interactive CRT assertion hidden behind the app.
     try {
@@ -1059,6 +1103,7 @@ Connections: {
     cameraFront=glm::normalize(glm::vec3(MilkyWayModel::Orientation()[1]));capture("milky-way-galactic-pole");
     if(blackHole.MilkyWayCacheBuilds()>beforeSky+1){std::cerr<<"Sky rebaked on rotation or magnitude changes\n";fail();}
     SetMagnitudeLimit(7);
+    checkGalaxy();
     std::cout<<"Render checks "<<(success?"PASSED":"FAILED")<<": "<<captures<<" scene captures; "<<uiCaptures<<" UI captures; "<<failedLines.size()<<" assertion locations failed\n";
     return success;
 }

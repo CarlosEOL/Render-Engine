@@ -1,5 +1,6 @@
 # Milky Way, navigation and new browsers — November 12, 2026
 
+Appearance follow-up: [NASA/JPL artwork, sharper exterior LOD and interior dust-band refinement](MILKY_WAY_QUALITY_2026-11-12.md).
 The Milky Way is now an observation-constrained structural illustration, with a Galactic plane oriented relative to the engine's ecliptic axes. It is not an external photograph of our galaxy, a complete Gaia catalogue, or a copy of SpaceEngine's implementation.
 
 ## Every changed component and why

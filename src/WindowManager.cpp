@@ -1007,7 +1007,12 @@ void WindowManager::RefreshPanel() {
     }
     scenePanel.SetPlayback(simulationPlaying,playback.str());
     if(navigationSelectionValid && navigationSelection.kind==NavigationEntry::Kind::Nebula){scenePanel.SetInformation(CelestialPhenomena::Information(navigationSelection.system));return;}
-    if(navigationSelectionValid && (navigationSelection.kind==NavigationEntry::Kind::Galaxy || navigationSelection.kind==NavigationEntry::Kind::Asteroid || navigationSelection.kind==NavigationEntry::Kind::Barycentre)){scenePanel.SetInformation(navigationSelection.name+"\n"+navigationSelection.type+"\nParent: "+navigationSelection.parent);return;}
+    if(navigationSelectionValid && (navigationSelection.kind==NavigationEntry::Kind::Galaxy || navigationSelection.kind==NavigationEntry::Kind::Asteroid || navigationSelection.kind==NavigationEntry::Kind::Barycentre)){
+        auto info=navigationSelection.name+"\n"+navigationSelection.type+"\nParent: "+navigationSelection.parent;
+        if(navigationSelection.kind==NavigationEntry::Kind::Galaxy && navigationSelection.system==0)
+            info+="\n\nAppearance: Courtesy NASA/JPL-Caltech\nPIA10748 artist concept, reconstructed as an illustrative 3D light field.\n";
+        scenePanel.SetInformation(info);return;
+    }
     if (quantumMode) scenePanel.SetInformation(quantum.Information());
     else if (pendingSystemTarget!=0) {
         const auto& system=inStarSystem && activeSystemTarget==pendingSystemTarget?starSystem:previewSystem;
