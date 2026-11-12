@@ -1,0 +1,3 @@
+C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/ShaderTranslator/CMakeFiles/ShaderTranslator.dir
+C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/ShaderTranslator/CMakeFiles/ALL_BUILD.dir
+C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/ShaderTranslator/CMakeFiles/ZERO_CHECK.dir

@@ -1,0 +1,356 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\build\glslang\glslang\CMakeFiles\glslang.dir\cmake_pch.cxx">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\CInterface\glslang_c_interface.cpp">
+      <Filter>CInterface</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\GenericCodeGen\CodeGen.cpp">
+      <Filter>GenericCodeGen</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\GenericCodeGen\Link.cpp">
+      <Filter>GenericCodeGen</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\OSDependent\Windows\ossource.cpp">
+      <Filter>OSDependent\Windows</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\glslang_tab.cpp">
+      <Filter>MachineIndependent</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\attribute.cpp">
+      <Filter>MachineIndependent</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\Constant.cpp">
+      <Filter>MachineIndependent</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\iomapper.cpp">
+      <Filter>MachineIndependent</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\InfoSink.cpp">
+      <Filter>MachineIndependent</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\Initialize.cpp">
+      <Filter>MachineIndependent</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\IntermTraverse.cpp">
+      <Filter>MachineIndependent</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\Intermediate.cpp">
+      <Filter>MachineIndependent</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\ParseContextBase.cpp">
+      <Filter>MachineIndependent</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\ParseHelper.cpp">
+      <Filter>MachineIndependent</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\PoolAlloc.cpp">
+      <Filter>MachineIndependent</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\RemoveTree.cpp">
+      <Filter>MachineIndependent</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\Scan.cpp">
+      <Filter>MachineIndependent</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\ShaderLang.cpp">
+      <Filter>MachineIndependent</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\SpirvIntrinsics.cpp">
+      <Filter>MachineIndependent</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\SymbolTable.cpp">
+      <Filter>MachineIndependent</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\Versions.cpp">
+      <Filter>MachineIndependent</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\intermOut.cpp">
+      <Filter>MachineIndependent</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\limits.cpp">
+      <Filter>MachineIndependent</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\linkValidate.cpp">
+      <Filter>MachineIndependent</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\parseConst.cpp">
+      <Filter>MachineIndependent</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\reflection.cpp">
+      <Filter>MachineIndependent</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\preprocessor\Pp.cpp">
+      <Filter>MachineIndependent\Preprocessor</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\preprocessor\PpAtom.cpp">
+      <Filter>MachineIndependent\Preprocessor</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\preprocessor\PpContext.cpp">
+      <Filter>MachineIndependent\Preprocessor</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\preprocessor\PpScanner.cpp">
+      <Filter>MachineIndependent\Preprocessor</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\preprocessor\PpTokens.cpp">
+      <Filter>MachineIndependent\Preprocessor</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\propagateNoContraction.cpp">
+      <Filter>MachineIndependent</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\GlslangToSpv.cpp">
+      <Filter>SPIRV</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\InReadableOrder.cpp">
+      <Filter>SPIRV</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\Logger.cpp">
+      <Filter>SPIRV</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\SpvBuilder.cpp">
+      <Filter>SPIRV</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\SpvPostProcess.cpp">
+      <Filter>SPIRV</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\doc.cpp">
+      <Filter>SPIRV</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\SpvTools.cpp">
+      <Filter>SPIRV</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\disassemble.cpp">
+      <Filter>SPIRV</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\CInterface\spirv_c_interface.cpp">
+      <Filter>SPIRV\CInterface</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\Public\ShaderLang.h">
+      <Filter>Public</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\Include\arrays.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\Include\BaseTypes.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\Include\Common.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\Include\ConstantUnion.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\Include\glslang_c_interface.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\Include\glslang_c_shader_types.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\Include\InfoSink.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\Include\InitializeGlobals.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\Include\intermediate.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\Include\PoolAlloc.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\Include\ResourceLimits.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\Include\ShHandle.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\Include\SpirvIntrinsics.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\Include\Types.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\Include\visibility.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\OSDependent\osinclude.h">
+      <Filter>OSDependent</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\attribute.h">
+      <Filter>MachineIndependent</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\glslang_tab.cpp.h">
+      <Filter>MachineIndependent</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\gl_types.h">
+      <Filter>MachineIndependent</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\Initialize.h">
+      <Filter>MachineIndependent</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\iomapper.h">
+      <Filter>MachineIndependent</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\LiveTraverser.h">
+      <Filter>MachineIndependent</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\localintermediate.h">
+      <Filter>MachineIndependent</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\ParseHelper.h">
+      <Filter>MachineIndependent</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\reflection.h">
+      <Filter>MachineIndependent</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\RemoveTree.h">
+      <Filter>MachineIndependent</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\Scan.h">
+      <Filter>MachineIndependent</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\ScanContext.h">
+      <Filter>MachineIndependent</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\SymbolTable.h">
+      <Filter>MachineIndependent</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\Versions.h">
+      <Filter>MachineIndependent</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\parseVersions.h">
+      <Filter>MachineIndependent</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\propagateNoContraction.h">
+      <Filter>MachineIndependent</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\preprocessor\PpContext.h">
+      <Filter>MachineIndependent\Preprocessor</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\preprocessor\PpTokens.h">
+      <Filter>MachineIndependent\Preprocessor</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\bitutils.h">
+      <Filter>SPIRV</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\GLSL.std.450.h">
+      <Filter>SPIRV</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\GLSL.ext.EXT.h">
+      <Filter>SPIRV</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\GLSL.ext.KHR.h">
+      <Filter>SPIRV</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\GlslangToSpv.h">
+      <Filter>SPIRV</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\hex_float.h">
+      <Filter>SPIRV</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\Logger.h">
+      <Filter>SPIRV</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\SpvBuilder.h">
+      <Filter>SPIRV</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\spvIR.h">
+      <Filter>SPIRV</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\spvUtil.h">
+      <Filter>SPIRV</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\doc.h">
+      <Filter>SPIRV</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\SpvTools.h">
+      <Filter>SPIRV</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\disassemble.h">
+      <Filter>SPIRV</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\GLSL.ext.AMD.h">
+      <Filter>SPIRV</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\GLSL.ext.NV.h">
+      <Filter>SPIRV</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\GLSL.ext.ARM.h">
+      <Filter>SPIRV</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\GLSL.ext.QCOM.h">
+      <Filter>SPIRV</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\NonSemanticDebugPrintf.h">
+      <Filter>SPIRV</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\NonSemanticShaderDebugInfo.h">
+      <Filter>SPIRV</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\build\glslang\glslang\CMakeFiles\glslang.dir\Debug\cmake_pch.hxx">
+      <Filter>Precompile Header File</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\build\glslang\glslang\CMakeFiles\glslang.dir\Release\cmake_pch.hxx">
+      <Filter>Precompile Header File</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\build\glslang\glslang\CMakeFiles\glslang.dir\MinSizeRel\cmake_pch.hxx">
+      <Filter>Precompile Header File</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\build\glslang\glslang\CMakeFiles\glslang.dir\RelWithDebInfo\cmake_pch.hxx">
+      <Filter>Precompile Header File</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\MachineIndependent\glslang.y">
+      <Filter>MachineIndependent</Filter>
+    </None>
+    <None Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\SPIRV\spirv.hpp11">
+      <Filter>SPIRV</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CInterface">
+      <UniqueIdentifier>{F36EBA2F-973C-390C-B94D-F9607833513B}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="GenericCodeGen">
+      <UniqueIdentifier>{5DD98797-C4C1-3B66-BD78-05D32445BAAF}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Include">
+      <UniqueIdentifier>{BD091DC9-6F8C-37D9-86BB-EB5DE2327C03}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="MachineIndependent">
+      <UniqueIdentifier>{1A43F471-BC53-32E2-8585-DB7CBDACBE2C}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="MachineIndependent\Preprocessor">
+      <UniqueIdentifier>{64CA22FF-5612-3CE9-9F54-ADD86376C3B5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="OSDependent">
+      <UniqueIdentifier>{453C1F8B-94D7-3E81-A4A0-F4DEBC4AC35E}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="OSDependent\Windows">
+      <UniqueIdentifier>{C81F6BAB-E607-3804-BF54-104930DAC795}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Precompile Header File">
+      <UniqueIdentifier>{1FFCC305-A117-3CE4-9D6A-0D65DC1EDF60}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Public">
+      <UniqueIdentifier>{4EC9B67F-0910-38CA-B6AB-89B4D394FA7E}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="SPIRV">
+      <UniqueIdentifier>{42D8BA6A-E79E-3C36-B234-A2FDD01A2220}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="SPIRV\CInterface">
+      <UniqueIdentifier>{309738AE-6C7A-337F-863F-94F7B5E09A35}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{91325ED5-6692-398F-9F40-735C97CA2B91}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

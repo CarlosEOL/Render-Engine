@@ -1,0 +1,9 @@
+C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/SPIRV-Cross/CMakeFiles/spirv-cross-core.dir
+C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/SPIRV-Cross/CMakeFiles/spirv-cross-glsl.dir
+C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/SPIRV-Cross/CMakeFiles/spirv-cross-reflect.dir
+C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/SPIRV-Cross/CMakeFiles/spirv-cross-hlsl.dir
+C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/SPIRV-Cross/CMakeFiles/spirv-cross-util.dir
+C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/SPIRV-Cross/CMakeFiles/RUN_TESTS.dir
+C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/SPIRV-Cross/CMakeFiles/INSTALL.dir
+C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/SPIRV-Cross/CMakeFiles/ALL_BUILD.dir
+C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/SPIRV-Cross/CMakeFiles/ZERO_CHECK.dir

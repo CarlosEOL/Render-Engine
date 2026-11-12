@@ -1,0 +1,10 @@
+^C:\USERS\SMOONTHCRIMINAL\ONEDRIVE\DOCUMENTS\CPPPROJECTFILES\EXTERNAL_LIB\SRC\SPIRV-CROSS\CMAKELISTS.TXT
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SC:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/src/SPIRV-Cross -BC:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/SPIRV-Cross --check-stamp-file C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/SPIRV-Cross/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

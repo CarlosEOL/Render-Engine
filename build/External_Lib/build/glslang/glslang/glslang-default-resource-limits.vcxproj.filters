@@ -1,0 +1,30 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\ResourceLimits\ResourceLimits.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\ResourceLimits\resource_limits_c.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\Public\ResourceLimits.h">
+      <Filter>Public</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\Public\resource_limits_c.h">
+      <Filter>Public</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Public">
+      <UniqueIdentifier>{4EC9B67F-0910-38CA-B6AB-89B4D394FA7E}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{91325ED5-6692-398F-9F40-735C97CA2B91}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

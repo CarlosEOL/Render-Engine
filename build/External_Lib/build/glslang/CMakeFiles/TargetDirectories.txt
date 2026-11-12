@@ -1,0 +1,9 @@
+C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/glslang/CMakeFiles/ALL_BUILD.dir
+C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/glslang/CMakeFiles/ZERO_CHECK.dir
+C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/glslang/SPIRV/CMakeFiles/SPIRV.dir
+C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/glslang/glslang/CMakeFiles/GenericCodeGen.dir
+C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/glslang/glslang/CMakeFiles/MachineIndependent.dir
+C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/glslang/glslang/CMakeFiles/glslang.dir
+C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/glslang/glslang/CMakeFiles/glslang-default-resource-limits.dir
+C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/glslang/glslang/OSDependent/Windows/CMakeFiles/OSDependent.dir
+C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/glslang/StandAlone/CMakeFiles/glslang-standalone.dir

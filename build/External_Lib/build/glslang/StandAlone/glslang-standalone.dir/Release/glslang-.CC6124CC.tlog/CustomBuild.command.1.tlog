@@ -1,0 +1,20 @@
+^C:\USERS\SMOONTHCRIMINAL\ONEDRIVE\DOCUMENTS\CPPPROJECTFILES\EXTERNAL_LIB\BUILD\GLSLANG\CMAKEFILES\3436BA9E685BAA6EBD47D8D2FE2A5310\GLSL_INTRINSIC_HEADER.H.RULE
+setlocal
+C:\Users\SmoonthCriminal\AppData\Local\Programs\Python\Python313\python.exe C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/src/glslang/StandAlone/../gen_extension_headers.py -i C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/src/glslang/StandAlone/../glslang/ExtensionHeaders -o C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/glslang/include/glslang/glsl_intrinsic_header.h
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^C:\USERS\SMOONTHCRIMINAL\ONEDRIVE\DOCUMENTS\CPPPROJECTFILES\EXTERNAL_LIB\SRC\GLSLANG\STANDALONE\CMAKELISTS.TXT
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SC:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/src/glslang -BC:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/glslang --check-stamp-file C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/glslang/StandAlone/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

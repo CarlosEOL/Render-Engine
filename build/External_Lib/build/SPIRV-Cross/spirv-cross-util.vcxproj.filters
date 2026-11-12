@@ -1,0 +1,24 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\SPIRV-Cross\spirv_cross_util.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\SPIRV-Cross\spirv_cross_util.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\SPIRV-Cross\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{49A90EB7-4427-3204-8786-7041950E29BB}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{71A0DD7C-AC43-30D2-9C44-366F5973F5BC}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

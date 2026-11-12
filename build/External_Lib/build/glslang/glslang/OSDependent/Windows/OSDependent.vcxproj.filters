@@ -1,0 +1,16 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\stub.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\src\glslang\glslang\OSDependent\Windows\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{91325ED5-6692-398F-9F40-735C97CA2B91}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

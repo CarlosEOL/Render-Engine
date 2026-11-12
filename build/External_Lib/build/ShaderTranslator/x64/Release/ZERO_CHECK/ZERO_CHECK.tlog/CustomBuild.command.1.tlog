@@ -1,0 +1,10 @@
+^C:\USERS\SMOONTHCRIMINAL\ONEDRIVE\DOCUMENTS\CPPPROJECTFILES\EXTERNAL_LIB\BUILD\SHADERTRANSLATOR\CMAKEFILES\6AC5CB64AF0D0867E04A7AF13C9D0FE0\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SC:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/Render-Engine/tools/shader-translator -BC:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/ShaderTranslator --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/ShaderTranslator/RenderEngineShaderTranslator.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
