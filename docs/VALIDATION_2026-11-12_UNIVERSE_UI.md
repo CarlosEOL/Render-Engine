@@ -14,6 +14,8 @@ The nine additional native scene captures exercise DLSS. The full native runs re
 
 Tests explicitly confirm that single-click name selection leaves camera coordinates and simulation time unchanged, and that no redundant Select button is present. Final overview cards show readable diameters, temperatures and satellite counts; barycentres do not inherit a body's temperature.
 
+The input follow-up checks exercise **Shift+F2** information visibility independently of **F2** orbit paths, plus the View-menu information command. Native Play and Pause button clicks must return focus to the viewport and permit the next mouse-look gesture. DX12 Debug and OpenGL each passed the updated `--ui-check` (11 captures); DX12 reported zero validation errors. Logs are `build/dx12/input-fixes-ui.log` and `build/current/input-fixes-ui.log`.
+
 Miller's atmosphere on/off comparisons at three viewing distances reported **zero changed pixels outside the allowed foreground shell** and no nonfinite radiance. The eclipse comparison changed coronal light while preserving the covered lunar-centre scene radiance. Six lens profiles retained distinct additive effects. Switching glare on/off did not change metered exposure; panning with the visible Sun produced a **0.0253 EV** target range. Dormant-system orbital evaluation count remained zero outside the detail range.
 
 ## Regressions found and corrected during this work
