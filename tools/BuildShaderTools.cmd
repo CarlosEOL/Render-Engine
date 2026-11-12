@@ -2,6 +2,8 @@
 setlocal
 cd /d "%~dp0.."
 set "DX12_EXTERNAL=%CD%\..\External_Lib"
+call :source DLSS https://github.com/NVIDIA/DLSS.git 9981c6350dc58c0ce21f024fd65e31e851c31689
+if errorlevel 1 exit /b 1
 call :source glslang https://github.com/KhronosGroup/glslang.git ff6ad3c77a2cc2fdea329b4a1d5425c82bc56a1f
 if errorlevel 1 exit /b 1
 call :source SPIRV-Cross https://github.com/KhronosGroup/SPIRV-Cross.git 57e4efcc84112abcd426dc5ec248b5339bee04f2

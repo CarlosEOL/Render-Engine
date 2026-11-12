@@ -1,111 +1,66 @@
-# OpenGL → DirectX 12 migration record
+# OpenGL to DirectX 12 migration record
 
-Status: **native DX12 preview implemented; full application migration in progress**. Updated November 11, 2026.
+Updated November 12, 2026. **The primary DX12 executable now runs the complete supported application scene set**, including Planetorium and Quantum Simulation. The original isolated Kerr preview remains a separate optional project. This is a native DX12 renderer: no OpenGL context, OpenGL driver rendering, CPU frame transfer or interop presentation copy is used.
 
-The complete application remains the OpenGL reference, `build/current/bin/Render-Engine.exe`. A separate native DX12 preview now creates a Win32 window, D3D12 device, queue, DXGI swap chain and HLSL pipelines. It does not create an OpenGL context, link OpenGL, copy OpenGL frames into DX12 or read scene pixels through the CPU during normal rendering.
+## Branches and builds
 
-The preview includes GPU Kerr rays, a thin emitting disk, HDR/Pure exposure and free flight. Planets, Endurance/Rangers, interiors, terrain, atmospheres, rings, catalogue browsing, galaxy assets, quantum scenes and lens flares are **not yet ported to the native executable**. DLSS is also not integrated. Its seeded directional sky is illustrative, rather than the navigable galaxy catalogue. This document distinguishes the native milestone from full feature parity.
-
-## Branch separation
-
-| Branch | Purpose | Renderer status |
+| Branch | Main project | Output |
 | --- | --- | --- |
-| `build/opengl` | Preserved complete application; checkpoint `e1fa2a0` | OpenGL 3.3, including the Endurance foreground/normal fix, disk visibility and F5 editor |
-| `build/dx12` | Includes that checkpoint plus the separately buildable native preview | Native DX12 Kerr/exposure milestone; original OpenGL project remains available for comparison |
+| `build/dx12` | `Render-Engine.DX12.vcxproj` | `build/dx12/Debug/bin/Render-Engine-DX12.exe` or `Release/bin` |
+| `build/opengl` | `Render-Engine.vcxproj` | `build/current/bin/Render-Engine.exe` for the documented isolated build |
 
-`main` is unchanged. No branch is pushed remotely. OpenGL output remains under `build/current`; DX12 outputs are separated under `build/dx12/Debug` and `build/dx12/Release`.
+`main` remains unchanged. The DX12 branch retains the original project as a reference; its primary executable renders through DX12. The OpenGL branch has no DX12 SDK/runtime dependency.
 
-## Native implementation: every change and reason
+Run `Build-DX12.cmd Debug` or `Build-DX12.cmd Release` from a Visual Studio 2022 installation with C++ and the Windows SDK. The script builds the pinned GLSL translator and acquires the official DLSS dependency in sibling `External_Lib`. Existing dependency checkouts with different revisions are reported rather than reset. Galaxy assets, translator/Assimp runtime DLLs, and the DLSS redistributable are copied beside the executable. Run from any working directory.
 
-| Files | Change and reason |
+For an SDK-free native fallback after building the shader translator, pass `/p:EnableDLSS=false` to MSBuild. This omits NGX headers/libraries; the UI safely retains native rendering. The historical `Render-Engine.DX12.Preview.vcxproj` is separately buildable and is not the full application. Its output is under `build/dx12/Preview`.
+
+## Supported scene parity
+
+The DX12 application reuses the same scene controls and simulation code as OpenGL: startup laboratories, the scaled Solar System, generated star systems, 100 m terrain patches, atmospheres, Saturn rings, stellar surfaces/prominences, galaxy images, GPU Kerr lensing, Endurance/Rangers and interiors, photon illustration, browser/selection/G travel, following/rotation/landing/free fall, transient notifications, object editor, HDR/Pure exposure, calibrated lens profiles and glare, and all seven Quantum example families. OBJ and FBX import also use the same application path.
+
+New shared physics, catalogue, selection and interface changes are described in [Kerr observer](KERR_OBSERVER_2026-11-12.md), [star generation and picking](STAR_GENERATION_AND_SELECTION_2026-11-12.md), [interface polish](UI_POLISH_2026-11-12.md), and the earlier [atmosphere/Moon correction](ATMOSPHERE_AND_MOON_2026-11-12.md). [DLSS](DLSS_2026-11-12.md) is an optional, experimental native DX12 addition.
+
+## Every migration change and why
+
+| Files or component | Change and reason |
 | --- | --- |
-| `Render-Engine.DX12.vcxproj` (new) | Separate Debug/Release x64 project, native Windows/DX12 libraries, relative include paths, per-configuration output and HLSL deployment. Keeps the working OpenGL project separate while native parity is incomplete. Uses only Windows SDK libraries and existing GLM headers, without downloaded helper libraries. |
-| `Build-DX12.cmd` (new) | Validates the configuration and invokes the installed Visual Studio toolchain. Provides a repeatable entry point without changing the OpenGL solution. |
-| `src/dx12/Dx12Main.cpp` (new) | Native window/menu, free camera, playback/rates, exposure modes and shared F5 editor. Identifies itself as a migration preview. Its time currently drives disk structure only. Also contains the hidden `--smoke` checks so tests exercise the real executable. |
-| `src/dx12/Dx12Renderer.h/.cpp` (new): lifetime | Hardware adapter selection, explicit optional WARP, debug layer when available, direct queue, two flip-discard buffers, per-buffer allocators/256-byte constant slices and fences. Upload/allocator memory is reused only after retirement. Checked resize/shutdown waits protect resource/descriptors. Unsupported hardware fails clearly rather than silently using software. |
-| Renderer: resources | Half-resolution RGBA16F scene, two 1×1 RGBA32F exposure textures, RTV/SRV heaps, root signature, native PSOs and explicit transitions. Retains emission above display white and avoids read/write hazards. Halving both scene dimensions reduces ray pixels to one quarter. |
-| Renderer: scheduling | Vsync interactively, cached ray scene when paused/unchanged, independent exposure/presentation, event waiting while minimized. Avoids retracing static scenes or busy rendering a minimized window. No temperature/performance improvement is claimed without measurement. |
-| `src/dx12/shaders/BlackHole.hlsl` (new) | Native Kerr RK4 rays, horizon capture, ISCO disk edge, frequency shift/beaming, signed spin and proportional far steps. Shared metric source comes from `KerrSpacetime::ShaderFunctions()` with a `vec3`→`float3` alias, avoiding a second divergent metric. This thin disk does not yet include OpenGL volumetric plasma. |
-| `src/dx12/shaders/Optics.hlsl` (new) | Bounded 32×18 GPU metering, emitting-disk percentile, ping-pong adaptation, manual EV, HDR/Pure display and sRGB output. Optional HDR assistance is restricted to the projected disk. Prevents a beamed hotspot from hiding the disk and keeps future camera flare downstream of metering. HDR here means scene-range tone mapping to an SDR swap chain, not HDR10 monitor output. |
-| Renderer/check helpers | Explicit fenced, row-pitch-aware PPM readback; half-float finite checks; exposure checks; 1×1 GPU Kerr probes compared against CPU RK4; spin/cache/resize/editor captures; debug-message inspection. Validates actual GPU work, formats and synchronization. Readback runs only for explicit tests. |
-| `src/ObjectEditor.cpp` | Guards existing `WIN32_LEAN_AND_MEAN`/`NOMINMAX` definitions so both projects share the editor without redefinition warnings; behavior is unchanged. |
-| `README.md`, this document, refinement log, `assets/screenshots/dx12-native-kerr.png` | Launch instructions, controls, actual GPU capture, file-by-file reasons and explicit parity limits make the milestone reviewable. |
+| `Render-Engine.DX12.vcxproj` | Imports the existing application's complete source list, sets the DX12 build definition, and links native DX12/DXGI/compiler libraries instead of OpenGL. Separate output/intermediate folders prevent one backend overwriting the other. Deploys assets and runtime libraries. |
+| `Render-Engine.DX12.Preview.vcxproj` | Separates the old reduced Kerr milestone from the full application. Preserves its reproducible smoke checks without presenting it as feature parity. |
+| `Build-DX12.cmd`, `tools/BuildShaderTools.cmd` | Reproducible Debug/Release entry point and pinned dependency bootstrap, limited to four compiler workers. Avoids relying on unrecorded local compiler installations. |
+| `src/dx12/ShaderTranslator.h/.cpp`, `tools/shader-translator/CMakeLists.txt` | Translate the shared GLSL stages through glslang/SPIR-V/SPIRV-Cross into native HLSL and DXBC. Both backends execute the same maintained scene/shader equations. The translator DLL has a C allocation/free interface so Release compiler libraries do not exchange C++ runtime/STL ownership with a Debug application. |
+| `src/dx12/Dx12SceneBridge.h/.cpp`: scene commands | Implements the GL-style command subset used by this project as D3D12 resource uploads, descriptor bindings, PSOs and draw commands. GLAD function slots dispatch to this backend without loading OpenGL. This preserves the existing scene graph and application behavior rather than maintaining duplicate simulation/render implementations. It is not a general OpenGL implementation. |
+| Bridge: shader linkage and constants | Reflects uniform/sampler/input layouts, transposes GLSL matrix storage for generated HLSL, aligns stage signature register ordering, and supplies unused interpolants as required. Fixes native stage-link mismatches and coordinate differences. |
+| Bridge: points | Expands point sprites with a native geometry shader and correct PointCoord. Matches the reference GPU's pixel-center and lower-tie size rounding; protects unresolved stars and Quantum particle density from disappearing. |
+| Bridge: textures/depth | Native default-heap 2D/cube textures, D32 depth, uploads, per-subresource transitions, render targets, depth copies and GPU mip generation. Preserves source alpha eligibility for photospheres versus excluded plasma/cabin light. |
+| Bridge: coordinates | Maintains the application's bottom-up internal image convention and flips only the final GPU display blit. Existing atmosphere sampling, lens maps and readback checks remain consistent. |
+| Bridge: memory/lifetime | Two persistent 16 MiB upload rings (32 MiB total), with transient oversized/overflow allocations retained to the frame fence. Large imports do not require a permanently huge ring. RTV/DSV pools recycle only after retirement, including resize/deletion; per-frame transient shader descriptors are also fenced. |
+| Bridge: presentation/resize | Native swap-chain presentation and target resizing, including client-size changes caused by menu/panel changes before the first frame. Uploads are retired before target replacement. Prevents blank first Quantum frames and stale descriptors. |
+| `src/dx12/Dx12Renderer.h/.cpp` | Shares the native device/queue/swap chain/fences with the bridge. Full application initialization skips all unused preview render targets, exposure textures and HLSL preview pipelines. Normal Release avoids validation overhead; render-check explicitly requests the debug layer in both configurations. Debug remains validated when available. |
+| `src/dx12/Dx12Main.cpp` | Keeps the optional preview using the revised device initialization and enables validation for its smoke mode. |
+| `src/WindowManager.h/.cpp` | Uses a GLFW window with no graphics context in DX12 builds; native presentation and backend title identification. Reuses input, UI, double camera origins, state transitions and clocks. Conditional hooks leave OpenGL builds independent. |
+| `src/main.cpp`, `src/RenderChecks.cpp` | Shared startup, opt-in checks, exception reporting, native validation and explicit graphics/backend shutdown. Tests the real full application rather than only a synthetic preview. `--warp` explicitly requests software rendering; hardware fallback is not silently substituted. |
+| `src/ObjectLoader.cpp` | Uses the Assimp C API with automatic scene release, avoiding a C++ runtime/STL ABI mismatch with the available debug Assimp DLL in Release builds. Fixes the old vertex-count/face-count indexing error, traverses all node meshes, preserves hierarchy transforms, uses inverse-transpose normals and computes imported bounds. |
+| `src/SaturnRings.cpp` | Renames the shader variable `filter` to `detailFilter`, preserving its math while making it valid for the standards-based shader compiler. |
+| `src/dx12/Dx12Dlss.h/.cpp` and bridge/optics integration | Real optional NGX Super Resolution, HDR inputs, projection jitter, fenced history/recreation, hardware checks and native fallback. The exact scope and conservative reset policy are documented separately; Frame Generation/Ray Reconstruction are not included. |
+| `tests/KerrObserverChecks.cpp`, `tests/kerr/CMakeLists.txt`, `tests/RunKerrObserverChecks.cmd` | Graphics-free massive-observer checks of the shared Kerr equations. |
+| `src/RenderChecks.cpp`, `tests/SimulationChecks.cpp` | Import tests, seven Quantum families, atmosphere/depth masks, neutral Moon, stellar emission, selection/travel, cache/inactive systems, horizon continuity, odd resizes, real DLSS evaluations and native UI captures. Generator preflight, nonblocking assertion logs and failure locations fix the confusing automated-check behavior. |
+| `third_party/licenses`, README and migration records | Preserve compiler/SDK notices, pin provenance, actual captures, repeatable commands and limitations. Remove accidentally tracked compiler logs/recipes and ignore regenerated copies. |
 
-Build and launch from the repository:
+Compiler revisions: glslang `ff6ad3c77a2cc2fdea329b4a1d5425c82bc56a1f`; SPIRV-Cross `57e4efcc84112abcd426dc5ec248b5339bee04f2`. SDK revisions and their independent licence are in the DLSS record. See [third-party notices](../third_party/README.md).
 
-```bat
-Build-DX12.cmd Debug
-build\dx12\Debug\bin\Render-Engine-DX12.exe
-```
+## Checks
 
-`Build-DX12.cmd Release` writes to `build/dx12/Release/bin`. Shader files are copied beside the executable and compiled at startup with the Windows shader compiler; errors appear in the console. Launching from another working directory is supported. No GLFW/GLAD/Assimp, Vulkan SDK or shader translator is needed by this project.
+Run the executable with `--render-check <output-directory>` for opt-in scene/UI captures and a nonzero exit on failure. Tests use GPU readback; normal rendering does not. `tests\RunSimulationChecks.cmd` exercises 1,024 generated systems, solar scale/hierarchy, clocks, terrain and vehicle dynamics without a graphics context. `tests\RunKerrObserverChecks.cmd` checks the central observer without graphics dependencies.
 
-Preview controls: right-drag to look, WASD to move, R/F up/down, Q/E roll, wheel ×1.12 speed per notch (fractional input retained), Shift+wheel FOV, Home resets the camera. Space plays/pauses; `<`/`>` changes time rate by a factor of ten. F5 edits signed spin; F7 cycles HDR/Pure Auto/Pure Manual; `+`/`-` changes manual EV by 0.25. The View menu toggles disk visibility assistance. The camera is exterior-only and clamps just outside the horizon; navigation is not a physical massive observer. Local clocks, landing/follow/infall/cockpit behavior remain in OpenGL pending their ports.
+Validation is recorded on an NVIDIA GeForce RTX 4080 Laptop GPU. The full native Debug run passed 113 scene captures and six normal/compact UI captures, including all four actual DLSS modes and zero DX12 validation errors. The generator survey and standalone Kerr observer also passed. Latest normal/compact UI, Release and OpenGL validation results are recorded in the interface update and build logs; a successful compile alone is not visual validation.
 
-## Native verification
+## Remaining engineering and model limits
 
-```bat
-build\dx12\Debug\bin\Render-Engine-DX12.exe --smoke build\dx12\checks
-```
+- DLSS resets history on scene changes until complete moving-object and bent-ray motion vectors exist. Stable views accumulate; moving views use current-frame reconstruction. This is explicitly experimental.
+- HDR means linear scene storage plus tone mapping to SDR, not HDR10 monitor output. No Frame Generation, Ray Reconstruction, HDR10 or automatic device-loss recovery is claimed.
+- Planet/vehicle/camera physical approximations remain documented independently of the graphics API. A native backend does not make a mixed Newtonian/Schwarzschild/Kerr simulation fully relativistic.
+- General shader translation/PSO creation occurs at startup or first use; an on-disk shader cache remains future work. The native command bridge supports the application's used API subset.
+- Correctness captures are not GPU performance or temperature benchmarks. No speed/thermal claim is made without equal-scene measurements.
 
-Tested in **Debug and Release** on **NVIDIA GeForce RTX 4080 Laptop GPU**, with the **DX12 debug layer enabled**. Nine captures pass in each configuration: Kerr HDR, identical cached frame, zero spin, reverse spin, Pure Auto, +1 EV, odd-size resize, restored size and editor spin. A 1×1 resize also passes. HDR components/exposure are finite; paused rendering adds no ray-scene draw. Four HLSL Kerr probes match the double-precision CPU reference with position errors of 3.2×10⁻⁷–8.0×10⁻⁷ AU for the chosen ray/step. This checks implementation agreement, not physical accuracy of the entire scene. Debug validation reports **zero errors**. Release was launched from its executable directory to check shader lookup independently of the repository working directory. Each capture directory contains `report.txt`.
-
-`--warp` explicitly selects Microsoft's software adapter for optional compatibility checks; it was not used for the hardware result above. These are correctness checks, not a performance benchmark. The current half-resolution pass uses ordinary bilinear reconstruction; no denoiser or frame generation is claimed.
-
-The OpenGL checkpoint passed 81 GPU captures with zero GL errors. Its earlier CPU suite passed; a fresh full-suite rerun in this follow-up was blocked by Windows reporting “Access is denied” before its executable was available. The new in-process CPU/GPU Kerr comparisons pass independently. An unchanged CPU-suite result is not presented as a new pass.
-
-## Completed preparation
-
-| Work completed | Files | Why it helps the migration |
-| --- | --- | --- |
-| Kept deterministic galaxy/system generation outside the graphics API | `src/UniverseCatalog.h/.cpp`, generation in `src/StarSystem.cpp` | The world seed, catalogue IDs, AU positions, galaxy boundaries and generated planet identities can remain unchanged across backends. |
-| Added independent Interstellar-world and flight equations | `src/InterstellarWorlds.h/.cpp`, `src/OrbitalMechanics.h/.cpp` | Schwarzschild integration, proper-time fuel, orbital parameters and separation conditions can be checked without a graphics device. These modules still expose some GLSL helper strings; extracting those strings is remaining work. |
-| Added Kerr ray equations and an independent CPU reference | `src/KerrSpacetime.h/.cpp`, GPU integration in `src/BlackHole.cpp` | The HLSL port can be checked against the same metric, null Hamiltonian, spin/horizon/ISCO definitions and reference rays. This is light propagation; vehicle integration remains Schwarzschild. |
-| Concentrated new rendering features in their own modules | `src/SaturnRings.h/.cpp`, `src/VehicleInterior.h/.cpp`, `src/ExposureMeter.h/.cpp` | Rings, interiors and metering each have initialization, render and release lifecycles. They are still OpenGL implementations, but their responsibilities are identifiable for a pass-by-pass port. |
-| Established bounded GPU data and camera-relative coordinates | Catalogue buffers, `PlanetTerrain`, `BlackHole`, `StarSystem` | Static distant-star data, high/low star coordinates and local terrain offsets define the precision and memory behavior the DX12 implementation must preserve. |
-| Added a CPU regression suite and hidden GPU captures | `tests/SimulationChecks.cpp`, `src/RenderChecks.cpp` | Clock rates, energy conservation, deterministic revisits, zero inactive orbit evaluations, optical-source masking, exposure independence and cabin orientation provide comparison criteria. |
-| Consolidated current build products | `build/current`, `.gitignore` | Old experimental outputs were removed. A single validated OpenGL output serves as the reference, with generated files excluded from version control. |
-| Documented actual captures and model limits | `README.md`, `docs/SIMULATION_CHANGES.md` | The migration can compare the existing rendered appearance and avoid accidentally changing physical assumptions. |
-
-These changes were implemented to satisfy the simulation requests. They are useful preparation, rather than a graphics API replacement.
-
-## OpenGL-dependent code inventory
-
-| Current code | DX12 work remaining |
-| --- | --- |
-| `WindowManager.cpp`, `main.cpp`: context creation, viewport/clear, shader compilation, swap, cleanup | Introduce an explicit graphics backend; create the GLFW window with `GLFW_NO_API` for DX12, obtain its HWND, create a D3D12 device/queue and DXGI swap chain. Keep Win32 menus, input and native panels. Route frame begin/end, resize, present and teardown through the backend. |
-| `AssetManager.cpp`: OpenGL texture upload and mip generation | Decode assets independently, upload through staging resources, create SRVs and generate/upload mip levels explicitly. Track texture lifetime until GPU fences complete. |
-| `StarSystem.cpp`, `BlackHole.cpp`: spheres, terrain, craft, photon markers | Port GLSL to HLSL, define vertex layouts and constant buffers, create immutable PSOs, upload meshes to GPU resources and record draw/instance commands. Preserve double precision on CPU before conversion to camera-relative floats. |
-| `StellarActivity.cpp`, `SaturnRings.cpp`, `GalaxyBackground.cpp` | Port instancing, source eligibility, additive/translucent blend modes, depth behavior and seeded shaders. Keep distant stars/particles GPU-only. |
-| `Atmosphere.cpp`, black-hole lens pass | Replace copied GL scene/depth textures with explicit intermediate resources and transitions. Preserve foreground occlusion, logarithmic depth decoding and the optical-source mask. Initially port existing equations directly. |
-| `CameraOptics.cpp`, `ExposureMeter.cpp` | Port source extraction, exposure history, downsampling/mip generation and final tone-map/lens shaders. Maintain independent scene metering and the two 1×1 history resources; do not meter camera flare. |
-| `VehicleInterior.cpp`, toast overlay | Port cabin geometry and overlay blending. Composite the cabin before exposure/optics and UI after final exposure, so interface text cannot change metering. |
-| `QuantumSimulation.cpp`, `QuantumParticleView.cpp` | Port particle clouds, graph/line rendering and their depth/blend rules. Preserve the upper 3D viewport and smaller lower graph. |
-| `RenderChecks.cpp` | Replace GL pixel reads/error checks with fenced DX12 readback and debug-layer checks. Compare matching scene states and exposure values, allowing small cross-API rasterization differences. |
-
-## Full-parity roadmap (remaining beyond the preview)
-
-1. **Native device and presentation.** Implemented in the separate preview. Full-window scene/UI parity and device-loss recovery remain. Add the native depth target when geometric scene passes arrive.
-2. **Explicit resources and binding.** Core heaps/signature/PSOs, upload/readback and fences are implemented. Add mesh/texture uploads, depth resources, asset lifetime and material/source eligibility for the complete scene.
-3. **Shaders and a simple scene.** Introduce HLSL files and a build-time compiler step. Port the model viewer and one opaque sphere first. Specify matrix layout, handedness, UV orientation, clip-depth conventions and the existing logarithmic depth formula explicitly. GLM's current OpenGL projection conventions must not be copied blindly.
-4. **Astronomical geometry.** Port static stars/galaxies, active systems, 100 m terrain patches, stellar plasma, rings, Endurance/Rangers and interiors. Run CPU checks unchanged; compare deterministic camera views against the OpenGL captures.
-5. **Postprocessing.** Port atmospheric scattering, black-hole lensing, mip/downsample passes, source extraction, exposure adaptation, HDR/Pure modes and camera optics. Use separate resources for any pass that reads a prior scene while writing its result.
-6. **Quantum and interface parity.** Port quantum views, preserve native menus/browser behavior and verify input, upright cockpit views and toast timing. Run the entire scene/camera suite.
-7. **Performance and release.** Measure CPU/GPU frame times, memory, frame pacing and paused-scene reuse on the same hardware/settings. Only change the default backend after feature parity and checks pass. Keep an explicit OpenGL fallback until then.
-8. **Optional DLSS.** Add it after DX12 has reliable motion vectors, depth, jitter, exposure and temporal history. Super Resolution and Frame Generation are separate integrations. Do not substitute generated frames for physics updates or assume they reduce heat without measurement.
-
-Microsoft documents the required [device/presentation workflow](https://learn.microsoft.com/en-us/samples/microsoft/directx-graphics-samples/d3d12-hello-world-samples-win32/), [resource binding](https://learn.microsoft.com/en-us/windows/win32/direct3d12/resource-binding-flow-of-control) and [pipeline state/shaders](https://learn.microsoft.com/windows/win32/direct3d12/pipelines-and-shaders-with-directx-12). NVIDIA's [DLSS programming guide](https://raw.githubusercontent.com/NVIDIA/DLSS/main/doc/DLSS_Programming_Guide_Release.pdf) lists future temporal inputs. Their sample implementations/SDKs have not been copied into this repository.
-
-## Reference data that must survive
-
-- The world seed and deterministic IDs/positions; galaxy membership and planet seeds.
-- Physical AU/metre scales, double camera origins and metre-level landed precision.
-- Proper-time clocks, finite fuel, Ranger detachment and conserved geodesic quantities.
-- Static far-star rendering and zero inactive-system planet-orbit evaluations.
-- Source alpha semantics: eligible photospheres versus excluded stellar plasma/cabin displays.
-- Glare-independent exposure, Pure-mode real-time adaptation, manual EV and lens differences.
-- Landed/cockpit up axes, free-flight follow controls and the small transient notifications.
-
-## Completion criteria
-
-A migration can be marked complete only when DX12 runs all supported scenes, passes CPU/debug/readback checks, reproduces reference views within documented tolerance, and handles device lifetime correctly. The native preview passes its limited scope above; it does not yet satisfy full completion criteria.
+The [historical preview milestone](DX12_PREVIEW_HISTORY.md) is retained for provenance. Primary integration references: [Microsoft D3D12 presentation](https://learn.microsoft.com/en-us/samples/microsoft/directx-graphics-samples/d3d12-hello-world-samples-win32/), [resource binding](https://learn.microsoft.com/en-us/windows/win32/direct3d12/resource-binding-flow-of-control), [native pipelines](https://learn.microsoft.com/windows/win32/direct3d12/pipelines-and-shaders-with-directx-12), [Khronos glslang](https://github.com/KhronosGroup/glslang), and [SPIRV-Cross](https://github.com/KhronosGroup/SPIRV-Cross).

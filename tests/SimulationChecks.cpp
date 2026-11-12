@@ -11,6 +11,11 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
 #include <stdexcept>
+#include <set>
+#ifdef _MSC_VER
+#include <crtdbg.h>
+#include <cstdlib>
+#endif
 
 // The catalogue is exercised without creating an OpenGL context.
 unsigned int compileShaderProgram(const char *, const char *)
@@ -24,6 +29,14 @@ void Require(bool result, const char *message)
 }
 int main()
 {
+#ifdef _MSC_VER
+    // Automated checks must fail in their log instead of blocking on a CRT
+    // dialog that the calling build cannot dismiss or report.
+    _CrtSetReportMode(_CRT_ASSERT,_CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_ASSERT,_CRTDBG_FILE_STDERR);
+    _set_abort_behavior(0,_WRITE_ABORT_MSG|_CALL_REPORTFAULT);
+#endif
+    try {
     Require(Astronomy::gargantuaHorizonAu>1.97 && Astronomy::gargantuaHorizonAu<1.98,"Black hole mass-to-horizon scale incorrect");
     Require(Astronomy::millerOrbitAu>Astronomy::gargantuaHorizonAu*3,"Miller model orbit is inside Schwarzschild ISCO");
     Require(std::abs(Astronomy::millerRadiusAu*Astronomy::metresPerAu-6371000)<.001,"Miller radius is not Earth scale");
@@ -175,6 +188,38 @@ int main()
     for (int i = 0; i < static_cast<int>(a.Planets().size()); ++i)
         Require(glm::length(a.Position(i, 12345) - b.Position(i, 12345)) < 1e-12,
                 "Generated positions not deterministic");
+    std::set<std::string> layouts;
+    int leadingGiants=0,rockOnly=0,moons=0;
+    for(int id=10;id<1034;++id){
+        StarSystem generated,revisited;generated.Generate(id,"Survey");revisited.Generate(id,"Survey");
+        const auto& worlds=generated.Planets();
+        Require(!worlds.empty() && worlds.size()==revisited.Planets().size(),"System missing or not repeatable");
+        std::string layout;bool onlyRock=true;
+        for(size_t index=0;index<worlds.size();++index){
+            const auto& planet=worlds[index];const auto& same=revisited.Planets()[index];
+            Require(planet.seed==same.seed && planet.orbit.semiMajorAxis==same.orbit.semiMajorAxis
+                && planet.radiusEarth==same.radiusEarth && planet.color==same.color,"Revisit changed planet identity");
+            Require(planet.massEarth>0 && planet.radiusEarth>0 && std::isfinite(planet.temperature),"Invalid generated body");
+            if(planet.parent>=0){
+                ++moons;Require(planet.parent<static_cast<int>(index),"Moon parent must precede child");
+                const auto& parent=worlds[planet.parent];
+                const double hill=parent.orbit.semiMajorAxis*(1-parent.orbit.eccentricity)*
+                    std::cbrt(parent.massEarth/(3*332946.0487*generated.Host().massSolar));
+                Require(planet.orbit.semiMajorAxis*(1+planet.orbit.eccentricity)<hill*.23,"Moon outside stable Hill region");
+                Require(planet.orbit.semiMajorAxis*(1-planet.orbit.eccentricity)>2.5*parent.radiusEarth*Astronomy::earthRadiusAu,"Moon inside Roche margin");
+                continue;
+            }
+            layout+=planet.gas?'G':'R';onlyRock=onlyRock&&!planet.gas;
+            if(index==0 && planet.gas)++leadingGiants;
+            if(index>0){const auto& previous=worlds[index-1];
+                Require(planet.orbit.semiMajorAxis*(1-planet.orbit.eccentricity)>
+                    previous.orbit.semiMajorAxis*(1+previous.orbit.eccentricity),"Generated primary orbits cross");}
+        }
+        layouts.insert(layout);if(onlyRock)++rockOnly;
+        Require(generated.Host().ageGyr>0 && generated.Host().ageGyr<13.8,"Invalid stellar age");
+    }
+    Require(layouts.size()>70 && leadingGiants>50 && rockOnly>20 && moons>100,"System architecture diversity collapsed");
+    std::cout<<"Generation survey: "<<layouts.size()<<" primary layouts; "<<leadingGiants<<" leading giants; "<<moons<<" moons\n";
     Universe::Catalog catalogue;catalogue.Generate();
     Require(catalogue.Positions().size()==Universe::StarCount,"Stellar catalogue size changed");
     for(int index=0;index<4;++index){
@@ -249,4 +294,6 @@ int main()
     std::cout<<"Mann flyby: periapsis="<<minRadius<<" AU; fuel remaining="<<fuel<<" s; escape energy="<<InterstellarWorlds::SpecificEnergy(ship)<<"\n";
     std::cout << Examples().size()
               << " quantum presets checked; solar scale, hierarchy and generation checks passed.\n";
+    }catch(const std::exception& error){std::cerr<<"Simulation checks FAILED: "<<error.what()<<"\n";return 1;}
+    return 0;
 }

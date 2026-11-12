@@ -17,6 +17,7 @@ class CameraOptics
     void SetBlackHoleVisibility(bool value) { blackHoleVisibility=value;exposureMeter.Reset(); }
     void Release();
     unsigned int SceneTexture() const { return sceneTexture; }
+    unsigned int SceneInputTexture() const { return sceneColor; }
     static const char *Name(int profile);
     static float FieldOfView(int profile, float aspect);
     static glm::vec2 MapScreen(int profile, const glm::vec2 &screen, float aspect, float fieldOfView);

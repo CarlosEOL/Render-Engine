@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <cctype>
 #include <cstring>
 #include <fstream>
 #include <functional>
@@ -287,6 +288,13 @@ public:
   std::unordered_map<GLuint, Program> programs;
   std::array<TextureUnit, 32> units;
   Texture defaultColor, defaultDepth;
+  Dlss dlss;
+  DlssMode dlssMode = DlssMode::Off, preparedMode = DlssMode::Off;
+  Texture dlssOutput, dlssMotion;
+  glm::uvec2 dlssExtent{};
+  glm::vec2 dlssJitter{};
+  unsigned stableFrames = 0;
+  bool dlssFrame = false, dlssReset = true;
   Com<ID3D12DescriptorHeap> rtvs, dsvs, srvs, samplers;
   Com<ID3D12RootSignature> root, utilityRoot;
   std::map<DXGI_FORMAT, Com<ID3D12PipelineState>> utilityPipelines;
@@ -313,8 +321,10 @@ public:
   void Begin();
   void Flush();
   void Present();
+  glm::uvec2 PrepareReconstruction(unsigned w, unsigned h, bool unchanged);
+  bool ResolveReconstruction(unsigned color, unsigned depth, unsigned destination, float dt);
   void Allocate(Texture &texture, UINT w, UINT h, DXGI_FORMAT format,
-                bool depth, UINT layers = 1);
+                bool depth, UINT layers = 1, bool unordered = false);
   void State(Texture &texture, D3D12_RESOURCE_STATES state, UINT level = 0,
              UINT layer = 0);
   UploadAllocation Upload(UINT64 bytes, UINT64 alignment = 256);
@@ -405,7 +415,7 @@ public:
                   GLenum type, void *data);
   void Blit(Texture &texture, UINT sourceLevel,
             D3D12_CPU_DESCRIPTOR_HANDLE target, DXGI_FORMAT format, UINT w,
-            UINT h, bool flip);
+            UINT h, bool flip, Texture* alpha = nullptr);
 };
 namespace {
 std::unique_ptr<SceneBridge> bridge;
@@ -422,6 +432,7 @@ void SceneBridge::Initialize(HWND hwnd) {
   GetClientRect(window, &size);
   gpu.Initialize(window, size.right, size.bottom, sceneWarp, false,
                  sceneValidation);
+  dlss.Initialize(gpu.device.Get());
   auto makeHeap = [&](D3D12_DESCRIPTOR_HEAP_TYPE type, UINT count, bool visible,
                       Com<ID3D12DescriptorHeap> &heap) {
     D3D12_DESCRIPTOR_HEAP_DESC d{};
@@ -556,7 +567,7 @@ SceneBridge::UploadAllocation SceneBridge::Upload(UINT64 bytes,
           upload[gpu.frameIndex].Get(), offset};
 }
 void SceneBridge::Allocate(Texture &t, UINT w, UINT h, DXGI_FORMAT f,
-                           bool depth, UINT layers) {
+                           bool depth, UINT layers, bool unordered) {
   if (t.resource) {
     if (recording) {
       retired[gpu.frameIndex].push_back(t.resource);
@@ -586,6 +597,7 @@ void SceneBridge::Allocate(Texture &t, UINT w, UINT h, DXGI_FORMAT f,
   d.SampleDesc.Count = 1;
   d.Flags = depth ? D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL
                   : D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+  if (unordered) d.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
   D3D12_CLEAR_VALUE clear{};
   clear.Format = depth ? DXGI_FORMAT_D32_FLOAT : f;
   if (depth)
@@ -954,7 +966,23 @@ D3D12_GPU_VIRTUAL_ADDRESS SceneBridge::Constants(const ShaderStage &stage,
     const auto found = program.values.find(variable.name);
     if (found == program.values.end())
       continue;
-    const auto &value = found->second;
+    auto value = found->second;
+    // Jitter the actual projection/ray inverse, never the finished image. GL
+    // images use bottom-up Y; NGX receives top-down pixel jitter below.
+    if (dlssFrame && viewport[2] == static_cast<GLint>(dlss.InputSize().x) &&
+        viewport[3] == static_cast<GLint>(dlss.InputSize().y) &&
+        value.bytes == sizeof(glm::mat4) && Color().layers == 1) {
+      const bool forward = variable.name == "viewProjection" || variable.name == "vp" || variable.name == "projection";
+      const bool inverse = variable.name == "inverseViewProjection";
+      if (forward || inverse) {
+        glm::mat4 matrix, jitter(1);
+        std::memcpy(&matrix,value.data.data(),sizeof(matrix));
+        jitter[3][0] = -2 * dlssJitter.x / dlss.InputSize().x;
+        jitter[3][1] = 2 * dlssJitter.y / dlss.InputSize().y;
+        matrix = inverse ? matrix * glm::inverse(jitter) : jitter * matrix;
+        std::memcpy(value.data.data(),&matrix,sizeof(matrix));
+      }
+    }
     if (variable.type == D3D_SVC_MATRIX_COLUMNS ||
         variable.type == D3D_SVC_MATRIX_ROWS) {
       // SPIRV-Cross represents GLSL matrices transposed in HLSL's row-vector
@@ -1220,15 +1248,15 @@ void SceneBridge::Draw(GLenum mode, GLint first, GLsizei count,
 
 void SceneBridge::Blit(Texture &texture, UINT sourceLevel,
                        D3D12_CPU_DESCRIPTOR_HANDLE target, DXGI_FORMAT format,
-                       UINT w, UINT h, bool flip) {
+                       UINT w, UINT h, bool flip, Texture* alpha) {
   Begin();
   if (!utilityRoot) {
     D3D12_DESCRIPTOR_RANGE range{};
     range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    range.NumDescriptors = 1;
+    range.NumDescriptors = 2;
     D3D12_ROOT_PARAMETER parameters[2]{};
     parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    parameters[0].Constants.Num32BitValues = 1;
+    parameters[0].Constants.Num32BitValues = 2;
     parameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     parameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     parameters[1].DescriptorTable = {1, &range};
@@ -1257,13 +1285,13 @@ void SceneBridge::Blit(Texture &texture, UINT sourceLevel,
   auto pipeline = utilityPipelines.find(format);
   if (pipeline == utilityPipelines.end()) {
     const std::string source =
-        R"(Texture2D<float4> image:register(t0);SamplerState sampling:register(s0);cbuffer Options:register(b0){float flip;};
+        R"(Texture2D<float4> image:register(t0);Texture2D<float4> alphaImage:register(t1);SamplerState sampling:register(s0);cbuffer Options:register(b0){float flip;float preserveAlpha;};
 struct Pixel{float4 position:SV_Position;float2 uv:TEXCOORD0;};
 Pixel main(uint id:SV_VertexID){Pixel p;p.uv=float2((id<<1)&2,id&2);p.position=float4(p.uv*float2(2,-2)+float2(-1,1),0,1);return p;})";
     const std::string pixel =
-        R"(Texture2D<float4> image:register(t0);SamplerState sampling:register(s0);cbuffer Options:register(b0){float flip;};
+        R"(Texture2D<float4> image:register(t0);Texture2D<float4> alphaImage:register(t1);SamplerState sampling:register(s0);cbuffer Options:register(b0){float flip;float preserveAlpha;};
 struct Pixel{float4 position:SV_Position;float2 uv:TEXCOORD0;};
-float4 main(Pixel p):SV_Target{return image.SampleLevel(sampling,float2(p.uv.x,flip>0?1-p.uv.y:p.uv.y),0);})";
+float4 main(Pixel p):SV_Target{float2 uv=float2(p.uv.x,flip>0?1-p.uv.y:p.uv.y);float4 color=image.SampleLevel(sampling,uv,0);if(preserveAlpha>0){uint w,h;alphaImage.GetDimensions(w,h);color.a=alphaImage.Load(int3(min(uint2(saturate(uv)*float2(w,h)),uint2(w-1,h-1)),0)).a;}return color;})";
     const auto vs = Compile(source, "vs_5_1"), ps = Compile(pixel, "ps_5_1");
     D3D12_GRAPHICS_PIPELINE_STATE_DESC p{};
     p.pRootSignature = utilityRoot.Get();
@@ -1285,7 +1313,8 @@ float4 main(Pixel p):SV_Target{return image.SampleLevel(sampling,float2(p.uv.x,f
     pipeline = utilityPipelines.emplace(format, created).first;
   }
   State(texture, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, sourceLevel);
-  const UINT descriptor = srvCursor++;
+  if(srvCursor+2>(gpu.frameIndex+1)*32768)throw std::runtime_error("Image utility descriptor budget exceeded");
+  const UINT descriptor = srvCursor;srvCursor+=2;
   D3D12_SHADER_RESOURCE_VIEW_DESC view{};
   view.Format = texture.format;
   view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -1294,11 +1323,15 @@ float4 main(Pixel p):SV_Target{return image.SampleLevel(sampling,float2(p.uv.x,f
   view.Texture2D.MipLevels = 1;
   gpu.device->CreateShaderResourceView(texture.resource.Get(), &view,
                                        SrvCpu(descriptor));
+  if(alpha)State(*alpha,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+  view.Format=alpha?alpha->format:DXGI_FORMAT_R16G16B16A16_FLOAT;
+  view.Texture2D.MostDetailedMip=0;view.Texture2D.MipLevels=1;
+  gpu.device->CreateShaderResourceView(alpha?alpha->resource.Get():nullptr,&view,SrvCpu(descriptor+1));
   ID3D12DescriptorHeap *heaps[] = {srvs.Get()};
   gpu.commands->SetDescriptorHeaps(1, heaps);
   gpu.commands->SetGraphicsRootSignature(utilityRoot.Get());
-  const float value = flip ? 1.f : 0.f;
-  gpu.commands->SetGraphicsRoot32BitConstants(0, 1, &value, 0);
+  const float values[] = {flip ? 1.f : 0.f,alpha ? 1.f : 0.f};
+  gpu.commands->SetGraphicsRoot32BitConstants(0, 2, values, 0);
   gpu.commands->SetGraphicsRootDescriptorTable(1, Srv(descriptor));
   gpu.commands->SetPipelineState(pipeline->second.Get());
   gpu.commands->OMSetRenderTargets(1, &target, FALSE, nullptr);
@@ -1319,6 +1352,63 @@ void SceneBridge::GenerateMips(Texture &texture) {
     State(texture, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, level);
   }
   texture.mips = true;
+}
+glm::uvec2 SceneBridge::PrepareReconstruction(unsigned w, unsigned h, bool unchanged) {
+  dlssFrame=false;
+  if (dlssMode == DlssMode::Off || !dlss.Available()) {
+    if(preparedMode != DlssMode::Off) {
+      Flush(); gpu.WaitIdle(); dlss.ReleaseFeature(); preparedMode=DlssMode::Off;
+      RecycleViews(dlssOutput); RecycleViews(dlssMotion);
+      dlssOutput={}; dlssMotion={};
+    }
+    return {w,h};
+  }
+  if(preparedMode!=dlssMode || dlssExtent!=glm::uvec2(w,h)) {
+    Flush(); gpu.WaitIdle(); Begin();
+    if(!dlss.Prepare(gpu.commands.Get(),dlssMode,w,h)) return {w,h};
+    dlssExtent={w,h}; preparedMode=dlssMode; stableFrames=0;
+    const auto input=dlss.InputSize();
+    Allocate(dlssOutput,w,h,DXGI_FORMAT_R16G16B16A16_FLOAT,false,1,true);
+    Allocate(dlssMotion,input.x,input.y,DXGI_FORMAT_R16G16_FLOAT,false);
+    unchanged=false;
+  }
+  if(!unchanged)stableFrames=0;
+  dlssReset=!unchanged || stableFrames==0;
+  if(stableFrames<32) {
+    const auto halton=[](unsigned index,unsigned base){float value=0,weight=1;while(index){weight/=base;value+=weight*(index%base);index/=base;}return value;};
+    dlssJitter={halton(stableFrames+1,2)-.5f,halton(stableFrames+1,3)-.5f};
+    ++stableFrames;
+    dlssFrame=true;
+  }
+  return dlss.InputSize();
+}
+bool SceneBridge::ResolveReconstruction(unsigned color, unsigned depth, unsigned destination, float dt) {
+  if(!dlssFrame)return false;
+  dlssFrame=false; // Exposure, camera optics and UI never receive projection jitter.
+  auto& input=textures.at(color);
+  auto& guide=renderbuffers.at(depth);
+  auto& result=textures.at(destination);
+  if(result.width!=dlssExtent.x || result.height!=dlssExtent.y)
+    Allocate(result,dlssExtent.x,dlssExtent.y,DXGI_FORMAT_R16G16B16A16_FLOAT,false);
+  State(dlssMotion,D3D12_RESOURCE_STATE_RENDER_TARGET);
+  const float zero[4]{};
+  gpu.commands->ClearRenderTargetView(dlssMotion.rtvs[0],zero,0,nullptr);
+  State(input,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+  State(guide,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+  State(dlssMotion,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+  State(dlssOutput,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+  // Zero non-jittered motion is exact for an unchanged scene. Changed scenes
+  // reset history until all moving emitters, terrain and Kerr paths have
+  // matching velocities; never silently supply fictitious zero velocities.
+  const bool evaluated=dlss.Evaluate(gpu.commands.Get(),input.resource.Get(),guide.resource.Get(),
+      dlssMotion.resource.Get(),dlssOutput.resource.Get(),dlssJitter,dlssReset,dt);
+  D3D12_RESOURCE_BARRIER barrier{};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_UAV;
+  barrier.UAV.pResource=dlssOutput.resource.Get();gpu.commands->ResourceBarrier(1,&barrier);
+  State(result,D3D12_RESOURCE_STATE_RENDER_TARGET);
+  Blit(evaluated?dlssOutput:input,0,result.rtvs[0],result.format,result.width,result.height,false,&input);
+  State(result,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+  if(!evaluated){dlssMode=DlssMode::Off;stableFrames=0;}
+  return true;
 }
 void SceneBridge::Present() {
   Begin();
@@ -1951,5 +2041,13 @@ unsigned SceneValidationErrors() {
   C().gpu.WaitIdle();
   return C().gpu.ErrorCount();
 }
+void SetDlssMode(DlssMode mode) { C().dlssMode=mode;C().stableFrames=0; }
+DlssMode GetDlssMode() { return C().dlssMode; }
+const char* DlssStatus() { return C().dlss.Status().c_str(); }
+glm::uvec2 PrepareSceneReconstruction(unsigned w,unsigned h,bool unchanged) {return C().PrepareReconstruction(w,h,unchanged);}
+bool ReconstructionNeedsFrame() {return C().dlssFrame;}
+bool ResolveSceneReconstruction(unsigned color,unsigned depth,unsigned destination,float dt) {return C().ResolveReconstruction(color,depth,destination,dt);}
+unsigned long long DlssEvaluationCount() {return C().dlss.Evaluations();}
+unsigned long long DlssResetCount() {return C().dlss.Resets();}
 void ReleaseSceneBridge() { bridge.reset(); }
 } // namespace NativeDX12

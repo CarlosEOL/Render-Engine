@@ -34,3 +34,4 @@
 # Generated build and validation outputs.
 /build/
 /Render-Engine/x64/
+/Render-E.*/

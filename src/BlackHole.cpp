@@ -201,7 +201,7 @@ void main() {
         if(pointRadius>1.0)discard;
         // A display visibility floor keeps the distant navigation catalogue
         // visible; the ceiling prevents subpixel points overwhelming nearby disks.
-        float flux = clamp(max(sourceLuminosity,.001)*1.0e9/max(distanceSquared,1.0),.035,4.0)*exp(-pointRadius*2.0);
+        float flux = clamp(max(sourceLuminosity,.001)*1.0e9/max(distanceSquared,1.0),.10,4.0)*exp(-pointRadius*2.0);
         vec3 tint = blackbody(max(sourceTemperature,2500.0));
         tint/=max(max(tint.r,tint.g),max(tint.b,.00001));
         fragColor = vec4(tint * flux, 1.0);
@@ -861,7 +861,8 @@ BlackHole::Target BlackHole::ResolveTarget(int id, double seconds) const {
         return {SpacecraftPosition(), static_cast<float>(50.0/Astronomy::metresPerAu), "Spacecraft"};
     const int star = id - 10;
     if (star >= 0 && star < static_cast<int>(destinations.size())) {
-        const auto name = star < 1600 ? "Local star " + std::to_string(star + 1)
+        const auto name = star < 1024 ? "Local star " + std::to_string(star + 1)
+            : star < 1600 ? "Milky Way star " + std::to_string(star-1023)
             : "Galaxy " + std::to_string((star - 1600) / 1800 + 1)
                 + " star " + std::to_string((star - 1600) % 1800 + 1);
         const auto metadata=StarSystem::DescribeStar(id,name);
@@ -882,10 +883,27 @@ glm::mat3 BlackHole::TargetRotation(int id,double seconds) const {
     return glm::mat3(1); // Schwarzschild's central object has no intrinsic spin.
 }
 
+int BlackHole::PickCatalogueStar(const glm::dvec3& origin,const glm::vec3& direction,double angularTolerance,int exclude) const {
+    int selected=-1;
+    double best=std::max(0.0,angularTolerance);
+    const auto ray=glm::normalize(glm::dvec3(direction));
+    // A click-only scan over cached positions: no star metadata generation,
+    // planet positions or inactive-system simulation work during picking.
+    for(int index=0;index<static_cast<int>(destinations.size());++index){
+        const int id=index+10;if(id==exclude)continue;
+        const auto offset=destinations[index]-origin;
+        const double along=glm::dot(offset,ray),distance=glm::length(offset);
+        if(along<=0 || distance<3)continue; // Nearby resolved stars use body picking.
+        const double separation=glm::length(offset-along*ray)/distance;
+        if(separation<best){best=separation;selected=id;}
+    }
+    return selected;
+}
+
 int BlackHole::PickTarget(const glm::dvec3& origin, const glm::vec3& direction, double seconds) const {
     int selected = -1;
     float bestScore = 1.0f;
-    for (int id = 0; id < 10 + static_cast<int>(destinations.size()); ++id) {
+    for (int id = 0; id < 10; ++id) {
         const auto target = ResolveTarget(id, seconds);
         const auto offset = target.position - origin;
         const double distance = glm::length(offset);
@@ -900,7 +918,34 @@ int BlackHole::PickTarget(const glm::dvec3& origin, const glm::vec3& direction, 
             selected = id;
         }
     }
-    return selected;
+    return selected>=0?selected:PickCatalogueStar(origin,direction,.012);
+}
+
+void BlackHole::RenderCatalogueSelection(const glm::mat4& vp,const glm::dvec3& camera,int selected,double seconds) const {
+    if(selected<10 || !guides.vao)return;
+    const auto target=glm::vec3(glm::normalize(ResolveTarget(selected,seconds).position-camera)*10.0);
+    const auto clip=vp*glm::vec4(target,1);
+    if(clip.w<=0)return;
+    const auto forward=glm::normalize(target);
+    const auto reference=std::abs(forward.y)<.95f?glm::vec3(0,1,0):glm::vec3(1,0,0);
+    const auto right=glm::normalize(glm::cross(forward,reference)),up=glm::cross(right,forward);
+    const float distance=glm::length(target);
+    std::vector<glm::vec3> vertices;
+    for(auto axis:{right,up})for(int sign:{-1,1}){
+        vertices.push_back(target+axis*(sign*distance*.005f));
+        vertices.push_back(target+axis*(sign*distance*.014f));
+    }
+    glUseProgram(program);
+    glUniformMatrix4fv(glGetUniformLocation(program,"viewProjection"),1,GL_FALSE,glm::value_ptr(vp));
+    const glm::mat4 identity(1);
+    glUniformMatrix4fv(glGetUniformLocation(program,"model"),1,GL_FALSE,glm::value_ptr(identity));
+    glUniform1i(glGetUniformLocation(program,"surface"),4);
+    glUniform3f(glGetUniformLocation(program,"bodyColor"),.15f,1,.65f);
+    glDisable(GL_DEPTH_TEST);
+    glBindVertexArray(guides.vao);glBindBuffer(GL_ARRAY_BUFFER,guides.buffer);
+    glBufferData(GL_ARRAY_BUFFER,vertices.size()*sizeof(glm::vec3),vertices.data(),GL_DYNAMIC_DRAW);
+    glDrawArrays(GL_LINES,0,static_cast<int>(vertices.size()));
+    glBindVertexArray(0);glEnable(GL_DEPTH_TEST);
 }
 
 glm::mat4 BlackHole::PlanetRotation(double seconds,int planet) {

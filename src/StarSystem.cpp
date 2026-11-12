@@ -13,6 +13,7 @@
 #include <iomanip>
 #include <random>
 #include <sstream>
+#include <stdexcept>
 
 unsigned int compileShaderProgram(const char *, const char *);
 
@@ -20,6 +21,9 @@ namespace
 {
 double Random(std::mt19937_64 &engine, double lower, double upper)
 {
+    if(!std::isfinite(lower) || !std::isfinite(upper) || lower>upper)
+        throw std::runtime_error("Star generation requested an invalid random range: "+
+            std::to_string(lower)+" to "+std::to_string(upper));
     return std::uniform_real_distribution<double>(lower, upper)(engine);
 }
 
@@ -53,7 +57,11 @@ StarSystem::Star StarSystem::DescribeStar(int id, const std::string &name)
     result.id = id;
     result.name = name;
     result.systemSeed=Universe::SystemSeed(id);
-    const double choice = Random(random, 0, 1);
+    const auto population=id>=10 && id<10+Universe::StarCount?Universe::StarPopulation(id-10):Universe::Population::LocalDisk;
+    const bool oldPopulation=population==Universe::Population::Bulge || population==Universe::Population::Halo;
+    double choice = Random(random, 0, 1);
+    if(oldPopulation)choice*=.90;
+    else if(population==Universe::Population::SpiralArm && choice>.92)choice=Random(random,.985,1);
     char spectral;
     if (choice < 0.55)
     {
@@ -99,8 +107,14 @@ StarSystem::Star StarSystem::DescribeStar(int id, const std::string &name)
     }
     result.radiusSolar = std::pow(result.massSolar, 0.8);
     result.luminositySolar = result.radiusSolar * result.radiusSolar * std::pow(result.temperature / 5772.0, 4);
-    result.ageGyr = Random(random, 0.05, 0.90) * std::min(13.7, 10.0 * result.massSolar / result.luminositySolar);
-    result.classification = std::string(1, spectral) + std::to_string(id % 10) + " V main-sequence star";
+    const double lifetime=10.0*result.massSolar/result.luminositySolar;
+    result.ageGyr = oldPopulation?std::min(Random(random,8,13.5),lifetime*.90)
+        :population==Universe::Population::SpiralArm?std::min(Random(random,.005,.15),lifetime*.8)
+        :Random(random,.02,.90)*std::min(13.7,lifetime);
+    const double lower=spectral=='M'?2700:spectral=='K'?3900:spectral=='G'?5200:spectral=='F'?6000:spectral=='A'?7500:spectral=='B'?10000:30000;
+    const double upper=spectral=='M'?3900:spectral=='K'?5200:spectral=='G'?6000:spectral=='F'?7500:spectral=='A'?10000:spectral=='B'?30000:45000;
+    const int subclass=std::clamp(static_cast<int>(10*(upper-result.temperature)/(upper-lower)),0,9);
+    result.classification = std::string(1, spectral) + std::to_string(subclass) + " V main-sequence star";
     return result;
 }
 
@@ -111,48 +125,91 @@ void StarSystem::Generate(int id, const std::string &name)
     asteroids.clear();
     star = DescribeStar(id, name);
     std::mt19937_64 random(star.systemSeed ^ 0x4f6cdd1dULL);
-    const int count = 4 + static_cast<int>(random() % 7);
+    // System architecture is chosen once, then composition depends on the
+    // frost line and migration. There is no mandatory rock/giant ordering.
+    const int architecture=static_cast<int>(random()%5);
+    const int count=architecture==0?1+random()%7:architecture==1?5+random()%5:
+        architecture==2?2+random()%5:architecture==3?2+random()%6:1+random()%10;
     planets.clear();
-    double axis = std::max(star.radiusSolar * Astronomy::solarRadiusAu * 8,
-                           std::sqrt(star.luminositySolar) * Random(random, 0.15, 0.30));
+    const double frostLine=2.7*std::sqrt(star.luminositySolar);
+    const double plane=Random(random,-.5,.5),node=Random(random,0,glm::two_pi<double>());
+    double axis = std::max(star.radiusSolar * Astronomy::solarRadiusAu * 12,
+        std::sqrt(star.luminositySolar)*Random(random,architecture==2?.2:.035,architecture==2?1.8:.45));
     for (int index = 0; index < count; ++index)
     {
         Planet planet;
         planet.name = name + " " + static_cast<char>('b' + index);
-        const int category = index < 2 ? 0 : (index == count - 1 ? 2 : static_cast<int>(random() % 3));
+        const double composition=Random(random,0,1);
+        const double giantChance=architecture==0?.025:architecture==2?.68:
+            axis>frostLine?.48:.08;
+        const double subNeptuneChance=architecture==0?.08:axis>frostLine?.35:.22;
+        const int category=composition<giantChance?2:composition<giantChance+subNeptuneChance?1:0;
         planet.gas = category > 0;
         if (category == 0)
         {
-            planet.radiusEarth = Random(random, 0.35, 1.95);
-            planet.massEarth = std::pow(planet.radiusEarth, 3) * Random(random, 0.7, 1.3);
-            planet.classification = planet.radiusEarth > 1.3 ? "Super-Earth" : "Terrestrial planet";
+            planet.radiusEarth = Random(random, 0.18, 1.95);
+            planet.massEarth = std::pow(planet.radiusEarth,3.4)*Random(random,.65,1.35);
+            planet.classification = planet.radiusEarth<.45?"Dwarf terrestrial planet":planet.radiusEarth > 1.3 ? "Super-Earth" : "Terrestrial planet";
         }
         else if (category == 1)
         {
-            planet.radiusEarth = Random(random, 2.0, 4.5);
-            planet.massEarth = Random(random, 7, 35);
-            planet.classification = "Ice giant";
+            planet.radiusEarth = Random(random, 1.9, 4.8);
+            planet.massEarth = std::pow(planet.radiusEarth,1.7)*Random(random,1.5,2.7);
+            planet.classification = axis>frostLine?"Ice giant":"Sub-Neptune";
         }
         else
         {
-            planet.radiusEarth = Random(random, 7, 12);
-            planet.massEarth = Random(random, 60, 900);
-            planet.classification = "Gas giant";
+            planet.massEarth=std::exp(Random(random,std::log(55.0),std::log(1500.0)));
+            planet.radiusEarth=std::clamp(8+2*std::log10(planet.massEarth/55.0)+Random(random,-1,1),6.0,14.0);
+            planet.classification=axis<frostLine*.2?"Hot gas giant":"Gas giant";
         }
-        planet.orbit = {axis, Random(random, 0.0, 0.12), Random(random, -0.12, 0.12),
-                        Random(random, 0, glm::two_pi<double>()), Random(random, 0, glm::two_pi<double>())};
+        const double eccentricity=Random(random,.002,architecture==0?.045:architecture==3?.24:.12);
+        if(index>0){
+            const auto& previous=planets.back();
+            const double hill=std::min(.80,4*std::cbrt((previous.massEarth+planet.massEarth)/(3*332946.0487*star.massSolar)));
+            axis=std::max({axis,previous.orbit.semiMajorAxis*(1+previous.orbit.eccentricity)/(1-eccentricity)*1.15,
+                previous.orbit.semiMajorAxis*(1+hill)/(1-hill)});
+        }
+        planet.orbit = {axis,eccentricity,plane+Random(random,-.035,.035),node,
+                        Random(random,0,glm::two_pi<double>())};
         const double albedo = Random(random, 0.1, 0.65);
         planet.temperature = 278.5 * std::pow(star.luminositySolar * (1.0 - albedo), 0.25) / std::sqrt(axis);
         planet.daySeconds = Random(random, 7, 70) * 3600;
+        if(axis<std::sqrt(star.luminositySolar)*.15)
+            planet.daySeconds=glm::two_pi<double>()/std::sqrt(Astronomy::solarGravityAu*star.massSolar/(axis*axis*axis));
         planet.tilt = static_cast<float>(Random(random, -0.7, 0.7));
         planet.seed = static_cast<unsigned int>(random() & 0x00ffffffu);
         planet.seaLevel = planet.temperature > 160 && planet.temperature < 420
                               ? static_cast<float>(Random(random, -0.18, 0.22))
                               : -1.0f;
-        planet.atmosphere = planet.gas || random() % 4 != 0;
+        const double escapeKm=11.186*std::sqrt(planet.massEarth/planet.radiusEarth);
+        planet.atmosphere=planet.gas || (escapeKm>4 && planet.temperature<850 && Random(random,0,1)>.18);
         planet.color = glm::vec3(Random(random, .12, .65), Random(random, .15, .65), Random(random, .12, .65));
         planets.push_back(planet);
-        axis *= Random(random, 1.5, 2.05);
+        axis *= Random(random,architecture==0?1.3:1.5,architecture==3?3.0:2.4);
+    }
+    // Moons are generated after primary planets so parents precede children
+    // in the existing position cache. Their orbits stay inside 22% of the
+    // parent's pericentre Hill radius and outside a conservative Roche bound.
+    for(int parent=0;parent<count;++parent){
+        const auto host=planets[parent];
+        const int moons=host.gas?static_cast<int>(random()%4):(random()%7==0?1:0);
+        const double outer=host.orbit.semiMajorAxis*(1-host.orbit.eccentricity)*
+            std::cbrt(host.massEarth/(3*332946.0487*star.massSolar))*.22;
+        double moonAxis=host.radiusEarth*Astronomy::earthRadiusAu*Random(random,3.2,4.5);
+        for(int index=0;index<moons && moonAxis<outer;++index){
+            Planet moon{};moon.name=host.name+" - moon "+std::to_string(index+1);moon.parent=parent;
+            const double maximumMoonRadius=std::min(.72,host.radiusEarth*.27);
+            moon.radiusEarth=Random(random,std::max(.01,maximumMoonRadius*.16),maximumMoonRadius);
+            moon.massEarth=std::pow(moon.radiusEarth,3)*Random(random,.35,.8);
+            moon.temperature=host.temperature;moon.classification=moon.temperature<180?"Icy moon":"Rocky moon";
+            moon.orbit={moonAxis,Random(random,.001,.025),host.orbit.inclination+Random(random,-.08,.08),node,Random(random,0,glm::two_pi<double>())};
+            moon.daySeconds=glm::two_pi<double>()/std::sqrt(Astronomy::solarGravityAu*host.massEarth/332946.0487/(moonAxis*moonAxis*moonAxis));
+            moon.seed=static_cast<unsigned>(random()&0x00ffffff);moon.seaLevel=-1;moon.gas=false;
+            moon.atmosphere=false;moon.tilt=static_cast<float>(Random(random,-.15,.15));
+            moon.color=moon.temperature<180?glm::vec3(.55,.59,.63):glm::vec3(.34,.31,.28);
+            planets.push_back(moon);moonAxis*=Random(random,1.8,2.6);
+        }
     }
     selected = -1;
     landed = following = followingRotation = false;
@@ -377,9 +434,10 @@ void StarSystem::ToggleRotationFollow(double seconds) {
     lastTime=seconds;
 }
 
-void StarSystem::Pick(const glm::vec3 &direction, double seconds)
+bool StarSystem::Pick(const glm::vec3 &direction, double seconds, double tolerance)
 {
     double best = 1;
+    int picked=-2;
     for (int body = -1; body < static_cast<int>(planets.size()); ++body)
     {
         const auto offset = Position(body, seconds) - camera;
@@ -390,14 +448,17 @@ void StarSystem::Pick(const glm::vec3 &direction, double seconds)
         if (along <= 0 || distance == 0)
             continue;
         const double score =
-            glm::length(offset - along * glm::dvec3(direction)) / distance / std::max(0.012, radius / distance);
+            glm::length(offset - along * glm::dvec3(direction)) / distance / std::max(tolerance, radius / distance);
         if (score < best)
         {
             best = score;
-            if(selected!=body){following=false;followingRotation=false;}
-            selected = body;
+            picked=body;
         }
     }
+    if(picked==-2)return false;
+    if(selected!=picked){following=false;followingRotation=false;}
+    selected=picked;
+    return true;
 }
 
 double StarSystem::ObserverClockRate(double seconds) const {
@@ -615,7 +676,7 @@ void StarSystem::UpdatePatch(const glm::dvec3 &direction,double radiusMetres)
 }
 
 void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front, const glm::vec3 &up, double seconds,
-                        bool trajectories, bool photonView)
+                        bool trajectories, bool photonView, bool showSelection)
 {
     if (!program || planets.empty())
         return;
@@ -786,7 +847,7 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
                           glm::vec3(-camera));
     }
     const auto clip = vp * glm::vec4(glm::vec3(Position(selected, seconds) - camera), 1);
-    if (clip.w > 0)
+    if (showSelection && clip.w > 0)
     {
         const auto position = glm::vec2(clip) / clip.w;
         if (std::abs(position.x) < 1 && std::abs(position.y) < 1)

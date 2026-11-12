@@ -20,6 +20,7 @@ class ScenePanel
     void Filter();
     void SetInformation(const std::string &text);
     void SetPlanets(const std::vector<std::string> &names);
+    void SetPlayback(bool playing, const std::string& clock);
     int SelectedStar() const;
     int SelectedPlanet() const;
     int Width() const

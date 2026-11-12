@@ -30,7 +30,7 @@ Universe::Galaxy Universe::GalaxyAt(int index, std::uint64_t seed) {
   if (index == 0)
     return {key,
             {-26000 * ly, 0, 0},
-            {50000 * ly, 1500 * ly, 50000 * ly},
+            {50000 * ly, 50000 * ly, 50000 * ly},
             glm::dmat3(1),
             0};
   std::mt19937_64 rng(key);
@@ -46,13 +46,22 @@ Universe::Galaxy Universe::GalaxyAt(int index, std::uint64_t seed) {
       glm::dmat4(1), static_cast<double>(tilt), glm::dvec3(1, 0, 0)));
   return {key,
           center,
-          {radius, radius * (index == 3 ? .72 : .10),
+          {radius, radius * (index == 3 ? .72 : .70),
            radius * (index == 3 ? .80 : 1)},
           rotation,
           tilt};
 }
 std::uint64_t Universe::SystemSeed(int id, std::uint64_t seed) {
   return Mix(seed ^ Mix(static_cast<std::uint64_t>(id)));
+}
+Universe::Population Universe::StarPopulation(int index) {
+  if(index<0 || index>=StarCount)throw std::invalid_argument("Unknown star catalogue entry");
+  if(index<1024)return Population::LocalDisk;
+  const auto fraction=Mix(static_cast<std::uint64_t>(index)^0xbadc0ffeeULL)%100;
+  const int galaxy=index<1600?0:1+(index-1600)/1800;
+  if(galaxy==3)return fraction<80?Population::Bulge:Population::Halo;
+  return fraction<12?Population::Bulge:fraction<17?Population::Halo:
+      fraction<62?Population::SpiralArm:Population::ThinDisk;
 }
 
 glm::dvec3 Universe::StarPosition(int index, std::uint64_t seed) {
@@ -62,7 +71,7 @@ glm::dvec3 Universe::StarPosition(int index, std::uint64_t seed) {
   const auto group = GalaxyAt(galaxy, seed);
   std::mt19937_64 rng(SystemSeed(index + 10, seed) ^ group.key);
   const double ly = Astronomy::auPerLightYear;
-  if (galaxy == 0) {
+  if (index < 1024) {
     // A local survey volume inside the Milky Way, not a shell around the
     // camera.
     const double r = std::cbrt(Unit(rng)) * 75 * ly,
@@ -74,15 +83,27 @@ glm::dvec3 Universe::StarPosition(int index, std::uint64_t seed) {
     return p;
   }
   glm::dvec3 q;
+  const auto population=StarPopulation(index);
   do {
-    const double r = std::sqrt(Unit(rng)) * .90;
-    const double a = (index % 3) * glm::two_pi<double>() / 3 + r * 6 +
-                     (Unit(rng) - .5) * .65;
-    q = {r * std::cos(a), (Unit(rng) * 2 - 1) * .75, r * std::sin(a)};
-    if (galaxy == 2 && index % 5 == 0)
-      q.z *= .18;
-    if (galaxy == 3)
-      q = {Unit(rng) * 2 - 1, Unit(rng) * 2 - 1, Unit(rng) * 2 - 1};
+    if(population==Population::Bulge || population==Population::Halo){
+      // Centrally concentrated, bounded spherical/spheroidal populations.
+      const double radius=population==Population::Bulge?std::pow(Unit(rng),.65)*.30:std::cbrt(Unit(rng))*.93;
+      const double y=Unit(rng)*2-1,azimuth=Unit(rng)*glm::two_pi<double>();
+      q={radius*std::sqrt(1-y*y)*std::cos(azimuth),radius*y,radius*std::sqrt(1-y*y)*std::sin(azimuth)};
+      if(population==Population::Bulge)q.y*=.65;
+    }else{
+      // Product of two uniform samples gives a gamma radial distribution:
+      // surface density falls exponentially instead of filling a flat disk.
+      const double r=-.19*std::log(std::max(1e-15,Unit(rng)*Unit(rng)));
+      double azimuth=Unit(rng)*glm::two_pi<double>();
+      if(population==Population::SpiralArm){
+        const int arms=galaxy==2?2:4;
+        azimuth=(index%arms)*glm::two_pi<double>()/arms+std::log(std::max(.025,r))/.30+(Unit(rng)-.5)*.28;
+      }
+      const double height=-std::log(std::max(1e-15,1-Unit(rng)))*(galaxy==0?.006:.009)*(Unit(rng)<.5?-1:1);
+      q={r*std::cos(azimuth),height,r*std::sin(azimuth)};
+      if(galaxy==2 && population==Population::ThinDisk && r<.3)q.z*=.22;
+    }
   } while (glm::dot(q, q) > .95 * .95);
   return group.centerAu + group.rotation * (q * group.axesAu);
 }

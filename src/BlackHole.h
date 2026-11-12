@@ -38,6 +38,8 @@ public:
     Target ResolveTarget(int id, double seconds) const;
     glm::mat3 TargetRotation(int id, double seconds) const;
     int PickTarget(const glm::dvec3& origin, const glm::vec3& direction, double seconds) const;
+    int PickCatalogueStar(const glm::dvec3& origin,const glm::vec3& direction,double angularTolerance,int exclude=-1) const;
+    void RenderCatalogueSelection(const glm::mat4& vp,const glm::dvec3& camera,int selected,double seconds) const;
     static glm::mat4 PlanetRotation(double seconds,int planet=0);
     static double GravityParameter() { return Astronomy::gargantuaGravityAu; }
     static float HorizonRadius() { return static_cast<float>(Astronomy::gargantuaHorizonAu); }

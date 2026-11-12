@@ -6,6 +6,7 @@
 #include "ScenePanel.h"
 #include <algorithm>
 #include <cctype>
+#include "UiTheme.h"
 
 void ScenePanel::Create(void *nativeParent)
 {
@@ -15,7 +16,7 @@ void ScenePanel::Create(void *nativeParent)
     const UINT dpi = GetDpiForWindow(window);
     font = CreateFontW(-MulDiv(10, dpi, 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-    backgroundBrush = CreateSolidBrush(RGB(19, 24, 33));
+    backgroundBrush = CreateSolidBrush(UiTheme::Panel);
     SetWindowLongPtrW(window, GWL_STYLE, GetWindowLongPtrW(window, GWL_STYLE) | WS_CLIPCHILDREN);
     const auto add = [&](const wchar_t *type, const wchar_t *text, int id, DWORD style) {
         const auto control =
@@ -23,16 +24,23 @@ void ScenePanel::Create(void *nativeParent)
                             reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), GetModuleHandleW(nullptr), nullptr);
         SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         controls.push_back(control);
+        if(std::wstring(type)==L"BUTTON")UiTheme::Button(control);
     };
     add(L"STATIC", L"", 2099, SS_LEFT);
     add(L"STATIC", L"Star browser", 2105, SS_LEFT);
     add(L"EDIT", L"", 2100, WS_BORDER | ES_AUTOHSCROLL | WS_TABSTOP);
     SendDlgItemMessageW(window, 2100, 0x1501, TRUE, reinterpret_cast<LPARAM>(L"Search name or catalogue number"));
-    add(L"LISTBOX", L"", 2101, WS_BORDER | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_TABSTOP);
+    add(L"LISTBOX", L"", 2101, WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | WS_TABSTOP);
     add(L"EDIT", L"", 2102, ES_READONLY | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL);
     add(L"STATIC", L"Planets / objects", 2106, SS_LEFT);
-    add(L"LISTBOX", L"", 2103, WS_BORDER | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_TABSTOP);
-    add(L"BUTTON", L"Go to selection (G)", 2104, BS_PUSHBUTTON | WS_TABSTOP);
+    add(L"LISTBOX", L"", 2103, WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | WS_TABSTOP);
+    for(int id:{2101,2103})SendDlgItemMessageW(window,id,LB_SETITEMHEIGHT,0,UiTheme::Px(window,33));
+    SendDlgItemMessageW(window,2105,WM_SETFONT,reinterpret_cast<WPARAM>(UiTheme::Font(window,15,FW_SEMIBOLD)),TRUE);
+    SendDlgItemMessageW(window,2106,WM_SETFONT,reinterpret_cast<WPARAM>(UiTheme::Font(window,12,FW_SEMIBOLD)),TRUE);
+    add(L"BUTTON", L"Go to selection    G", 2104, BS_PUSHBUTTON | WS_TABSTOP);
+    add(L"BUTTON", L"Play    Space", 2107, BS_PUSHBUTTON | WS_TABSTOP);
+    add(L"STATIC",L"PAUSED",2108,SS_LEFT);
+    SendDlgItemMessageW(window,2108,WM_SETFONT,reinterpret_cast<WPARAM>(UiTheme::Font(window,11)),TRUE);
     RECT rect;
     GetClientRect(window, &rect);
     Resize(rect.right, rect.bottom);
@@ -46,7 +54,7 @@ void ScenePanel::Resize(int width, int height)
         return;
     const auto window = static_cast<HWND>(parent);
     const float scale = GetDpiForWindow(window) / 96.0f;
-    widthPixels = std::min(static_cast<int>(288 * scale), width * 3 / 10);
+    widthPixels = std::min(static_cast<int>(304 * scale), width * 28 / 100);
     const int x = width - widthPixels;
     const int margin = static_cast<int>(12 * scale);
     const int bodyWidth = widthPixels - 2 * margin;
@@ -57,14 +65,16 @@ void ScenePanel::Resize(int width, int height)
     place(2105, margin, static_cast<int>(24 * scale), margin);
     place(2100, static_cast<int>(42 * scale), static_cast<int>(27 * scale), margin);
     const int contentTop=static_cast<int>((currentSystemOnly?77:77)*scale);
-    const int contentBottom=height-static_cast<int>(64*scale);
+    const int contentBottom=height-static_cast<int>(152*scale);
     const int listHeight=browserVisible?(informationVisible?(contentBottom-contentTop)/2:contentBottom-contentTop):0;
     place(2101,contentTop,std::max(60,listHeight),margin);
     place(2106,static_cast<int>(42*scale),static_cast<int>(27*scale),margin);
     place(2103,contentTop,std::max(60,listHeight),margin);
     const int infoTop=browserVisible?contentTop+listHeight+static_cast<int>(12*scale):margin;
     place(2102,infoTop,std::max(60,contentBottom-infoTop),margin);
-    place(2104, height - static_cast<int>(48 * scale), static_cast<int>(32 * scale), margin);
+    place(2108,height-static_cast<int>(140*scale),static_cast<int>(44*scale),margin);
+    place(2107,height-static_cast<int>(88*scale),static_cast<int>(34*scale),margin);
+    place(2104,height-static_cast<int>(46*scale),static_cast<int>(34*scale),margin);
     RefreshVisibility();
     InvalidateRect(window, nullptr, TRUE);
 #endif
@@ -194,6 +204,15 @@ void ScenePanel::SetPlanets(const std::vector<std::string> &names)
         SendMessageA(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(name.c_str()));
 #endif
 }
+void ScenePanel::SetPlayback(bool playing,const std::string& clock){
+#ifdef _WIN32
+    if(!parent)return;
+    const auto window=static_cast<HWND>(parent);
+    const auto label=playing?L"Pause    Space":L"Play    Space";
+    if(UiTheme::Label(GetDlgItem(window,2107))!=label)SetDlgItemTextW(window,2107,label);
+    SetDlgItemTextA(window,2108,clock.c_str());
+#endif
+}
 
 int ScenePanel::SelectedStar() const
 {
@@ -218,8 +237,8 @@ int ScenePanel::SelectedPlanet() const
 void *ScenePanel::ControlColor(void *context) const
 {
 #ifdef _WIN32
-    SetTextColor(static_cast<HDC>(context), RGB(224, 232, 242));
-    SetBkColor(static_cast<HDC>(context), RGB(19, 24, 33));
+    SetTextColor(static_cast<HDC>(context), UiTheme::Text);
+    SetBkColor(static_cast<HDC>(context), UiTheme::Panel);
 #endif
     return backgroundBrush;
 }

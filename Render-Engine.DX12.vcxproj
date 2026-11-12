@@ -4,6 +4,7 @@
     <TargetName>Render-Engine-DX12</TargetName>
     <OutDir>$(MSBuildProjectDirectory)\build\dx12\$(Configuration)\bin\</OutDir>
     <IntDir>$(MSBuildProjectDirectory)\build\dx12\$(Configuration)\obj\</IntDir>
+    <EnableDLSS Condition="'$(EnableDLSS)'==''">true</EnableDLSS>
   </PropertyGroup>
   <Import Project="Render-Engine.vcxproj" />
   <PropertyGroup>
@@ -33,11 +34,27 @@ copy /Y "$(ProjectDir)..\External_Lib\lib\assimp-vc143-mtd.dll" "$(OutDir)" &gt;
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\dx12\Dx12SceneBridge.cpp" />
+    <ClCompile Include="src\dx12\Dx12Dlss.cpp" />
     <ClCompile Include="src\dx12\Dx12Renderer.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\dx12\Dx12SceneBridge.h" />
+    <ClInclude Include="src\dx12\Dx12Dlss.h" />
     <ClInclude Include="src\dx12\Dx12Renderer.h" />
     <ClInclude Include="src\dx12\ShaderTranslator.h" />
   </ItemGroup>
+  <ItemDefinitionGroup Condition="'$(EnableDLSS)'=='true'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\External_Lib\src\DLSS\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>RENDER_ENGINE_DLSS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(ProjectDir)..\External_Lib\src\DLSS\lib\Windows_x86_64\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies Condition="'$(Configuration)'=='Debug'">nvsdk_ngx_d_dbg.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies Condition="'$(Configuration)'!='Debug'">nvsdk_ngx_d.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <Target Name="DeployDlss" AfterTargets="Build" Condition="'$(EnableDLSS)'=='true'">
+    <Copy SourceFiles="$(ProjectDir)..\External_Lib\src\DLSS\lib\Windows_x86_64\rel\nvngx_dlss.dll;$(ProjectDir)..\External_Lib\src\DLSS\LICENSE.txt" DestinationFolder="$(OutDir)" />
+  </Target>
 </Project>
