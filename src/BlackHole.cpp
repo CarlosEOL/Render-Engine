@@ -258,7 +258,7 @@ void main() {
 }
 )";
 
-    const char* lensFragmentBody = R"(
+    const std::string lensFragmentBody = std::string(R"(
 in vec2 screenPosition;
 out vec4 fragColor;
 uniform mat4 inverseViewProjection;
@@ -276,12 +276,33 @@ uniform sampler2D sourceDepth;
 uniform samplerCube sky;
 uniform float blackHoleSpin;
 uniform int rayStepBudget;
+uniform bool lensingDiagnostic;
 uniform float captureRadius;
+uniform float captureStopRadius;
 uniform bool physicalObserver;
 uniform vec3 physicalObserverBeta;
 
 float depthDistance(float depth) {
     return (exp2(depth*log2(1.0+20000.0*1e12))-1.0)/1e12;
+}
+
+// Analytic integration of the Gaussian vertical slab avoids tiny steps
+// asymptotically approaching its plane and consuming the ray budget.
+vec3 raySegmentPoint(vec3 start,vec3 end,vec3 initial,vec3 final,float interval,float t){
+    float t2=t*t,t3=t2*t;
+    return (2.0*t3-3.0*t2+1.0)*start+(t3-2.0*t2+t)*interval*initial
+        +(-2.0*t3+3.0*t2)*end+(t3-t2)*interval*final;
+}
+float gaussianErf(float x){
+    float a=abs(x),t=1.0/(1.0+.3275911*a);
+    float polynomial=(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-.284496736)*t+.254829592)*t;
+    return sign(x)*(1.0-polynomial*exp(-a*a));
+}
+float slabAverage(float before,float after,float sigma){
+    float delta=after-before;
+    if(abs(delta)<sigma*.001){float q=(before+after)*.5/sigma;return exp(-.5*q*q);}
+    float scale=1.41421356237*sigma;
+    return clamp(1.25331413732*sigma*(gaussianErf(after/scale)-gaussianErf(before/scale))/delta,0.0,1.0);
 }
 
 float hash13(vec3 p) {
@@ -317,6 +338,7 @@ float fbm(vec3 p) {
     return value;
 }
 
+)") + R"(
 void main() {
     vec4 farPoint = inverseViewProjection * vec4(screenPosition, 1.0, 1.0);
     vec3 cameraDirection = normalize(farPoint.xyz);
@@ -347,40 +369,51 @@ void main() {
 
     vec3 position = cameraPosition;
     vec3 tangent = photonInitialTangent(position, direction);
+    if(spinning){vec3 initialDx,initialDp;kerrDerivative(kx,kp,pt,horizonRadius,blackHoleSpin,initialDx,initialDp);tangent=fromDisk*initialDx;}
     vec3 momentum = cross(position, tangent);
     float angularMomentumSquared = dot(momentum, momentum);
     float travelled = 0.0;
     bool hit = false;
+    int rayResult=0; // unresolved, captured, disk, escaped
     vec3 radiance = vec3(0.0);
     float opticalEligibility = 1.0;
     vec3 plasma = vec3(0.0);
+    int effectiveBudget=rayStepBudget;
+    bool usedNearHoleReserve=false;
+    // Retain actual-horizon tracing where a nearby finite emitter may sit
+    // inside the otherwise empty capture region.
+    float stopRadius=originalDepth<.99999 && depthDistance(originalDepth)<observerRadius+3.0*horizonRadius
+        ?captureRadius*.9999:captureStopRadius;
 
     for (int step = 0; step < 384; ++step) {
-        if(step>=rayStepBudget)break;
         float radius = length(position);
         float metricRadius=spinning?kerrRadius(kx,.5*horizonRadius*blackHoleSpin):radius;
-        if (!insideHorizon && metricRadius < captureRadius * .9999) {
-            hit = true;
+        if(step>=effectiveBudget){
+            // Near-extremal past rays need extra affine steps. Reserve work
+            // only for rays already inside the disk's inner edge.
+            if(!usedNearHoleReserve && spinning && metricRadius<diskRadii.x && effectiveBudget<384){
+                effectiveBudget=min(384,rayStepBudget+192);usedNearHoleReserve=true;
+            }else break;
+        }
+        if (!insideHorizon && metricRadius < stopRadius) {
+            hit = true;rayResult=1;
             break;
         }
         float innerLimit=max(horizonRadius*.03,.5*horizonRadius*(1.0-sqrt(1.0-blackHoleSpin*blackHoleSpin))*1.05);
         if (insideHorizon && metricRadius < innerLimit) {
-            hit = true;
+            hit = true;rayResult=1;
             break;
         }
-        if (radius > max(observerRadius, diskRadii.y*1.5) + 4.0 && dot(position, tangent) > 0.0)
-            break;
+        if (radius > max(observerRadius, diskRadii.y*1.5) + 4.0 && dot(position, tangent) > 0.0) {
+            rayResult=3;break;
+        }
 
-        float interval = clamp(radius * (spinning?.04:.055), 0.003, spinning?.75:.45);
+        float interval = clamp(radius * (spinning?.06:.055), 0.003, spinning?1.0:.45);
         // AU-sized fixed steps exhausted the budget before a ray from Mann's
         // distance ever reached Gargantua. Resolve the weak-field approach
         // proportionally, retaining fine steps around the disk and photon shell.
-        if(radius>diskRadii.y*2.0)interval=max(interval,radius*.06);
-        float diskFraction = (radius - diskRadii.x) / (diskRadii.y - diskRadii.x);
-        float planeDistance = abs(dot(position, diskAxis));
-        // Resolve the vertical plasma structure with fine steps through the slab.
-        if (diskFraction > -0.08 && diskFraction < 1.12)
-            interval = min(interval, max(0.0025, planeDistance * 0.35 + 0.0025));
+        if(radius>diskRadii.y*2.0)interval=max(interval,radius*(spinning?.18:.10));
+        // Geometry controls the step; the emitting slab is integrated per segment.
 
         vec3 nextPosition,nextTangent;
         if(spinning){
@@ -400,6 +433,9 @@ void main() {
             nextTangent=tangent+.5*interval*(acceleration+photonAcceleration(nextPosition,angularMomentumSquared));
         }
 
+        if(any(isnan(nextPosition)) || any(isinf(nextPosition)) || any(isnan(nextTangent)) || any(isinf(nextTangent))){
+            hit=true;rayResult=0;opticalEligibility=0.0;break;
+        }
         vec3 segment = nextPosition - position;
         float segmentLength = length(segment);
         vec3 midpoint = position + 0.5 * segment;
@@ -421,7 +457,7 @@ void main() {
         // Volumetric plasma clouds above and below the thin disk.
         if (midFraction > 0.0 && midFraction < 1.0) {
             float flare = 0.012 + 0.065 * pow(midFraction, 1.35);
-            float vertical = exp(-0.5 * midPlane * midPlane / (flare * flare));
+            float vertical = slabAverage(dot(position,diskAxis),dot(nextPosition,diskAxis),flare);
             if (vertical > 0.02) {
                 vec3 diskPosition = (inverseDiskOrientation * vec4(midpoint, 1.0)).xyz;
                 float cloudAngle = diskPhase * 0.35;
@@ -447,17 +483,27 @@ void main() {
         float planeBefore = dot(position, diskAxis);
         float planeAfter = dot(nextPosition, diskAxis);
         if (planeBefore * planeAfter < 0.0) {
-            float fraction = planeBefore / (planeBefore - planeAfter);
-            vec3 intersection = mix(position, nextPosition, fraction);
+            float lower=0.0,upper=1.0;
+            // Locate the plane event on the curved RK segment, rather than
+            // using a chord whose radius jumps when the step count changes.
+            for(int refine=0;refine<12;++refine){
+                float t=(lower+upper)*.5;
+                float height=dot(raySegmentPoint(position,nextPosition,tangent,nextTangent,interval,t),diskAxis);
+                if((height>0.0)==(planeBefore>0.0))lower=t;else upper=t;
+            }
+            float fraction=(lower+upper)*.5;
+            vec3 intersection=raySegmentPoint(position,nextPosition,tangent,nextTangent,interval,fraction);
             float diskRadius = length(intersection);
             if(spinning)diskRadius=kerrRadius(toDisk*intersection,.5*horizonRadius*blackHoleSpin);
             if (diskRadius > diskRadii.x && diskRadius < diskRadii.y) {
                 vec3 diskPosition = (inverseDiskOrientation * vec4(intersection, 1.0)).xyz;
                 float radial = (diskRadius - diskRadii.x) / (diskRadii.y - diskRadii.x);
                 float angle = atan(diskPosition.y, diskPosition.x) - diskPhase;
-                float bands = 0.6 + 0.4 * sin(120.0 * radial + 2.2 * sin(4.0 * angle));
-                float fineBands = 0.72 + 0.28 * sin(260.0 * radial + 4.0 * sin(6.0 * angle));
-                float spiral = 0.6 + 0.4 * cos(9.0 * angle + 34.0 * radial);
+                float sheared=angle+.7*log(diskRadius/diskRadii.x)-plasmaTime*.16/pow(diskRadius/diskRadii.x,1.5);
+                float turbulent=fbm(vec3(vec2(cos(sheared),sin(sheared))*(3.0+radial*9.0),radial*38.0));
+                float bands=.82+.18*sin(22.0*radial+9.0*turbulent);
+                float fineBands=.40+1.25*smoothstep(.24,.76,turbulent);
+                float spiral=.85+.15*cos(6.0*angle+18.0*radial+4.0*turbulent);
                 vec3 toObserver = -localPhotonDirection(intersection, mix(tangent, nextTangent, fraction));
                 float shift = clamp(frequencyRatio(diskRadius, observerRadius,
                     circularVelocityBeta(intersection, diskAxis), toObserver), 0.05, 6.0);
@@ -468,7 +514,7 @@ void main() {
                 radiance = 3.2 * diskEmission * blackbody(temperature * shift) * beaming * edge
                     * (0.4 + 0.3 * bands + 0.3 * spiral) * fineBands;
                 travelled += length(intersection - position);
-                hit = true;
+                hit = true;rayResult=2;
                 break;
             }
         }
@@ -476,6 +522,8 @@ void main() {
         position = nextPosition;
         tangent = nextTangent;
     }
+    // Exhausting the integrator is not evidence that a ray reached infinity.
+    if(!hit && rayResult!=3){hit=true;opticalEligibility=0.0;}
     if(!hit) {
         vec3 incoming=normalize(tangent);
         vec4 skySample=texture(sky,incoming);
@@ -491,6 +539,12 @@ void main() {
                     opticalEligibility=source.a;
                 }
             }
+        }
+        if(!physicalObserver){
+            float influence=1.0-smoothstep(diskRadii.y*1.1,diskRadii.y*1.5,length(cross(cameraPosition,direction)));
+            vec4 original=texture(sourceScene,originalUv);
+            radiance=mix(original.rgb,radiance,influence);
+            opticalEligibility=mix(original.a,opticalEligibility,influence);
         }
         if(physicalObserver){
             // The ray was normalized to unit received energy in the camera
@@ -508,6 +562,7 @@ void main() {
     // Keep extreme blueshift within finite RGBA16F storage; this is a numeric
     // target limit, not an event-horizon blackout or a change in ray geometry.
     fragColor = vec4(clamp(radiance + plasma,vec3(0),vec3(60000)), opticalEligibility);
+    if(lensingDiagnostic)fragColor=vec4(rayResult==1?vec3(1,0,0):rayResult==2?vec3(0,1,0):rayResult==3?vec3(0,0,1):vec3(1,0,1),0);
     // Approximate depth allows the rasterized orbiting bodies to cross the lensed disk.
     gl_FragDepth = hit?clamp(log2(1.0+travelled*1e12)/log2(1.0+20000.0*1e12),0.0,.999998):.999999;
 }
@@ -1372,7 +1427,16 @@ void BlackHole::RenderLensing(const glm::mat4& vp,const glm::dvec3& camera,doubl
     const bool spinning=std::abs(lensSpin)>.0001;
     glUniform1f(glGetUniformLocation(lensProgram,"blackHoleSpin"),static_cast<float>(lensSpin));
     glUniform1i(glGetUniformLocation(lensProgram,"rayStepBudget"),rayBudget);
-    glUniform1f(glGetUniformLocation(lensProgram,"captureRadius"),static_cast<float>(KerrSpacetime::Horizon(horizonRadius,lensSpin)));
+    glUniform1i(glGetUniformLocation(lensProgram,"lensingDiagnostic"),lensingDiagnostic);
+    const double horizon=KerrSpacetime::Horizon(horizonRadius,lensSpin);
+    glUniform1f(glGetUniformLocation(lensProgram,"captureRadius"),static_cast<float>(horizon));
+    // Exterior incoming rays below the innermost photon orbit cannot scatter
+    // back to infinity. Stop there before past-directed KS momenta diverge.
+    // Near/interior observers retain the actual horizon/inner-limit handling.
+    const double photonStop=KerrSpacetime::MinimumPhotonOrbit(horizonRadius,lensSpin)*.99;
+    const double observerMetricRadius=KerrSpacetime::Radius(glm::dmat3(diskInverse)*camera,horizonRadius,lensSpin);
+    glUniform1f(glGetUniformLocation(lensProgram,"captureStopRadius"),static_cast<float>(
+        spinning && observerMetricRadius>photonStop*1.02?std::max(horizon,photonStop):horizon*.9999));
     glUniform2f(glGetUniformLocation(lensProgram,"diskRadii"),spinning?static_cast<float>(KerrSpacetime::ProgradeIsco(horizonRadius,lensSpin)):innerDiskRadius,core && preset.quasar?horizonRadius*12.f:outerDiskRadius);
     glUniform1f(glGetUniformLocation(lensProgram,"diskPhase"),static_cast<float>(std::remainder(OrbitalMechanics::MeanMotion(gravitationalParameter,outerDiskRadius)*seconds,glm::two_pi<double>())));
     glUniform1f(glGetUniformLocation(lensProgram,"plasmaTime"),static_cast<float>(seconds/timeScale));

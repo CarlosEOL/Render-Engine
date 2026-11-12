@@ -1,5 +1,6 @@
 # Universe/UI follow-up validation — November 12, 2026
 
+Follow-up: the older smoke checks did not verify the black-hole shadow's shape. [The Kerr capture correction](KERR_CAPTURE_FIX_2026-11-12.md) adds an independent radial-potential reference and records the limitation of the earlier passing captures.
 ## Completed checks
 
 | Build | Result |

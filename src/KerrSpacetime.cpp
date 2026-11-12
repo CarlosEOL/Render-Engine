@@ -50,6 +50,10 @@ double KerrSpacetime::Horizon(double rs, double spin) {
     throw std::invalid_argument("Kerr requires positive mass and |spin| < 1");
   return .5 * rs * (1 + std::sqrt(1 - spin * spin));
 }
+double KerrSpacetime::MinimumPhotonOrbit(double rs, double spin) {
+  Horizon(rs, spin);
+  return rs * (1 + std::cos((2.0 / 3) * std::acos(-std::abs(spin))));
+}
 double KerrSpacetime::ProgradeIsco(double rs, double spin) {
   Horizon(rs, spin);
   const double z1 = 1 + std::cbrt(1 - spin * spin) *

@@ -200,3 +200,12 @@ Actual engine captures (HDR):
 ![Milky Way dust band from the Solar neighbourhood](assets/screenshots/milky-way-solar-dust-lanes.png)
 
 Appearance artwork: **Courtesy NASA/JPL-Caltech**, [PIA10748](https://www.jpl.nasa.gov/images/pia10748-our-milky-way-gets-a-makeover-artist-concept/). This is an artist's reconstruction. [Every change, reason, memory tradeoff and validation result](docs/MILKY_WAY_QUALITY_2026-11-12.md).
+
+
+## Kerr shadow correction
+
+The renderer now distinguishes captured, escaped, emitting and unfinished rays. This removes false nested background images inside the shadow and avoids numerical stalling near the horizon. A focused `--lensing-check DIR` compares GPU classifications against an independent radial-potential reference; the full render suite includes it.
+
+![Corrected Gargantua shadow](assets/screenshots/gargantua-capture-fixed.png)
+
+[Every correction, its reason, equations, validation and remaining approximations](docs/KERR_CAPTURE_FIX_2026-11-12.md).

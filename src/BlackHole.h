@@ -20,6 +20,7 @@ public:
     double Spin() const { return spin; }
     void SetRayBudget(int value) { rayBudget=glm::clamp(value,64,384); }
     int RayBudget() const { return rayBudget; }
+    void SetLensingDiagnostic(bool value) { lensingDiagnostic=value; }
     void SetAtmospheresEnabled(bool enabled) { atmospheresEnabled=enabled; }
     unsigned int LensingSourceDepthTexture() const { return sourceDepth; }
     void RenderBackground(const glm::mat4& vp,const glm::dvec3& camera,bool photons=false,
@@ -87,6 +88,7 @@ private:
     float magnitudeLimit=7;
     std::vector<float> starLuminosities;
     int rayBudget=160;
+    bool lensingDiagnostic=false;
     bool atmospheresEnabled=true;
     unsigned int lensProgram = 0;
     unsigned int screenVao = 0;

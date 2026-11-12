@@ -42,7 +42,7 @@ public:
     void ReleaseGraphics();
     double GetSimulationTime() const { return simulationTime; }
     int GetFrameLimit() const { return !isFocused || mainMenu.Visible() || idleFrame ? glm::min(frameLimit,30) : frameLimit; }
-    bool RunRenderChecks(const std::string& directory, bool uiOnly = false, bool galaxyOnly = false);
+    bool RunRenderChecks(const std::string& directory, bool uiOnly = false, bool galaxyOnly = false, bool lensingOnly = false);
 
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
     static void MouseCallback(GLFWwindow* window, double xPos, double yPos);
