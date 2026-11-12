@@ -1,0 +1,24 @@
+-- Selecting Windows SDK version 10.0.26100.0 to target Windows 10.0.26200.
+-- The CXX compiler identification is MSVC 19.44.35219.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Configuring done (4.9s)
+-- Generating done (0.1s)
+-- Build files have been written to: C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/Render-Engine/build/current/kerr-cpu
+MSBuild version 17.14.23+b0019275e for .NET Framework
+
+  1>Checking Build System
+  Building Custom Rule C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/Render-Engine/tests/kerr/CMakeLists.txt
+  KerrObserverChecks.cpp
+  KerrSpacetime.cpp
+  Generating Code...
+  KerrObserverChecks.vcxproj -> C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\build\current\kerr-cpu\Release\KerrObserverChecks.exe
+  Building Custom Rule C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/Render-Engine/tests/kerr/CMakeLists.txt
+spin=0 crossed; mass-shell error=1.44329e-15; proper=7580.5 s; coordinate=9287.11 s; exterior light visible
+spin=0.8 crossed; mass-shell error=1.59872e-14; proper=7411 s; coordinate=9169.79 s; exterior light visible
+spin=0.98 crossed; mass-shell error=5.7776e-13; proper=7357 s; coordinate=9183.62 s; exterior light visible
+spin=-0.8 crossed; mass-shell error=1.29341e-14; proper=7411 s; coordinate=9169.79 s; exterior light visible
+Kerr observer checks PASS

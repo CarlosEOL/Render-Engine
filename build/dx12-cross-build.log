@@ -1,0 +1,16 @@
+MSBuild version 17.14.23+b0019275e for .NET Framework
+
+  1>Checking Build System
+  Building Custom Rule C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/src/SPIRV-Cross/CMakeLists.txt
+  spirv_cross.cpp
+  spirv_parser.cpp
+  spirv_cross_parsed_ir.cpp
+  spirv_cfg.cpp
+  Generating Code...
+  spirv-cross-core.vcxproj -> C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\build\SPIRV-Cross\Release\spirv-cross-core.lib
+  Building Custom Rule C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/src/SPIRV-Cross/CMakeLists.txt
+  spirv_glsl.cpp
+  spirv-cross-glsl.vcxproj -> C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\build\SPIRV-Cross\Release\spirv-cross-glsl.lib
+  Building Custom Rule C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/src/SPIRV-Cross/CMakeLists.txt
+  spirv_hlsl.cpp
+  spirv-cross-hlsl.vcxproj -> C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\build\SPIRV-Cross\Release\spirv-cross-hlsl.lib

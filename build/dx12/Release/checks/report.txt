@@ -1,0 +1,19 @@
+Native DX12 migration preview
+Adapter: NVIDIA GeForce RTX 4080 Laptop GPU
+Debug layer: 1
+Kerr spin -0.8: GPU/CPU position error=7.94196e-07 AU
+Kerr spin 0: GPU/CPU position error=6.14533e-07 AU
+Kerr spin 0.8: GPU/CPU position error=3.16136e-07 AU
+Kerr spin 0.98: GPU/CPU position error=4.46142e-07 AU
+dx12-kerr-hdr: lit=74741
+dx12-paused-cache: lit=74741
+dx12-spin-zero: lit=40587
+dx12-reverse-spin: lit=7689
+dx12-pure-auto: lit=67341
+dx12-auto-plus-one-ev: lit=70062
+dx12-resized-odd-dimensions: lit=45722
+dx12-restored: lit=42595
+dx12-editor-spin-06: lit=37198
+Exposure EV=-3.3625, target=-3.3625
+Validation errors=0
+PASS

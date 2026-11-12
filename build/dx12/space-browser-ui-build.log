@@ -1,0 +1,39 @@
+-- Selecting Windows SDK version 10.0.26100.0 to target Windows 10.0.26200.
+-- Configuring done (0.6s)
+-- Generating done (0.5s)
+-- Build files have been written to: C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/glslang
+MSBuild version 17.14.23+b0019275e for .NET Framework
+
+  glslang.vcxproj -> C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\build\glslang\glslang\Release\glslang.lib
+MSBuild version 17.14.23+b0019275e for .NET Framework
+
+  glslang-default-resource-limits.vcxproj -> C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\build\glslang\glslang\Release\glslang-default-resource-limits.lib
+-- Selecting Windows SDK version 10.0.26100.0 to target Windows 10.0.26200.
+-- SPIRV-Cross: Finding Git version for SPIRV-Cross.
+-- SPIRV-Cross: Git hash: 57e4efc
+-- Configuring done (0.2s)
+-- Generating done (0.5s)
+-- Build files have been written to: C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/SPIRV-Cross
+MSBuild version 17.14.23+b0019275e for .NET Framework
+
+  spirv-cross-core.vcxproj -> C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\build\SPIRV-Cross\Release\spirv-cross-core.lib
+  spirv-cross-glsl.vcxproj -> C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\build\SPIRV-Cross\Release\spirv-cross-glsl.lib
+  spirv-cross-hlsl.vcxproj -> C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\build\SPIRV-Cross\Release\spirv-cross-hlsl.lib
+-- Selecting Windows SDK version 10.0.26100.0 to target Windows 10.0.26200.
+-- Configuring done (0.1s)
+-- Generating done (0.1s)
+-- Build files have been written to: C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/ShaderTranslator
+MSBuild version 17.14.23+b0019275e for .NET Framework
+
+  ShaderTranslator.vcxproj -> C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\build\ShaderTranslator\Release\ShaderTranslator.dll
+
+C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Microsoft\VC\v170\Microsoft.CppBuild.targets(538,5): warning MSB8028: The intermediate directory (C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\build\dx12\Debug\obj\) contains files shared from another project (Render-Engine.DX12.vcxproj).  This can lead to incorrect clean and rebuild behavior. [C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\Render-Engine.DX12.vcxproj]
+  NavigationCatalog.cpp
+  NavigationPanel.cpp
+  RenderChecks.cpp
+  WindowManager.cpp
+C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\src\WindowManager.cpp(1952,27): warning C4267: 'initializing': conversion from 'size_t' to 'GLsizei', possible loss of data [C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\Render-Engine.DX12.vcxproj]
+  main.cpp
+  Generating Code...
+LINK : warning LNK4098: defaultlib 'MSVCRT' conflicts with use of other libs; use /NODEFAULTLIB:library [C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\Render-Engine.DX12.vcxproj]
+  Render-Engine.DX12.vcxproj -> C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\build\dx12\Debug\bin\Render-Engine-DX12.exe

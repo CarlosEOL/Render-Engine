@@ -1,0 +1,11 @@
+DX12 adapter: NVIDIA GeForce RTX 4080 Laptop GPU; debug layer=1
+dx12-kerr-hdr: 1280x720, lit=74741
+dx12-paused-cache: 1280x720, lit=74741
+dx12-spin-zero: 1280x720, lit=40587
+dx12-reverse-spin: 1280x720, lit=7689
+dx12-pure-auto: 1280x720, lit=67341
+dx12-auto-plus-one-ev: 1280x720, lit=70062
+dx12-resized-odd-dimensions: 997x563, lit=45722
+dx12-restored: 960x540, lit=42595
+dx12-editor-spin-06: 960x540, lit=37198
+Native DX12 checks PASS; validation errors=0

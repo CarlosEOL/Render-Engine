@@ -1,0 +1,55 @@
+MSBuild version 17.14.23+b0019275e for .NET Framework
+
+  1>Checking Build System
+  Building Custom Rule C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/src/glslang/glslang/CMakeLists.txt
+  Building Custom Rule C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/src/glslang/glslang/CMakeLists.txt
+  resource_limits_c.cpp
+  cmake_pch.cxx
+  ResourceLimits.cpp
+  glslang_c_interface.cpp
+  iomapper.cpp
+  Constant.cpp
+  attribute.cpp
+  Link.cpp
+  CodeGen.cpp
+  glslang_tab.cpp
+  ossource.cpp
+  reflection.cpp
+  PpScanner.cpp
+  IntermTraverse.cpp
+  InfoSink.cpp
+  ParseHelper.cpp
+  PpTokens.cpp
+  intermOut.cpp
+  linkValidate.cpp
+  glslang-default-resource-limits.vcxproj -> C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\build\glslang\glslang\Release\glslang-default-resource-limits.lib
+  PoolAlloc.cpp
+  Initialize.cpp
+  parseConst.cpp
+  PpAtom.cpp
+  ParseContextBase.cpp
+  Pp.cpp
+  ShaderLang.cpp
+  PpContext.cpp
+  SpirvIntrinsics.cpp
+  SymbolTable.cpp
+  Intermediate.cpp
+  limits.cpp
+  Versions.cpp
+  RemoveTree.cpp
+  propagateNoContraction.cpp
+  GlslangToSpv.cpp
+  Scan.cpp
+  InReadableOrder.cpp
+  SpvBuilder.cpp
+  Logger.cpp
+  doc.cpp
+  SpvPostProcess.cpp
+  disassemble.cpp
+  SpvTools.cpp
+  spirv_c_interface.cpp
+  glslang.vcxproj -> C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\build\glslang\glslang\Release\glslang.lib
+  Generating C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/build/glslang/include/glslang/glsl_intrinsic_header.h
+  Building Custom Rule C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/External_Lib/src/glslang/StandAlone/CMakeLists.txt
+  StandAlone.cpp
+  glslang-standalone.vcxproj -> C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\build\glslang\StandAlone\Release\glslang.exe

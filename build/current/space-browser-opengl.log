@@ -1,0 +1,303 @@
+Flat Shader ID: 3
+Program ID: 3
+Made a new window.
+
+UI capture: ui-main-menu; controls=6
+UI capture: ui-destinations; controls=8
+UI capture: ui-quantum-library; controls=8
+UI capture: ui-destinations-compact; controls=7
+UI capture: ui-quantum-library-compact; controls=8
+UI capture: ui-object-finder; controls=9
+UI capture: ui-earth-satellites; controls=7
+UI capture: ui-solar-hierarchy; controls=7
+UI capture: ui-jupiter-satellites; controls=7
+UI capture: ui-nearby-systems; controls=9
+Generator preflight: 1024 systems passed
+[Drop] File dropped: build/current/space-browser-opengl\probe.obj
+[Drop] OBJ loaded successfully
+[Drop] Updated model buffer with 3 vertices.
+[Capture] model-imported-obj
+model-imported-obj: 1980x1050, lit=2534, GL=0
+[Drop] File dropped: build/current/space-browser-opengl\probe.fbx
+[Drop] FBX loaded successfully
+[Drop] Updated model buffer with 3 vertices.
+[Capture] model-imported-fbx
+model-imported-fbx: 1980x1050, lit=279861, GL=0
+[Capture] quantum-family-0
+quantum-family-0: 1524x1050, lit=61035, GL=0
+[Capture] quantum-coherent-3d
+quantum-coherent-3d: 1524x1050, lit=46934, GL=0
+[Capture] quantum-family-2
+quantum-family-2: 1524x1050, lit=50015, GL=0
+[Capture] quantum-hydrogen-3d
+quantum-hydrogen-3d: 1524x1050, lit=67692, GL=0
+[Capture] quantum-family-4
+quantum-family-4: 1524x1050, lit=36237, GL=0
+[Capture] quantum-family-5
+quantum-family-5: 1524x1050, lit=45718, GL=0
+[Capture] quantum-tunneling-3d
+quantum-tunneling-3d: 1524x1050, lit=53561, GL=0
+[Capture] solar-overview
+solar-overview: 1524x1050, lit=68496, GL=0
+UI capture: ui-star-browser-and-clock; controls=12
+[Capture] visible-star-selected-from-solar
+visible-star-selected-from-solar: 1524x1050, lit=140221, GL=0
+[Capture] visible-star-visited-system
+visible-star-visited-system: 1524x1050, lit=1544249, GL=0
+[Capture] solar-earth
+solar-earth: 1524x1050, lit=274169, GL=0
+[Capture] earth-clouds-500km-off
+earth-clouds-500km-off: 1524x1050, lit=1600200, GL=0
+[Capture] earth-clouds-500km-on
+earth-clouds-500km-on: 1524x1050, lit=1600200, GL=0
+[Capture] earth-clouds-80km-off
+earth-clouds-80km-off: 1524x1050, lit=342954, GL=0
+[Capture] earth-clouds-80km-on
+earth-clouds-80km-on: 1524x1050, lit=342954, GL=0
+[Capture] earth-clouds-5km-off
+earth-clouds-5km-off: 1524x1050, lit=1600200, GL=0
+[Capture] earth-clouds-5km-on
+earth-clouds-5km-on: 1524x1050, lit=1600200, GL=0
+[Capture] moon-neutral-regolith
+moon-neutral-regolith: 1524x1050, lit=630800, GL=0
+Lunar neutral pixels: 64010 / 64050
+[Capture] saturn-banded-ice-rings
+saturn-banded-ice-rings: 1524x1050, lit=676687, GL=0
+[Capture] saturn-ring-particle-proximity
+saturn-ring-particle-proximity: 1524x1050, lit=13371, GL=0
+[Capture] earth-day-sun-scattering
+earth-day-sun-scattering: 1524x1050, lit=1600200, GL=0
+[Capture] earth-low-sun-scattering
+earth-low-sun-scattering: 1524x1050, lit=1364415, GL=0
+[Capture] gargantua-lensing
+gargantua-lensing: 1524x1050, lit=232707, GL=0
+[Capture] gargantua-cached
+gargantua-cached: 1524x1050, lit=232707, GL=0
+[Capture] gargantua-spin-zero
+gargantua-spin-zero: 1524x1050, lit=552458, GL=0
+[Capture] gargantua-kerr-spin-08
+gargantua-kerr-spin-08: 1524x1050, lit=232707, GL=0
+[Capture] object-editor-spin-065
+object-editor-spin-065: 1524x1050, lit=275055, GL=0
+[Capture] object-editor-reverse-spin
+object-editor-reverse-spin: 1524x1050, lit=265799, GL=0
+[Capture] black-hole-hdr-unassisted
+black-hole-hdr-unassisted: 1524x1050, lit=232707, GL=0
+[Capture] black-hole-hdr-visible
+black-hole-hdr-visible: 1524x1050, lit=232707, GL=0
+[Capture] black-hole-auto-unassisted
+black-hole-auto-unassisted: 1524x1050, lit=78246, GL=0
+[Capture] black-hole-auto-visible
+black-hole-auto-visible: 1524x1050, lit=125850, GL=0
+Black hole display sums HDR 1.18757e+08 -> 1.18757e+08; Auto 1.56582e+07 -> 4.24324e+07
+[Capture] gargantua-visible-from-mann-distance
+gargantua-visible-from-mann-distance: 1524x1050, lit=56751, GL=0
+[Capture] miller-orbit
+miller-orbit: 1524x1050, lit=669474, GL=0
+[Capture] miller-surface
+miller-surface: 1524x1050, lit=1600200, GL=0
+[Capture] miller-atmosphere-3.000000-off
+miller-atmosphere-3.000000-off: 1524x1050, lit=88827, GL=0
+[Capture] miller-atmosphere-3.000000-on
+miller-atmosphere-3.000000-on: 1524x1050, lit=90083, GL=0
+miller-atmosphere-3.000000 texture=762x525 affected=68570; air outside shell=0; nonfinite=0
+[Capture] miller-atmosphere-1.029000-off
+miller-atmosphere-1.029000-off: 1524x1050, lit=47562, GL=0
+[Capture] miller-atmosphere-1.029000-on
+miller-atmosphere-1.029000-on: 1524x1050, lit=44833, GL=0
+miller-atmosphere-1.029000 texture=762x525 affected=199752; air outside shell=0; nonfinite=0
+[Capture] miller-atmosphere-1.031000-off
+miller-atmosphere-1.031000-off: 1524x1050, lit=50979, GL=0
+[Capture] miller-atmosphere-1.031000-on
+miller-atmosphere-1.031000-on: 1524x1050, lit=47463, GL=0
+miller-atmosphere-1.031000 texture=762x525 affected=197308; air outside shell=0; nonfinite=0
+[Capture] camera-flare
+camera-flare: 1524x1050, lit=1582529, GL=0
+[Capture] solar-prominences
+solar-prominences: 1524x1050, lit=1597544, GL=0
+[Capture] solar-prominences-paused
+solar-prominences-paused: 1524x1050, lit=1597544, GL=0
+[Capture] solar-prominences-disabled
+solar-prominences-disabled: 1524x1050, lit=1597394, GL=0
+Exterior plasma pixels: 11511
+[Capture] solar-prominences-evolved
+solar-prominences-evolved: 1524x1050, lit=1597543, GL=0
+[Capture] gargantua-stellar-prominences
+gargantua-stellar-prominences: 1524x1050, lit=1588907, GL=0
+[Capture] solar-natural-color
+solar-natural-color: 1524x1050, lit=1580640, GL=0
+[Capture] solar-warm-color
+solar-warm-color: 1524x1050, lit=1580766, GL=0
+[Capture] lens-1-off
+lens-1-off: 1524x1050, lit=23068, GL=0
+[Capture] lens-1-on
+lens-1-on: 1524x1050, lit=61311, GL=0
+Lens 1 flare channels changed: 123571
+[Capture] lens-2-off
+lens-2-off: 1524x1050, lit=22800, GL=0
+[Capture] lens-2-on
+lens-2-on: 1524x1050, lit=536529, GL=0
+Lens 2 flare channels changed: 1492257
+[Capture] lens-3-off
+lens-3-off: 1524x1050, lit=23422, GL=0
+[Capture] lens-3-on
+lens-3-on: 1524x1050, lit=555609, GL=0
+Lens 3 flare channels changed: 1526466
+[Capture] lens-4-off
+lens-4-off: 1524x1050, lit=23078, GL=0
+[Capture] lens-4-on
+lens-4-on: 1524x1050, lit=553625, GL=0
+Lens 4 flare channels changed: 1524184
+[Capture] lens-5-off
+lens-5-off: 1524x1050, lit=22588, GL=0
+[Capture] lens-5-on
+lens-5-on: 1524x1050, lit=557172, GL=0
+Lens 5 flare channels changed: 1520960
+[Capture] lens-6-off
+lens-6-off: 1524x1050, lit=21400, GL=0
+[Capture] lens-6-on
+lens-6-on: 1524x1050, lit=496529, GL=0
+Lens 6 flare channels changed: 1641581
+[Capture] solar-occulted-flare-off
+solar-occulted-flare-off: 1524x1050, lit=913513, GL=0
+[Capture] solar-occulted-flare-on
+solar-occulted-flare-on: 1524x1050, lit=913513, GL=0
+[Capture] reference-glare-off
+reference-glare-off: 1524x1050, lit=72676, GL=0
+[Capture] reference-glare-on
+reference-glare-on: 1524x1050, lit=398018, GL=0
+[Capture] solar-eclipse-corona-off
+solar-eclipse-corona-off: 1524x1050, lit=1570539, GL=0
+[Capture] solar-eclipse-corona-on
+solar-eclipse-corona-on: 1524x1050, lit=1570539, GL=0
+[Capture] pure-auto-star
+pure-auto-star: 1524x1050, lit=215521, GL=0
+[Capture] pure-auto-positive-bias
+pure-auto-positive-bias: 1524x1050, lit=767952, GL=0
+[Capture] pure-auto-dark-first
+pure-auto-dark-first: 1524x1050, lit=712181, GL=0
+[Capture] pure-auto-dark-adapted
+pure-auto-dark-adapted: 1524x1050, lit=1581388, GL=0
+[Capture] pure-auto-bright-first
+pure-auto-bright-first: 1524x1050, lit=1581388, GL=0
+[Capture] pure-auto-bright-adapted
+pure-auto-bright-adapted: 1524x1050, lit=215521, GL=0
+[Capture] pure-manual-star
+pure-manual-star: 1524x1050, lit=410077, GL=0
+[Capture] exposure-independent-glare-off
+exposure-independent-glare-off: 1524x1050, lit=3307, GL=0
+[Capture] exposure-independent-glare-on
+exposure-independent-glare-on: 1524x1050, lit=316204, GL=0
+[Capture] exposure-independent-nikon
+exposure-independent-nikon: 1524x1050, lit=337414, GL=0
+[Capture] exposure-pan-left
+exposure-pan-left: 1524x1050, lit=377132, GL=0
+[Capture] exposure-pan-right
+exposure-pan-right: 1524x1050, lit=425017, GL=0
+Glare-independent EV: -1.43013, -1.43013, -1.43013; pan span=0.0171081
+[Capture] erupting-star-one-glare-center
+erupting-star-one-glare-center: 1524x1050, lit=1581388, GL=0
+Stellar activity 1 optical sources=1; host centers=1
+[Capture] quiet-star-one-glare-center
+quiet-star-one-glare-center: 1524x1050, lit=1581388, GL=0
+Stellar activity 0 optical sources=1; host centers=1
+Optical eligibility 0 source count=0
+Optical eligibility 1 source count=4
+Glare brightness response: 90 -> 116
+[Capture] cool-star-emissive-before-landing
+cool-star-emissive-before-landing: 1524x1050, lit=1600200, GL=0
+[Capture] generated-planet-surface-lod
+generated-planet-surface-lod: 1524x1050, lit=1600200, GL=0
+[Capture] cool-star-emissive-after-landing
+cool-star-emissive-after-landing: 1524x1050, lit=1600200, GL=0
+[Capture] camera-proximity-galaxy-star
+camera-proximity-galaxy-star: 1524x1050, lit=1516210, GL=0
+[Capture] distant-star-gpu-only-tier
+distant-star-gpu-only-tier: 1524x1050, lit=81, GL=0
+Inactive-system orbital evaluations=0
+[Capture] camera-proximity-same-star-revisit
+camera-proximity-same-star-revisit: 1524x1050, lit=1516210, GL=0
+[Capture] mann-ice-surface-lod
+Camera Pos: (83.7489, -251.858, -593.341) | Front: (-0.990185, 0, -0.139763)
+mann-ice-surface-lod: 1524x1050, lit=1600200, GL=0
+[Capture] edmunds-rock-surface-lod
+edmunds-rock-surface-lod: 1524x1050, lit=1600200, GL=0
+[Capture] kerr-infall-horizon-1.020000
+kerr-infall-horizon-1.020000: 1524x1050, lit=6989, GL=0
+[Capture] kerr-infall-horizon-1.001000
+kerr-infall-horizon-1.001000: 1524x1050, lit=7105, GL=0
+[Capture] kerr-infall-horizon-0.999000
+kerr-infall-horizon-0.999000: 1524x1050, lit=7105, GL=0
+Horizon-crossing mean display change: 0.0259795 / 255
+[Capture] kerr-infall-horizon-0.980000
+kerr-infall-horizon-0.980000: 1524x1050, lit=6951, GL=0
+[Capture] kerr-infall-horizon-0.850000
+kerr-infall-horizon-0.850000: 1524x1050, lit=6825, GL=0
+[Capture] mann-spacecraft-departure
+Craft distance=500.017 m; aim=0.999959; age=1.67296e-06 s
+mann-spacecraft-departure: 1524x1050, lit=1600200, GL=0
+[Capture] gargantua-spacecraft-periapsis
+Craft distance=433.582 m; aim=0.988495; age=1.49012e-06 s
+gargantua-spacecraft-periapsis: 1524x1050, lit=918354, GL=0
+[Capture] endurance-close-kerr
+Craft distance=434.871 m; aim=1; age=1.53482e-06 s
+endurance-close-kerr: 1524x1050, lit=88201, GL=0
+[Capture] endurance-close-schwarzschild
+Craft distance=434.871 m; aim=1; age=1.53482e-06 s
+endurance-close-schwarzschild: 1524x1050, lit=122757, GL=0
+Depth-identified foreground ship pixels stable across spin: 2593
+[Capture] gargantua-spacecraft-escape
+Craft distance=515.318 m; aim=0.976377; age=1.72108e-06 s
+gargantua-spacecraft-escape: 1524x1050, lit=9515, GL=0
+[Capture] endurance-interior
+Craft distance=22.9291 m; aim=-0.998015; age=7.82311e-08 s
+endurance-interior: 1524x1050, lit=865343, GL=0
+[Capture] endurance-interior-looking-at-planet
+Craft distance=22.9291 m; aim=-0.354577; age=7.82311e-08 s
+endurance-interior-looking-at-planet: 1524x1050, lit=1150601, GL=0
+[Capture] ranger-1-detached-interior
+Craft distance=1.87003e+08 m; aim=0.915427; age=0.625012 s
+ranger-1-detached-interior: 1524x1050, lit=972867, GL=0
+[Capture] ranger-2-detached-interior
+Craft distance=1.67117e+08 m; aim=-0.892837; age=0.558528 s
+ranger-2-detached-interior: 1524x1050, lit=972866, GL=0
+[Capture] compact-position-follow-notification
+compact-position-follow-notification: 1524x1050, lit=69853, GL=0
+[Capture] zoom-readout-base
+zoom-readout-base: 1524x1050, lit=18847, GL=0
+[Capture] compact-zoom-readout
+compact-zoom-readout: 1524x1050, lit=20771, GL=0
+[Capture] zoom-readout-expired
+zoom-readout-expired: 1524x1050, lit=18847, GL=0
+[Capture] window-resize-odd-small
+window-resize-odd-small: 718x703, lit=19389, GL=0
+[Capture] window-resize-odd-medium
+window-resize-odd-medium: 890x781, lit=31839, GL=0
+[Capture] window-resize-restored
+window-resize-restored: 1524x1020, lit=64327, GL=0
+Exposure meter EV: 4.45939 -> 0.0787253 -> -8.82824; brightening -7.44412; black 8; valid=1
+[Capture] sagittarius-a-hdr
+sagittarius-a-hdr: 1524x1020, lit=1494333, GL=0
+[Capture] sagittarius-a-auto
+sagittarius-a-auto: 1524x1020, lit=1466435, GL=0
+[Capture] ton-618-hdr
+ton-618-hdr: 1524x1020, lit=888871, GL=0
+[Capture] ton-618-auto
+ton-618-auto: 1524x1020, lit=388687, GL=0
+[Capture] nebula-0
+nebula-0: 1524x1020, lit=336720, GL=0
+[Capture] nebula-1
+nebula-1: 1524x1020, lit=258906, GL=0
+[Capture] nebula-2
+nebula-2: 1524x1020, lit=295087, GL=0
+[Capture] nebula-3
+nebula-3: 1524x1020, lit=646870, GL=0
+[Capture] magnitude-limit-3-60
+magnitude-limit-3-60: 1524x1020, lit=608526, GL=0
+[Capture] magnitude-limit-7-00
+magnitude-limit-7-00: 1524x1020, lit=608798, GL=0
+[Capture] magnitude-limit-10-20
+magnitude-limit-10-20: 1524x1020, lit=609004, GL=0
+[Capture] milky-way-galactic-pole
+milky-way-galactic-pole: 1524x1020, lit=823, GL=0
+Render checks PASSED: 124 scene captures; 11 UI captures; 0 assertion locations failed

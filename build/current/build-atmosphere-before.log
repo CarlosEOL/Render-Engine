@@ -1,0 +1,40 @@
+
+cl : command line  warning D9025: overriding '/ZI' with '/Z7' [C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\Render-Engine.vcxproj]
+  AssetManager.cpp
+  BlackHole.cpp
+  OrbitalMechanics.cpp
+  PlanetTerrain.cpp
+  UniverseCatalog.cpp
+  InterstellarWorlds.cpp
+  KerrSpacetime.cpp
+  Atmosphere.cpp
+  SaturnRings.cpp
+  VehicleInterior.cpp
+  CameraOptics.cpp
+  ExposureMeter.cpp
+  GalaxyBackground.cpp
+  StarSystem.cpp
+  StellarActivity.cpp
+  SolarSystem.cpp
+  ScenePanel.cpp
+  ObjectEditor.cpp
+  AppMenu.cpp
+  QuantumStates.cpp
+  Generating Code...
+  Compiling...
+  QuantumSimulation.cpp
+  QuantumParticleView.cpp
+  CameraMotion.cpp
+  RenderChecks.cpp
+  main.cpp
+  ObjectLoader.cpp
+  TinyObjectLoaderImpl.cpp
+  WindowManager.cpp
+C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\src\WindowManager.cpp(1813,27): warning C4267: 'initializing': conversion from 'size_t' to 'GLsizei', possible loss of data [C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\Render-Engine.vcxproj]
+  Generating Code...
+cl : command line  warning D9025: overriding '/ZI' with '/Z7' [C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\Render-Engine.vcxproj]
+  glad.c
+LINK : warning LNK4098: defaultlib 'MSVCRT' conflicts with use of other libs; use /NODEFAULTLIB:library [C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\Render-Engine.vcxproj]
+  Render-Engine.vcxproj -> C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\build\current\bin\Render-Engine.exe
+          1 file(s) copied.
+          1 file(s) copied.

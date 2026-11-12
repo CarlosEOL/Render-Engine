@@ -1,0 +1,43 @@
+DX12 adapter: NVIDIA GeForce RTX 4080 Laptop GPU; debug layer=1
+DLSS ready
+Native DX12 shared-scene backend initialized; no OpenGL context
+Flat Shader ID: 3
+Program ID: 3
+Made a new window.
+
+UI capture: ui-main-menu; controls=6
+UI capture: ui-destinations; controls=8
+UI capture: ui-quantum-library; controls=8
+UI capture: ui-destinations-compact; controls=7
+UI capture: ui-quantum-library-compact; controls=8
+Input checks: Shift+F2 information, F2 orbits, menu action and Play/pause mouse look
+UI capture: ui-object-finder; controls=9
+UI capture: ui-earth-satellites; controls=7
+UI capture: ui-solar-hierarchy; controls=7
+UI capture: ui-jupiter-satellites; controls=7
+UI capture: ui-nearby-systems; controls=9
+[Capture] milky-way-face-on
+Galaxy frame including bake/readiness: 20.5751 ms
+milky-way-face-on: 1980x1050, lit=498460, GL=0
+Milky Way color structure: blue-arm pixels=427091; warm-core pixels=11846
+[Capture] milky-way-face-on-rotated
+Galaxy frame including bake/readiness: 1.1247 ms
+milky-way-face-on-rotated: 1980x1050, lit=515542, GL=0
+[Capture] milky-way-inclined
+Galaxy frame including bake/readiness: 5.0282 ms
+milky-way-inclined: 1980x1050, lit=355946, GL=0
+[Capture] milky-way-edge-on
+Galaxy frame including bake/readiness: 5.6673 ms
+milky-way-edge-on: 1980x1050, lit=73685, GL=0
+[Capture] milky-way-solar-dust-lanes
+Galaxy frame including bake/readiness: 25.723 ms
+milky-way-solar-dust-lanes: 1980x1050, lit=2079000, GL=0
+Interior off-plane mean display value=28.1965
+[Capture] milky-way-volume-transition-low
+Galaxy frame including bake/readiness: 27.3324 ms
+milky-way-volume-transition-low: 1980x1050, lit=2078604, GL=0
+[Capture] milky-way-volume-transition-high
+Galaxy frame including bake/readiness: 25.8275 ms
+milky-way-volume-transition-high: 1980x1050, lit=1900840, GL=0
+Galaxy checks PASSED: 7 scene captures; 0 assertion locations failed
+DX12 scene validation errors=0

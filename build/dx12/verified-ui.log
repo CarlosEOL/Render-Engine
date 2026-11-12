@@ -1,0 +1,15 @@
+DX12 adapter: NVIDIA GeForce RTX 4080 Laptop GPU; debug layer=1
+DLSS ready
+Native DX12 shared-scene backend initialized; no OpenGL context
+Flat Shader ID: 3
+Program ID: 3
+Made a new window.
+
+UI capture: ui-main-menu; controls=7
+UI capture: ui-destinations; controls=9
+UI capture: ui-quantum-library; controls=9
+UI capture: ui-destinations-compact; controls=8
+UI capture: ui-quantum-library-compact; controls=8
+UI capture: ui-star-browser-and-clock; controls=8
+UI checks PASSED: 6 captures; 0 assertion locations failed
+DX12 scene validation errors=0

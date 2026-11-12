@@ -1,0 +1,14 @@
+
+  NavigationCatalog.cpp
+  NavigationPanel.cpp
+  RenderChecks.cpp
+  WindowManager.cpp
+C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\build\opengl-publish\src\WindowManager.cpp(1952,27): warning C4267: 'initializing': conversion from 'size_t' to 'GLsizei', possible loss of data [C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\build\opengl-publish\Render-Engine.vcxproj]
+  main.cpp
+  Generating Code...
+LINK : warning LNK4098: defaultlib 'MSVCRT' conflicts with use of other libs; use /NODEFAULTLIB:library [C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\build\opengl-publish\Render-Engine.vcxproj]
+  Render-Engine.vcxproj -> C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\build\current\branch-bin\Render-Engine.exe
+          1 file(s) copied.
+          1 file(s) copied.
+          1 file(s) copied.
+          1 file(s) copied.

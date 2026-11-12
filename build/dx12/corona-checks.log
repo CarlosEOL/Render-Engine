@@ -1,0 +1,299 @@
+DX12 adapter: NVIDIA GeForce RTX 4080 Laptop GPU; debug layer=1
+DLSS ready
+Native DX12 shared-scene backend initialized; no OpenGL context
+Flat Shader ID: 3
+Program ID: 3
+Made a new window.
+
+UI capture: ui-main-menu; controls=7
+UI capture: ui-destinations; controls=9
+UI capture: ui-quantum-library; controls=9
+UI capture: ui-destinations-compact; controls=8
+UI capture: ui-quantum-library-compact; controls=8
+Generator preflight: 1024 systems passed
+[Drop] File dropped: build/dx12/corona-checks\probe.obj
+[Drop] OBJ loaded successfully
+[Drop] Updated model buffer with 3 vertices.
+[Capture] model-imported-obj
+model-imported-obj: 1980x1050, lit=2534, GL=0
+[Drop] File dropped: build/dx12/corona-checks\probe.fbx
+[Drop] FBX loaded successfully
+[Drop] Updated model buffer with 3 vertices.
+[Capture] model-imported-fbx
+model-imported-fbx: 1980x1050, lit=279861, GL=0
+[Capture] quantum-family-0
+quantum-family-0: 1524x1050, lit=83986, GL=0
+[Capture] quantum-coherent-3d
+quantum-coherent-3d: 1524x1050, lit=55276, GL=0
+[Capture] quantum-family-2
+quantum-family-2: 1524x1050, lit=72067, GL=0
+[Capture] quantum-hydrogen-3d
+quantum-hydrogen-3d: 1524x1050, lit=75989, GL=0
+[Capture] quantum-family-4
+quantum-family-4: 1524x1050, lit=36237, GL=0
+[Capture] quantum-family-5
+quantum-family-5: 1524x1050, lit=45276, GL=0
+[Capture] quantum-tunneling-3d
+quantum-tunneling-3d: 1524x1050, lit=77328, GL=0
+[Capture] solar-overview
+solar-overview: 1524x1050, lit=1600200, GL=0
+UI capture: ui-star-browser-and-clock; controls=8
+[Capture] visible-star-selected-from-solar
+visible-star-selected-from-solar: 1524x1050, lit=1600200, GL=0
+[Capture] visible-star-visited-system
+visible-star-visited-system: 1524x1050, lit=1600200, GL=0
+[Capture] solar-earth
+solar-earth: 1524x1050, lit=1597856, GL=0
+[Capture] moon-neutral-regolith
+moon-neutral-regolith: 1524x1050, lit=1600190, GL=0
+Lunar neutral pixels: 63976 / 64050
+[Capture] saturn-banded-ice-rings
+saturn-banded-ice-rings: 1524x1050, lit=1590720, GL=0
+[Capture] saturn-ring-particle-proximity
+saturn-ring-particle-proximity: 1524x1050, lit=1600198, GL=0
+[Capture] earth-day-sun-scattering
+earth-day-sun-scattering: 1524x1050, lit=1600200, GL=0
+[Capture] earth-low-sun-scattering
+earth-low-sun-scattering: 1524x1050, lit=1364448, GL=0
+[Capture] gargantua-lensing
+gargantua-lensing: 1524x1050, lit=1399990, GL=0
+[Capture] gargantua-cached
+gargantua-cached: 1524x1050, lit=1399990, GL=0
+[Capture] gargantua-spin-zero
+gargantua-spin-zero: 1524x1050, lit=1346032, GL=0
+[Capture] gargantua-kerr-spin-08
+gargantua-kerr-spin-08: 1524x1050, lit=1399990, GL=0
+[Capture] object-editor-spin-065
+object-editor-spin-065: 1524x1050, lit=1448895, GL=0
+[Capture] object-editor-reverse-spin
+object-editor-reverse-spin: 1524x1050, lit=1597754, GL=0
+[Capture] black-hole-hdr-unassisted
+black-hole-hdr-unassisted: 1524x1050, lit=1399990, GL=0
+[Capture] black-hole-hdr-visible
+black-hole-hdr-visible: 1524x1050, lit=1399990, GL=0
+RENDER CHECK FAILED at C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\src\RenderChecks.cpp:375
+[Capture] black-hole-auto-unassisted
+black-hole-auto-unassisted: 1524x1050, lit=70482, GL=0
+[Capture] black-hole-auto-visible
+black-hole-auto-visible: 1524x1050, lit=70482, GL=0
+Black hole display sums HDR 2.06978e+08 -> 2.06978e+08; Auto 1.80306e+07 -> 1.80306e+07
+RENDER CHECK FAILED at C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\src\RenderChecks.cpp:381
+[Capture] gargantua-visible-from-mann-distance
+gargantua-visible-from-mann-distance: 1524x1050, lit=1559183, GL=0
+[Capture] miller-orbit
+miller-orbit: 1524x1050, lit=1530418, GL=0
+[Capture] miller-surface
+miller-surface: 1524x1050, lit=1600200, GL=0
+[Capture] miller-atmosphere-3.000000-off
+miller-atmosphere-3.000000-off: 1524x1050, lit=1287915, GL=0
+[Capture] miller-atmosphere-3.000000-on
+miller-atmosphere-3.000000-on: 1524x1050, lit=1288343, GL=0
+miller-atmosphere-3.000000 texture=762x525 affected=4519; air outside shell=3995; nonfinite=0
+Miller atmosphere escaped its foreground shell
+RENDER CHECK FAILED at C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\src\RenderChecks.cpp:439
+[Capture] miller-atmosphere-1.029000-off
+miller-atmosphere-1.029000-off: 1524x1050, lit=876821, GL=0
+[Capture] miller-atmosphere-1.029000-on
+miller-atmosphere-1.029000-on: 1524x1050, lit=876154, GL=0
+miller-atmosphere-1.029000 texture=762x525 affected=7104; air outside shell=1558; nonfinite=0
+Miller atmosphere escaped its foreground shell
+[Capture] miller-atmosphere-1.031000-off
+miller-atmosphere-1.031000-off: 1524x1050, lit=887180, GL=0
+[Capture] miller-atmosphere-1.031000-on
+miller-atmosphere-1.031000-on: 1524x1050, lit=887032, GL=0
+miller-atmosphere-1.031000 texture=762x525 affected=4304; air outside shell=2; nonfinite=0
+Miller atmosphere escaped its foreground shell
+[Capture] camera-flare
+camera-flare: 1524x1050, lit=1582529, GL=0
+[Capture] solar-prominences
+solar-prominences: 1524x1050, lit=1599721, GL=0
+[Capture] solar-prominences-paused
+solar-prominences-paused: 1524x1050, lit=1599721, GL=0
+[Capture] solar-prominences-disabled
+solar-prominences-disabled: 1524x1050, lit=681320, GL=0
+Exterior plasma pixels: 0
+RENDER CHECK FAILED at C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\src\RenderChecks.cpp:471
+[Capture] solar-prominences-evolved
+solar-prominences-evolved: 1524x1050, lit=1599703, GL=0
+[Capture] gargantua-stellar-prominences
+gargantua-stellar-prominences: 1524x1050, lit=1600200, GL=0
+[Capture] solar-natural-color
+solar-natural-color: 1524x1050, lit=1581388, GL=0
+[Capture] solar-warm-color
+solar-warm-color: 1524x1050, lit=1581388, GL=0
+[Capture] lens-1-off
+lens-1-off: 1524x1050, lit=1600200, GL=0
+[Capture] lens-1-on
+lens-1-on: 1524x1050, lit=1600200, GL=0
+Lens 1 flare channels changed: 69065
+[Capture] lens-2-off
+lens-2-off: 1524x1050, lit=1581388, GL=0
+[Capture] lens-2-on
+lens-2-on: 1524x1050, lit=1581388, GL=0
+Lens 2 flare channels changed: 205308
+[Capture] lens-3-off
+lens-3-off: 1524x1050, lit=1600200, GL=0
+[Capture] lens-3-on
+lens-3-on: 1524x1050, lit=1600200, GL=0
+Lens 3 flare channels changed: 262833
+[Capture] lens-4-off
+lens-4-off: 1524x1050, lit=1600200, GL=0
+[Capture] lens-4-on
+lens-4-on: 1524x1050, lit=1600200, GL=0
+Lens 4 flare channels changed: 206023
+[Capture] lens-5-off
+lens-5-off: 1524x1050, lit=1600200, GL=0
+[Capture] lens-5-on
+lens-5-on: 1524x1050, lit=1600200, GL=0
+Lens 5 flare channels changed: 207251
+[Capture] lens-6-off
+lens-6-off: 1524x1050, lit=1162742, GL=0
+[Capture] lens-6-on
+lens-6-on: 1524x1050, lit=1255104, GL=0
+Lens 6 flare channels changed: 330057
+[Capture] solar-occulted-flare-off
+solar-occulted-flare-off: 1524x1050, lit=1300601, GL=0
+[Capture] solar-occulted-flare-on
+solar-occulted-flare-on: 1524x1050, lit=1301418, GL=0
+[Capture] reference-glare-off
+reference-glare-off: 1524x1050, lit=1581388, GL=0
+[Capture] reference-glare-on
+reference-glare-on: 1524x1050, lit=1581388, GL=0
+[Capture] pure-auto-star
+pure-auto-star: 1524x1050, lit=1304209, GL=0
+[Capture] pure-auto-positive-bias
+pure-auto-positive-bias: 1524x1050, lit=1581388, GL=0
+[Capture] pure-auto-dark-first
+pure-auto-dark-first: 1524x1050, lit=1581388, GL=0
+[Capture] pure-auto-dark-adapted
+pure-auto-dark-adapted: 1524x1050, lit=1581388, GL=0
+[Capture] pure-auto-bright-first
+pure-auto-bright-first: 1524x1050, lit=1581388, GL=0
+[Capture] pure-auto-bright-adapted
+pure-auto-bright-adapted: 1524x1050, lit=1304209, GL=0
+[Capture] pure-manual-star
+pure-manual-star: 1524x1050, lit=1581388, GL=0
+[Capture] exposure-independent-glare-off
+exposure-independent-glare-off: 1524x1050, lit=1123580, GL=0
+[Capture] exposure-independent-glare-on
+exposure-independent-glare-on: 1524x1050, lit=1341145, GL=0
+[Capture] exposure-independent-nikon
+exposure-independent-nikon: 1524x1050, lit=1392129, GL=0
+[Capture] exposure-pan-left
+exposure-pan-left: 1524x1050, lit=1307834, GL=0
+[Capture] exposure-pan-right
+exposure-pan-right: 1524x1050, lit=1230938, GL=0
+Glare-independent EV: -1.42193, -1.42193, -1.42193; pan span=0.0253005
+[Capture] erupting-star-one-glare-center
+erupting-star-one-glare-center: 1524x1050, lit=1581388, GL=0
+Stellar activity 1 optical sources=1; host centers=1
+[Capture] quiet-star-one-glare-center
+quiet-star-one-glare-center: 1524x1050, lit=1581388, GL=0
+Stellar activity 0 optical sources=1; host centers=1
+Optical eligibility 0 source count=0
+Optical eligibility 1 source count=4
+Glare brightness response: 90 -> 116
+[Capture] cool-star-emissive-before-landing
+cool-star-emissive-before-landing: 1524x1050, lit=1600200, GL=0
+[Capture] generated-planet-surface-lod
+generated-planet-surface-lod: 1524x1050, lit=1600200, GL=0
+[Capture] cool-star-emissive-after-landing
+cool-star-emissive-after-landing: 1524x1050, lit=1600200, GL=0
+[Capture] camera-proximity-galaxy-star
+camera-proximity-galaxy-star: 1524x1050, lit=1561417, GL=0
+[Capture] distant-star-gpu-only-tier
+distant-star-gpu-only-tier: 1524x1050, lit=824, GL=0
+Inactive-system orbital evaluations=0
+[Capture] camera-proximity-same-star-revisit
+camera-proximity-same-star-revisit: 1524x1050, lit=1561417, GL=0
+[Capture] mann-ice-surface-lod
+mann-ice-surface-lod: 1524x1050, lit=1600200, GL=0
+[Capture] edmunds-rock-surface-lod
+edmunds-rock-surface-lod: 1524x1050, lit=1600200, GL=0
+[Capture] kerr-infall-horizon-1.020000
+kerr-infall-horizon-1.020000: 1524x1050, lit=1599399, GL=0
+[Capture] kerr-infall-horizon-1.001000
+kerr-infall-horizon-1.001000: 1524x1050, lit=1599312, GL=0
+[Capture] kerr-infall-horizon-0.999000
+kerr-infall-horizon-0.999000: 1524x1050, lit=1599303, GL=0
+Horizon-crossing mean display change: 0.0291655 / 255
+[Capture] kerr-infall-horizon-0.980000
+kerr-infall-horizon-0.980000: 1524x1050, lit=1599168, GL=0
+[Capture] kerr-infall-horizon-0.850000
+kerr-infall-horizon-0.850000: 1524x1050, lit=1598201, GL=0
+[Capture] mann-spacecraft-departure
+Craft distance=500.017 m; aim=0.999959; age=1.67296e-06 s
+mann-spacecraft-departure: 1524x1050, lit=1600200, GL=0
+[Capture] gargantua-spacecraft-periapsis
+Camera Pos: (34.575, 11.6625, -1.91028) | Front: (-0.128845, 0.387483, 0.912829)
+Craft distance=433.582 m; aim=0.988495; age=1.49012e-06 s
+gargantua-spacecraft-periapsis: 1524x1050, lit=1600200, GL=0
+[Capture] endurance-close-kerr
+Craft distance=434.871 m; aim=1; age=1.53482e-06 s
+endurance-close-kerr: 1524x1050, lit=1510280, GL=0
+[Capture] endurance-close-schwarzschild
+Craft distance=434.871 m; aim=1; age=1.53482e-06 s
+endurance-close-schwarzschild: 1524x1050, lit=1490567, GL=0
+Depth-identified foreground ship pixels stable across spin: 2593
+[Capture] gargantua-spacecraft-escape
+Craft distance=515.318 m; aim=0.976377; age=1.72108e-06 s
+gargantua-spacecraft-escape: 1524x1050, lit=1600200, GL=0
+[Capture] endurance-interior
+Craft distance=22.9291 m; aim=-0.998015; age=7.82311e-08 s
+endurance-interior: 1524x1050, lit=1600200, GL=0
+[Capture] endurance-interior-looking-at-planet
+Craft distance=22.9291 m; aim=-0.354577; age=7.82311e-08 s
+endurance-interior-looking-at-planet: 1524x1050, lit=1600200, GL=0
+[Capture] ranger-1-detached-interior
+Craft distance=1.87003e+08 m; aim=0.915427; age=0.625012 s
+ranger-1-detached-interior: 1524x1050, lit=1600200, GL=0
+[Capture] ranger-2-detached-interior
+Craft distance=1.67117e+08 m; aim=-0.892837; age=0.558528 s
+ranger-2-detached-interior: 1524x1050, lit=1600200, GL=0
+[Capture] compact-position-follow-notification
+compact-position-follow-notification: 1524x1050, lit=1590625, GL=0
+[Capture] zoom-readout-base
+zoom-readout-base: 1524x1050, lit=1600200, GL=0
+[Capture] compact-zoom-readout
+compact-zoom-readout: 1524x1050, lit=1589248, GL=0
+[Capture] zoom-readout-expired
+zoom-readout-expired: 1524x1050, lit=1600200, GL=0
+[Capture] window-resize-odd-small
+window-resize-odd-small: 718x703, lit=504754, GL=0
+[Capture] window-resize-odd-medium
+window-resize-odd-medium: 890x781, lit=695090, GL=0
+[Capture] window-resize-restored
+window-resize-restored: 1524x1020, lit=1554480, GL=0
+[Capture] dlss-quality-first-frame
+DLSS active 1016x680 -> 1524x1020
+dlss-quality-first-frame: 1524x1020, lit=1363757, GL=0
+[Capture] dlss-quality-converged
+dlss-quality-converged: 1524x1020, lit=1364089, GL=0
+DLSS optical eligibility: excluded=1189989 eligible=332380 errors=0
+[Capture] dlss-camera-history-reset
+dlss-camera-history-reset: 1524x1020, lit=1362698, GL=0
+[Capture] dlss-playing-history-reset
+dlss-playing-history-reset: 1524x1020, lit=1362703, GL=0
+[Capture] dlss-mode-2
+DLSS active 884x592 -> 1524x1020
+dlss-mode-2: 1524x1020, lit=1362973, GL=0
+[Capture] dlss-mode-3
+DLSS active 762x510 -> 1524x1020
+dlss-mode-3: 1524x1020, lit=1361796, GL=0
+[Capture] dlss-mode-4
+DLSS active 1524x1020 -> 1524x1020
+dlss-mode-4: 1524x1020, lit=1362480, GL=0
+[Capture] dlss-resize-odd
+DLSS active 721x705 -> 721x705
+dlss-resize-odd: 721x705, lit=416648, GL=0
+DLSS active 171x171 -> 256x256
+DLSS optical eligibility: excluded=6724 eligible=57792 errors=0
+DLSS optical source count, eligibility 0: 0
+DLSS optical eligibility: excluded=0 eligible=65536 errors=0
+DLSS optical source count, eligibility 1: 4
+DLSS actual evaluations=40; history resets=9
+[Capture] dlss-disabled-native-fallback
+dlss-disabled-native-fallback: 1524x1020, lit=1364484, GL=0
+Exposure meter EV: 4.45939 -> 0.0787252 -> -8.82824; brightening -7.44412; black 8; valid=1
+Render checks FAILED: 113 scene captures; 6 UI captures; 4 assertion locations failed
+DX12 scene validation errors=0

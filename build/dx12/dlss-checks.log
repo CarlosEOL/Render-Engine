@@ -1,0 +1,163 @@
+DX12 adapter: NVIDIA GeForce RTX 4080 Laptop GPU; debug layer=1
+DLSS ready
+Native DX12 shared-scene backend initialized; no OpenGL context
+Flat Shader ID: 3
+Program ID: 3
+Made a new window.
+
+[Drop] File dropped: build/dx12/dlss-checks\probe.obj
+[Drop] OBJ loaded successfully
+[Drop] Updated model buffer with 3 vertices.
+model-imported-obj: 1980x1080, lit=2608, GL=0
+[Drop] File dropped: build/dx12/dlss-checks\probe.fbx
+[Drop] FBX loaded successfully
+[Drop] Updated model buffer with 3 vertices.
+model-imported-fbx: 1980x1080, lit=279419, GL=0
+quantum-family-0: 1548x1050, lit=84857, GL=0
+quantum-coherent-3d: 1548x1050, lit=55728, GL=0
+quantum-family-2: 1548x1050, lit=72893, GL=0
+quantum-hydrogen-3d: 1548x1050, lit=76588, GL=0
+quantum-family-4: 1548x1050, lit=36743, GL=0
+quantum-family-5: 1548x1050, lit=45874, GL=0
+quantum-tunneling-3d: 1548x1050, lit=78219, GL=0
+solar-overview: 1548x1050, lit=6081, GL=0
+solar-earth: 1548x1050, lit=205832, GL=0
+moon-neutral-regolith: 1548x1050, lit=638246, GL=0
+Lunar neutral pixels: 64814 / 64890
+saturn-banded-ice-rings: 1548x1050, lit=535387, GL=0
+saturn-ring-particle-proximity: 1548x1050, lit=1073, GL=0
+earth-day-sun-scattering: 1548x1050, lit=1625400, GL=0
+earth-low-sun-scattering: 1548x1050, lit=1127841, GL=0
+gargantua-lensing: 1548x1050, lit=205457, GL=0
+gargantua-cached: 1548x1050, lit=205457, GL=0
+gargantua-spin-zero: 1548x1050, lit=280187, GL=0
+gargantua-kerr-spin-08: 1548x1050, lit=205457, GL=0
+object-editor-spin-065: 1548x1050, lit=231658, GL=0
+object-editor-reverse-spin: 1548x1050, lit=175299, GL=0
+black-hole-hdr-unassisted: 1548x1050, lit=154538, GL=0
+black-hole-hdr-visible: 1548x1050, lit=205457, GL=0
+black-hole-auto-unassisted: 1548x1050, lit=85547, GL=0
+black-hole-auto-visible: 1548x1050, lit=129995, GL=0
+Black hole display sums HDR 6.70616e+07 -> 7.98111e+07; Auto 1.85232e+07 -> 4.10846e+07
+gargantua-visible-from-mann-distance: 1548x1050, lit=51407, GL=0
+miller-orbit: 1548x1050, lit=134771, GL=0
+miller-surface: 1548x1050, lit=1625400, GL=0
+miller-atmosphere-3.000000-off: 1548x1050, lit=93837, GL=0
+miller-atmosphere-3.000000-on: 1548x1050, lit=86740, GL=0
+miller-atmosphere-3.000000 texture=774x525 affected=68144; air outside shell=0; nonfinite=0
+miller-atmosphere-1.029000-off: 1548x1050, lit=203107, GL=0
+miller-atmosphere-1.029000-on: 1548x1050, lit=171012, GL=0
+miller-atmosphere-1.029000 texture=774x525 affected=203121; air outside shell=0; nonfinite=0
+miller-atmosphere-1.031000-off: 1548x1050, lit=202119, GL=0
+miller-atmosphere-1.031000-on: 1548x1050, lit=171935, GL=0
+miller-atmosphere-1.031000 texture=774x525 affected=200531; air outside shell=0; nonfinite=0
+camera-flare: 1548x1050, lit=2263, GL=0
+solar-prominences: 1548x1050, lit=457851, GL=0
+solar-prominences-paused: 1548x1050, lit=457851, GL=0
+solar-prominences-disabled: 1548x1050, lit=448479, GL=0
+Exterior plasma pixels: 9362
+solar-prominences-evolved: 1548x1050, lit=455807, GL=0
+gargantua-stellar-prominences: 1548x1050, lit=459793, GL=0
+solar-natural-color: 1548x1050, lit=461645, GL=0
+solar-warm-color: 1548x1050, lit=461757, GL=0
+lens-1-off: 1548x1050, lit=2613, GL=0
+lens-1-on: 1548x1050, lit=90538, GL=0
+Lens 1 flare channels changed: 340548
+lens-2-off: 1548x1050, lit=2757, GL=0
+lens-2-on: 1548x1050, lit=468517, GL=0
+Lens 2 flare channels changed: 2165724
+lens-3-off: 1548x1050, lit=2913, GL=0
+lens-3-on: 1548x1050, lit=508687, GL=0
+Lens 3 flare channels changed: 2234512
+lens-4-off: 1548x1050, lit=2829, GL=0
+lens-4-on: 1548x1050, lit=454073, GL=0
+Lens 4 flare channels changed: 2083642
+lens-5-off: 1548x1050, lit=2700, GL=0
+lens-5-on: 1548x1050, lit=454085, GL=0
+Lens 5 flare channels changed: 1996566
+lens-6-off: 1548x1050, lit=2644, GL=0
+lens-6-on: 1548x1050, lit=493980, GL=0
+Lens 6 flare channels changed: 2156813
+solar-occulted-flare-off: 1548x1050, lit=145, GL=0
+solar-occulted-flare-on: 1548x1050, lit=145, GL=0
+reference-glare-off: 1548x1050, lit=52970, GL=0
+reference-glare-on: 1548x1050, lit=371868, GL=0
+pure-auto-star: 1548x1050, lit=142872, GL=0
+pure-auto-positive-bias: 1548x1050, lit=466761, GL=0
+pure-auto-dark-first: 1548x1050, lit=630, GL=0
+pure-auto-dark-adapted: 1548x1050, lit=558460, GL=0
+pure-auto-bright-first: 1548x1050, lit=1543978, GL=0
+pure-auto-bright-adapted: 1548x1050, lit=142872, GL=0
+pure-manual-star: 1548x1050, lit=372056, GL=0
+exposure-independent-glare-off: 1548x1050, lit=929, GL=0
+exposure-independent-glare-on: 1548x1050, lit=327065, GL=0
+exposure-independent-nikon: 1548x1050, lit=367841, GL=0
+exposure-pan-left: 1548x1050, lit=281042, GL=0
+exposure-pan-right: 1548x1050, lit=546442, GL=0
+Glare-independent EV: -1.42795, -1.42795, -1.42795; pan span=0.0192882
+erupting-star-one-glare-center: 1548x1050, lit=1607592, GL=0
+Stellar activity 1 optical sources=1; host centers=1
+quiet-star-one-glare-center: 1548x1050, lit=1607592, GL=0
+Stellar activity 0 optical sources=1; host centers=1
+Optical eligibility 0 source count=0
+Optical eligibility 1 source count=4
+Glare brightness response: 90 -> 116
+cool-star-emissive-before-landing: 1548x1050, lit=481746, GL=0
+generated-planet-surface-lod: 1548x1050, lit=818448, GL=0
+cool-star-emissive-after-landing: 1548x1050, lit=481746, GL=0
+camera-proximity-galaxy-star: 1548x1050, lit=223046, GL=0
+distant-star-gpu-only-tier: 1548x1050, lit=62, GL=0
+Inactive-system orbital evaluations=0
+camera-proximity-same-star-revisit: 1548x1050, lit=223046, GL=0
+mann-ice-surface-lod: 1548x1050, lit=1625400, GL=0
+edmunds-rock-surface-lod: 1548x1050, lit=1625400, GL=0
+kerr-infall-horizon-1.020000: 1548x1050, lit=150, GL=0
+kerr-infall-horizon-1.001000: 1548x1050, lit=142, GL=0
+kerr-infall-horizon-0.999000: 1548x1050, lit=149, GL=0
+Horizon-crossing mean display change: 0.00830298 / 255
+kerr-infall-horizon-0.980000: 1548x1050, lit=144, GL=0
+kerr-infall-horizon-0.850000: 1548x1050, lit=163, GL=0
+Craft distance=500.017 m; aim=0.999959; age=1.67296e-06 s
+mann-spacecraft-departure: 1548x1050, lit=1458242, GL=0
+Craft distance=433.582 m; aim=0.988495; age=1.49012e-06 s
+gargantua-spacecraft-periapsis: 1548x1050, lit=8324, GL=0
+Craft distance=434.871 m; aim=1; age=1.53482e-06 s
+endurance-close-kerr: 1548x1050, lit=74488, GL=0
+Camera Pos: (34.575, 11.6625, -1.91028) | Front: (-0.919957, -0.380113, -0.09588)
+Craft distance=434.871 m; aim=1; age=1.53482e-06 s
+endurance-close-schwarzschild: 1548x1050, lit=102629, GL=0
+Depth-identified foreground ship pixels stable across spin: 2593
+Craft distance=515.318 m; aim=0.976377; age=1.72108e-06 s
+gargantua-spacecraft-escape: 1548x1050, lit=9040, GL=0
+Craft distance=22.9291 m; aim=-0.998015; age=7.82311e-08 s
+endurance-interior: 1548x1050, lit=747748, GL=0
+Craft distance=22.9291 m; aim=-0.354577; age=7.82311e-08 s
+endurance-interior-looking-at-planet: 1548x1050, lit=1110431, GL=0
+Craft distance=1.87003e+08 m; aim=0.915427; age=0.625012 s
+ranger-1-detached-interior: 1548x1050, lit=627220, GL=0
+Craft distance=1.67117e+08 m; aim=-0.892837; age=0.558528 s
+ranger-2-detached-interior: 1548x1050, lit=627064, GL=0
+compact-position-follow-notification: 1548x1050, lit=7456, GL=0
+zoom-readout-base: 1548x1050, lit=10392, GL=0
+compact-zoom-readout: 1548x1050, lit=12334, GL=0
+zoom-readout-expired: 1548x1050, lit=10392, GL=0
+window-resize-odd-small: 698x703, lit=4264, GL=0
+window-resize-odd-medium: 865x781, lit=4682, GL=0
+window-resize-restored: 1548x1020, lit=5935, GL=0
+DLSS active 1032x680 -> 1548x1020
+dlss-quality-first-frame: 1548x1020, lit=189262, GL=0
+dlss-quality-converged: 1548x1020, lit=189454, GL=0
+dlss-camera-history-reset: 1548x1020, lit=188377, GL=0
+dlss-playing-history-reset: 1548x1020, lit=188377, GL=0
+DLSS active 898x592 -> 1548x1020
+dlss-mode-2: 1548x1020, lit=189458, GL=0
+DLSS active 774x510 -> 1548x1020
+dlss-mode-3: 1548x1020, lit=188631, GL=0
+DLSS active 1548x1020 -> 1548x1020
+dlss-mode-4: 1548x1020, lit=185628, GL=0
+DLSS active 701x705 -> 701x705
+dlss-resize-odd: 701x705, lit=89523, GL=0
+DLSS actual evaluations=38; history resets=7
+dlss-disabled-native-fallback: 1548x1020, lit=193388, GL=0
+Exposure meter EV: 4.45939 -> 0.0787252 -> -8.82824; brightening -7.44412; black 8; valid=1
+DX12 scene validation errors=0

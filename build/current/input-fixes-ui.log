@@ -1,0 +1,17 @@
+Flat Shader ID: 3
+Program ID: 3
+Made a new window.
+
+UI capture: ui-main-menu; controls=6
+UI capture: ui-destinations; controls=8
+UI capture: ui-quantum-library; controls=8
+UI capture: ui-destinations-compact; controls=7
+UI capture: ui-quantum-library-compact; controls=8
+Input checks: Shift+F2 information, F2 orbits, menu action and Play/pause mouse look
+UI capture: ui-object-finder; controls=9
+UI capture: ui-earth-satellites; controls=7
+UI capture: ui-solar-hierarchy; controls=7
+UI capture: ui-jupiter-satellites; controls=7
+UI capture: ui-nearby-systems; controls=9
+UI capture: ui-star-browser-and-clock; controls=12
+UI checks PASSED: 11 captures; 0 assertion locations failed

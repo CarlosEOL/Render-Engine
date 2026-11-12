@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\build\current\kerr-cpu\CMakeFiles\ad1d3f803885e090713664f26c0e5a99\generate.stamp.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{8C8A8188-A997-35F9-BAF1-21862981CB18}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

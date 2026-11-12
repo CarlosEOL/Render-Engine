@@ -1,0 +1,10 @@
+^C:\USERS\SMOONTHCRIMINAL\ONEDRIVE\DOCUMENTS\CPPPROJECTFILES\RENDER-ENGINE\TESTS\KERR\CMAKELISTS.TXT
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SC:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/Render-Engine/tests/kerr -BC:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/Render-Engine/build/current/kerr-cpu --check-stamp-file C:/Users/SmoonthCriminal/OneDrive/Documents/CppProjectFiles/Render-Engine/build/current/kerr-cpu/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

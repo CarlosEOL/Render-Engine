@@ -1,0 +1,4 @@
+
+  RenderChecks.cpp
+LINK : warning LNK4098: defaultlib 'MSVCRT' conflicts with use of other libs; use /NODEFAULTLIB:library [C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\Render-Engine.DX12.Full.vcxproj]
+  Render-Engine.DX12.Full.vcxproj -> C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\build\dx12\Full\Debug\bin\Render-Engine-DX12.exe

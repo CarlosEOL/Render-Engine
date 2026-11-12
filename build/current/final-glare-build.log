@@ -1,0 +1,52 @@
+
+  AssetManager.cpp
+  BlackHole.cpp
+  OrbitalMechanics.cpp
+  PlanetTerrain.cpp
+  UniverseCatalog.cpp
+  MilkyWayModel.cpp
+  GalacticCore.cpp
+  CelestialPhenomena.cpp
+  MilkyWaySky.cpp
+  InterstellarWorlds.cpp
+  KerrSpacetime.cpp
+  Atmosphere.cpp
+  SaturnRings.cpp
+  VehicleInterior.cpp
+  CameraOptics.cpp
+  ExposureMeter.cpp
+  GalaxyBackground.cpp
+  StarSystem.cpp
+  StellarActivity.cpp
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\shared\minwindef.h(130,9): warning C4005: 'APIENTRY': macro redefinition [C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\Render-Engine.vcxproj]
+  (compiling source file 'src/StellarActivity.cpp')
+      C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\External_Lib\include\glad\glad.h(32,9):
+      see previous definition of 'APIENTRY'
+  
+  ControlsPanel.cpp
+  Generating Code...
+  Compiling...
+  NavigationCatalog.cpp
+  NavigationPanel.cpp
+  SolarSystem.cpp
+  ScenePanel.cpp
+  ObjectEditor.cpp
+  AppMenu.cpp
+  QuantumStates.cpp
+  QuantumSimulation.cpp
+  QuantumParticleView.cpp
+  CameraMotion.cpp
+  RenderChecks.cpp
+  main.cpp
+  ObjectLoader.cpp
+  TinyObjectLoaderImpl.cpp
+  WindowManager.cpp
+C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\src\WindowManager.cpp(1952,27): warning C4267: 'initializing': conversion from 'size_t' to 'GLsizei', possible loss of data [C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\Render-Engine.vcxproj]
+  Generating Code...
+  glad.c
+LINK : warning LNK4098: defaultlib 'MSVCRT' conflicts with use of other libs; use /NODEFAULTLIB:library [C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\Render-Engine.vcxproj]
+  Render-Engine.vcxproj -> C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\build\current\branch-bin\Render-Engine.exe
+          1 file(s) copied.
+          1 file(s) copied.
+          1 file(s) copied.
+          1 file(s) copied.

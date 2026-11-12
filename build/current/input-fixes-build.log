@@ -1,0 +1,11 @@
+
+  ControlsPanel.cpp
+  RenderChecks.cpp
+  WindowManager.cpp
+C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\src\WindowManager.cpp(1957,27): warning C4267: 'initializing': conversion from 'size_t' to 'GLsizei', possible loss of data [C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\Render-Engine.vcxproj]
+  Generating Code...
+  Render-Engine.vcxproj -> C:\Users\SmoonthCriminal\OneDrive\Documents\CppProjectFiles\Render-Engine\build\current\branch-bin\Render-Engine.exe
+          1 file(s) copied.
+          1 file(s) copied.
+          1 file(s) copied.
+          1 file(s) copied.

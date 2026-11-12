@@ -1,0 +1,33 @@
+SimulationChecks.cpp
+QuantumStates.cpp
+CameraMotion.cpp
+StarSystem.cpp
+SolarSystem.cpp
+StellarActivity.cpp
+C:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\shared\minwindef.h(130): warning C4005: 'APIENTRY': macro redefinition
+..\External_Lib\include\glad/glad.h(32): note: see previous definition of 'APIENTRY'
+AssetManager.cpp
+UniverseCatalog.cpp
+MilkyWayModel.cpp
+InterstellarWorlds.cpp
+KerrSpacetime.cpp
+OrbitalMechanics.cpp
+PlanetTerrain.cpp
+Atmosphere.cpp
+SaturnRings.cpp
+Generating Code...
+Compiling...
+glad.c
+Generating Code...
+LINK : warning LNK4098: defaultlib 'MSVCRT' conflicts with use of other libs; use /NODEFAULTLIB:library
+Kerr spin=-0.8 max |H|=4.27436e-15
+Kerr spin=0 max |H|=8.779e-15
+Kerr spin=0.8 max |H|=9.04832e-15
+Kerr spin=0.98 max |H|=5.82867e-15
+Barrier R=0.631751 T=0.354458 norm=1
+Earth clock surface=0.999999989264; elevated=0.99999998938
+Generation survey: 259 primary layouts; 406 leading giants; 3769 moons
+Galaxy bounds/repeatability: 16000 stars; terrain vertices=78288
+Schwarzschild circular clock=0.901387818866; conserved energy=0.970725343394
+Mann flyby: periapsis=15.8426885898 AU; fuel remaining=0 s; escape energy=3.57924318226e-09
+38 quantum presets checked; solar scale, hierarchy and generation checks passed.
