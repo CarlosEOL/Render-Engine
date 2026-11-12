@@ -14,7 +14,8 @@ int RunEngine(int argc,char** argv) {
     float deltaTime = 0.0f;
 
     WindowManager window;
-    const bool renderChecks=argc>1 && std::string(argv[1])=="--render-check";
+    const bool uiChecks=argc>1 && std::string(argv[1])=="--ui-check";
+    const bool renderChecks=uiChecks || (argc>1 && std::string(argv[1])=="--render-check");
     if(renderChecks){std::cout<<std::unitbuf;std::cerr<<std::unitbuf;}
 #ifdef RENDER_ENGINE_DX12
     bool warp=false;for(int i=1;i<argc;++i)if(std::string(argv[i])=="--warp")warp=true;
@@ -24,7 +25,7 @@ int RunEngine(int argc,char** argv) {
     window.MakeNewWindow();
     cout << "Made a new window.\n" << endl;
     if(renderChecks) {
-        bool success=window.RunRenderChecks(argc>2?argv[2]:"build/render-checks");
+        bool success=window.RunRenderChecks(argc>2?argv[2]:"build/render-checks",uiChecks);
 #ifdef RENDER_ENGINE_DX12
         const auto errors=NativeDX12::SceneValidationErrors();
         std::cout<<"DX12 scene validation errors="<<errors<<"\n";

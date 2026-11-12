@@ -23,7 +23,7 @@
 #include <source_location>
 
 // Optional hidden-window GPU smoke checks; normal application startup never runs this.
-bool WindowManager::RunRenderChecks(const std::string &directory)
+bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly)
 {
     if (!blackHoleReady || !starSystemReady || !quantumReady || !opticsReady)
         return false;
@@ -75,6 +75,14 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
         },reinterpret_cast<LPARAM>(&children));
         std::stable_sort(children.begin(),children.end(),[](HWND a,HWND b){return (GetDlgCtrlID(a)==3000 || GetDlgCtrlID(a)==2099) && GetDlgCtrlID(b)!=3000 && GetDlgCtrlID(b)!=2099;});
         for(auto child:children){
+            if(GetDlgCtrlID(child)==3020){
+                const auto selected=SendMessageW(child,LB_GETCURSEL,0,0);
+                RECT row{},client{};GetClientRect(child,&client);
+                const auto found=SendMessageW(child,LB_GETITEMRECT,selected,reinterpret_cast<LPARAM>(&row));
+                if(selected==LB_ERR || found==LB_ERR || row.top<0 || row.bottom>client.bottom || row.bottom-row.top!=UiTheme::Px(child,35)){
+                    std::cerr<<name<<" selected Quantum row is hidden or incorrectly sized\n";fail();
+                }
+            }
             RECT bounds;GetWindowRect(child,&bounds);MapWindowPoints(nullptr,native,reinterpret_cast<POINT*>(&bounds),2);
             if(bounds.left<0 || bounds.top<0 || bounds.right>rect.right || bounds.bottom>rect.bottom){std::cerr<<name<<" control clipped: "<<GetDlgCtrlID(child)<<"\n";fail();}
             const int saved=SaveDC(dc);SetViewportOrgEx(dc,bounds.left,bounds.top,nullptr);
@@ -98,6 +106,13 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
     HandleInterfaceCommand(3011,BN_CLICKED);captureUi("ui-quantum-library-compact");
     glfwSetWindowSize(window,uiWidth,uiHeight);
     mainMenu.Show(AppMenu::Page::Home);
+    if(uiOnly){
+        StartSolarSystem();float dt=.016f;Update(dt);captureUi("ui-star-browser-and-clock");
+        const bool before=simulationPlaying;HandleInterfaceCommand(2107,BN_CLICKED);
+        if(simulationPlaying==before)fail();HandleInterfaceCommand(2107,BN_CLICKED);
+        std::cout<<"UI checks "<<(success?"PASSED":"FAILED")<<": "<<uiCaptures<<" captures; "<<failedLines.size()<<" assertion locations failed\n";
+        return success;
+    }
 #endif
     const auto capture = [&](const char *name,bool keepToast=false) {
         ++captures;
