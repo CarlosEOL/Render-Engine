@@ -23,6 +23,9 @@ public:
     void SetLensingDiagnostic(bool value) { lensingDiagnostic=value; }
     void SetAtmospheresEnabled(bool enabled) { atmospheresEnabled=enabled; }
     unsigned int LensingSourceDepthTexture() const { return sourceDepth; }
+    unsigned int WormholeSky() const {if(!skyRefreshDeferred && (skyCubeDirty || glm::length(skyCubeOrigin)>1.0))BuildSkyCube();return skyCube;}
+    bool SetSkyRefreshDeferred(bool value){const bool flush=skyRefreshDeferred && !value && skyCubeDirty;skyRefreshDeferred=value;return flush;}
+    size_t LastSubmittedStars() const {return lastSubmittedStars;}
     void RenderBackground(const glm::mat4& vp,const glm::dvec3& camera,bool photons=false,
         double seconds=0,const glm::dvec3& detector=glm::dvec3(0)) const;
     void RenderCore(const glm::mat4& vp,const glm::dvec3& localCamera,int coreId,double seconds) const;
@@ -32,6 +35,7 @@ public:
     void SetStellarActivity(bool enabled) { stellarActivity.SetEnabled(enabled); }
     void SetStellarCorona(bool enabled) {stellarActivity.SetCoronaEnabled(enabled);}
     void SetMagnitudeLimit(float value){value=glm::clamp(value,-2.f,30.f);if(value!=magnitudeLimit){magnitudeLimit=value;skyCubeDirty=true;}}
+    float MagnitudeLimit() const {return magnitudeLimit;}
     void SetWarmStellarColor(bool enabled) { stellarActivity.SetWarmColor(enabled); }
     void InvalidateSky() const { milkyWay.Invalidate(); }
     unsigned MilkyWayCacheBuilds() const { return milkyWay.CacheBuilds(); }
@@ -100,6 +104,10 @@ private:
     mutable int sourceWidth = 0, sourceHeight = 0;
     mutable glm::dvec3 skyCubeOrigin=glm::dvec3(0);
     mutable bool skyCubeDirty=true,skyCubeAllocated=false;
+    bool skyRefreshDeferred=false;
+    mutable size_t lastSubmittedStars=0;
+    struct StarBatch {glm::dvec3 center;double radius;float maxLuminosity;int first,count;};
+    std::vector<StarBatch> starBatches;
     void BuildSkyCube(const glm::dvec3& origin=glm::dvec3(0)) const;
     void RenderLensing(const glm::mat4& viewProjection,const glm::dvec3& camera,double seconds,const glm::vec3& beta,
                        const glm::vec3& physicalBeta,bool physicalObserver,int coreId=-1) const;
@@ -141,7 +149,6 @@ private:
     OrbitalMechanics::ParticleState RangerAt(double seconds,int index) const;
     OrbitalMechanics::ParticleState ObservedRanger(const glm::dvec3& camera,double seconds,int index) const;
     unsigned int terrainSeed = 618;
-    std::vector<glm::dvec3> destinations;
     Universe::Catalog catalogue;
     Atmosphere atmosphere;
     StellarActivity stellarActivity;

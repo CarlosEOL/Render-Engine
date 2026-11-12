@@ -2,6 +2,7 @@
 #include "Atmosphere.h"
 #include "StellarActivity.h"
 #include "SaturnRings.h"
+#include "KerrWormhole.h"
 #include "OrbitalMechanics.h"
 #include <glm/glm.hpp>
 #include <string>
@@ -44,6 +45,7 @@ class StarSystem
         glm::vec3 color;
         int parent = -1;
         Palette palette = Palette::Climate;
+        bool wormhole = false;
     };
 
     static Star DescribeStar(int id, const std::string &name);
@@ -55,13 +57,15 @@ class StarSystem
     void SetStellarActivity(bool enabled) { stellarActivity.SetEnabled(enabled); }
     void SetStellarCorona(bool enabled) {stellarActivity.SetCoronaEnabled(enabled);}
     void SetEarthClouds(bool enabled){earthCloudsEnabled=enabled;}
+    void SetWormholeEnabled(bool enabled){wormhole.SetEnabled(enabled);}
+    void SetWormholeDiagnostic(bool enabled){wormhole.SetDiagnostic(enabled);}
     void SetWarmStellarColor(bool enabled) { stellarActivity.SetWarmColor(enabled); }
     void TriggerStellarFlare(double seconds) { stellarActivity.Trigger(seconds); }
     void Release();
     void Update(double seconds, glm::vec3 &front, glm::vec3 &up);
     void Move(GLFWwindow *window, float realSeconds, glm::vec3 &front, glm::vec3 &up);
     void Render(float fieldOfView, float aspect, const glm::vec3 &front, const glm::vec3 &up, double seconds,
-                bool trajectories, bool photonView, bool showSelection = true);
+                bool trajectories, bool photonView, bool showSelection = true, unsigned int wormholeSky = 0);
     void GoToSelected(double seconds, glm::vec3 &front, glm::vec3 &up);
     void ToggleLanding(double seconds, glm::vec3 &front, glm::vec3 &up);
     void Overview(glm::vec3 &front, glm::vec3 &up);
@@ -154,4 +158,5 @@ class StarSystem
     Atmosphere atmosphere;
     StellarActivity stellarActivity;
     SaturnRings saturnRings;
+    KerrWormhole wormhole;
 };

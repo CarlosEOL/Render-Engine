@@ -265,9 +265,11 @@ void ScenePanel::Release()
     parent = font = backgroundBrush = nullptr;
 }
 
-void ScenePanel::SetMagnitude(float value){
+void ScenePanel::SetMagnitude(float value,float base){
 #ifdef _WIN32
-    if(!parent)return;std::ostringstream label;label<<"Magnitude limit "<<std::fixed<<std::setprecision(2)<<value;
+    if(!parent)return;std::ostringstream label;label<<std::fixed<<std::setprecision(2);
+    if(value>base+.01f)label<<"Mag "<<value<<" | base "<<base;
+    else label<<"Magnitude limit "<<value;
     SetDlgItemTextA(static_cast<HWND>(parent),2109,label.str().c_str());
 #endif
 }

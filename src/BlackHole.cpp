@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <algorithm>
+#include <limits>
 #include <cstddef>
 #include <random>
 #include <string>
@@ -677,10 +678,25 @@ bool BlackHole::Initialize() {
     glBindVertexArray(waterPatch.vao);glBindBuffer(GL_ARRAY_BUFFER,waterPatch.buffer);
     glBufferData(GL_ARRAY_BUFFER,sizeof(glm::vec3),nullptr,GL_DYNAMIC_DRAW);
     glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,sizeof(glm::vec3),nullptr);glEnableVertexAttribArray(0);
-    catalogue.Generate();destinations=catalogue.Positions();
-    std::vector<glm::vec3> stars,residuals;stars.reserve(destinations.size());residuals.reserve(destinations.size());
-    for(const auto& position:destinations){
-        const glm::vec3 high(position);stars.push_back(high);residuals.push_back(glm::vec3(position-glm::dvec3(high)));
+    catalogue.Generate();const auto& destinations=catalogue.Positions();const auto& order=catalogue.DrawOrder();
+    std::vector<glm::vec3> stars,residuals;stars.reserve(destinations.size()+1);residuals.reserve(destinations.size()+1);
+    std::vector<glm::vec2> properties;properties.reserve(destinations.size()+1);
+    starLuminosities.resize(destinations.size());starBatches.clear();
+    constexpr int batchSize=256;
+    for(int first=0;first<static_cast<int>(order.size());first+=batchSize){
+        const int count=std::min(batchSize,static_cast<int>(order.size())-first);
+        glm::dvec3 low(std::numeric_limits<double>::max()),highBound(-std::numeric_limits<double>::max());float brightest=0;
+        for(int k=first;k<first+count;++k){
+            const int index=order[k];const auto& position=destinations[index];const glm::vec3 high(position);
+            stars.push_back(high);residuals.push_back(glm::vec3(position-glm::dvec3(high)));
+            double temperature,luminosity;
+            if(index<Universe::LegacyStarCount){const auto metadata=StarSystem::DescribeStar(Universe::StarId(index),"");temperature=metadata.temperature;luminosity=metadata.luminositySolar;}
+            else {const auto metadata=Universe::Properties(index);temperature=metadata.temperature;luminosity=metadata.luminositySolar;}
+            properties.push_back({static_cast<float>(temperature),static_cast<float>(luminosity)});
+            starLuminosities[index]=static_cast<float>(luminosity);brightest=std::max(brightest,static_cast<float>(luminosity));
+            low=glm::min(low,position);highBound=glm::max(highBound,position);
+        }
+        starBatches.push_back({(low+highBound)*.5,glm::length(highBound-low)*.5,brightest,first,count});
     }
     // The authored Solar preset shares the same far-point tier when left behind.
     stars.push_back(glm::vec3(0));residuals.push_back(glm::vec3(0));
@@ -688,13 +704,6 @@ bool BlackHole::Initialize() {
     glGenBuffers(1,&stellarResiduals);glBindBuffer(GL_ARRAY_BUFFER,stellarResiduals);
     glBufferData(GL_ARRAY_BUFFER,residuals.size()*sizeof(glm::vec3),residuals.data(),GL_STATIC_DRAW);
     glVertexAttribPointer(4,3,GL_FLOAT,GL_FALSE,sizeof(glm::vec3),nullptr);glEnableVertexAttribArray(4);
-    std::vector<glm::vec2> properties;properties.reserve(destinations.size());
-    starLuminosities.clear();starLuminosities.reserve(destinations.size());
-    for(int star=0;star<static_cast<int>(destinations.size());++star) {
-        const auto metadata=StarSystem::DescribeStar(star+10,"");
-        properties.push_back({static_cast<float>(metadata.temperature),static_cast<float>(metadata.luminositySolar)});
-        starLuminosities.push_back(static_cast<float>(metadata.luminositySolar));
-    }
     properties.push_back({5772,1});
     glGenBuffers(1,&stellarProperties);glBindBuffer(GL_ARRAY_BUFFER,stellarProperties);
     glBufferData(GL_ARRAY_BUFFER,properties.size()*sizeof(glm::vec2),properties.data(),GL_STATIC_DRAW);
@@ -949,7 +958,7 @@ BlackHole::Target BlackHole::ResolveTarget(int id, double seconds) const {
     }
     if (id == 9)
         return {SpacecraftPosition(), static_cast<float>(50.0/Astronomy::metresPerAu), "Spacecraft"};
-    const int star = id - 10;
+    const auto& destinations=catalogue.Positions();const int star = Universe::StarIndex(id);
     if (star >= 0 && star < static_cast<int>(destinations.size())) {
         const auto name=Universe::StarName(star);
         const auto metadata=StarSystem::DescribeStar(id,name);
@@ -974,18 +983,23 @@ int BlackHole::PickCatalogueStar(const glm::dvec3& origin,const glm::vec3& direc
     int selected=-1;
     double best=std::max(0.0,angularTolerance);
     const auto ray=glm::normalize(glm::dvec3(direction));
-    // A click-only scan over cached positions: no star metadata generation,
-    // planet positions or inactive-system simulation work during picking.
-    for(int index=0;index<=static_cast<int>(destinations.size());++index){
-        const bool sun=index==static_cast<int>(destinations.size());
-        const int id=sun?-2:index+10;if(id==exclude)continue;
+    const auto& destinations=catalogue.Positions();const auto& order=catalogue.DrawOrder();
+    const auto consider=[&](int index){
+        const bool sun=index<0;const int id=sun?-2:Universe::StarId(index);if(id==exclude)return;
         const auto offset=(sun?glm::dvec3(0):destinations[index])-origin;
         const double along=glm::dot(offset,ray),distance=glm::length(offset);
-        if(along<=0 || distance<3)continue; // Nearby resolved stars use body picking.
-        if(!StellarPhotometry::Visible(sun?1:starLuminosities[index],distance,magnitudeLimit))continue;
+        if(along<=0 || distance<3)return;
+        if(!StellarPhotometry::Visible(sun?1:starLuminosities[index],distance,magnitudeLimit))return;
         const double separation=glm::length(offset-along*ray)/distance;
         if(separation<best){best=separation;selected=id;}
+    };
+    for(const auto& batch:starBatches){
+        const auto delta=batch.center-origin;const double along=glm::dot(delta,ray),distance=glm::length(delta);
+        if(along+batch.radius<=0 || glm::length(delta-along*ray)>batch.radius+best*(distance+batch.radius))continue;
+        if(!StellarPhotometry::Visible(batch.maxLuminosity,std::max(3.0,distance-batch.radius),magnitudeLimit))continue;
+        for(int k=batch.first;k<batch.first+batch.count;++k)consider(order[k]);
     }
+    consider(-1);
     return selected;
 }
 
@@ -1058,7 +1072,7 @@ double BlackHole::PlanetSurfaceRadius(const glm::vec3& worldDirection, double se
 void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& cameraPosition, double seconds,
                       const glm::vec3& observerVelocity, bool trajectories, int selected,int interiorVehicle,
                       const glm::vec3& physicalObserverBeta,bool physicalObserver) const {
-    if(skyCubeDirty || glm::length(skyCubeOrigin)>1)BuildSkyCube();
+    if(!skyRefreshDeferred && (skyCubeDirty || glm::length(skyCubeOrigin)>1))BuildSkyCube();
     glEnable(GL_BLEND);glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
     const glm::mat4 identity(1.0f);
     const glm::vec3 cameraFloat(cameraPosition);
@@ -1153,10 +1167,10 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
     }
     glUniform3f(glGetUniformLocation(program, "velocityBeta"), 0, 0, 0);
     for (int id : catalogue.Nearby(cameraPosition)) {
-            const int star=id-10;
-            const auto metadata=StarSystem::DescribeStar(star+10,"");
+            const int star=Universe::StarIndex(id);
+            const auto metadata=StarSystem::DescribeStar(id,"");
             glUniform1f(glGetUniformLocation(program, "temperature"),static_cast<float>(metadata.temperature));
-            drawSphere(destinations[star],static_cast<float>(metadata.radiusSolar*Astronomy::solarRadiusAu), Star, glm::vec3(1),star+10,static_cast<float>(metadata.temperature));
+            drawSphere(catalogue.Positions()[star],static_cast<float>(metadata.radiusSolar*Astronomy::solarRadiusAu), Star, glm::vec3(1),id,static_cast<float>(metadata.temperature));
     }
     const auto observed = ObservedFlight(cameraPosition, seconds);
     if (!observed.captured) {
@@ -1352,8 +1366,33 @@ void BlackHole::RenderBackground(const glm::mat4& vp,const glm::dvec3& camera,bo
     stellarActivity.BindCorona(program,3);
     glActiveTexture(GL_TEXTURE0);
     glBindVertexArray(backgroundStars.vao);glPointSize(photons?2.f:7.f);
-    if(photons)glDrawArraysInstanced(GL_POINTS,0,backgroundStars.vertexCount,4);
-    else glDrawArrays(GL_POINTS,0,backgroundStars.vertexCount);
+    // Conservative spatial batches: reject entire dim/offscreen regions.
+    // Individual apparent-magnitude decisions remain in the vertex shader.
+    const glm::dmat4 precise(vp);
+    const glm::dvec3 rowX(precise[0][0],precise[1][0],precise[2][0]),rowY(precise[0][1],precise[1][1],precise[2][1]),rowW(precise[0][3],precise[1][3],precise[2][3]);
+    const double left=glm::length(rowW+rowX),right=glm::length(rowW-rowX),bottom=glm::length(rowW+rowY),top=glm::length(rowW-rowY);
+    int runFirst=-1,runCount=0;lastSubmittedStars=0;
+    std::vector<std::pair<int,int>> runs;runs.reserve(starBatches.size()/2);
+    const auto flush=[&](){if(runCount)runs.emplace_back(runFirst,runCount);runFirst=-1;runCount=0;};
+    for(const auto& batch:starBatches){
+        const auto delta=batch.center-camera;const auto clip=precise*glm::dvec4(delta,1);
+        const double distance=std::max(3.0,glm::length(delta)-batch.radius);
+        const bool visible=StellarPhotometry::Visible(batch.maxLuminosity,distance,magnitudeLimit)
+            && (photons || (clip.w+clip.x>=-batch.radius*left && clip.w-clip.x>=-batch.radius*right && clip.w+clip.y>=-batch.radius*bottom && clip.w-clip.y>=-batch.radius*top));
+        if(visible){if(runFirst<0)runFirst=batch.first;runCount+=batch.count;}else flush();
+    }
+    flush();
+    // Bound driver/descriptor work even for a dense galactic view or six
+    // cubemap faces. Coalesced gaps are rejected by the GPU's magnitude test.
+    const size_t stride=std::max<size_t>(1,(runs.size()+63)/64);
+    for(size_t i=0;i<runs.size();i+=stride){
+        const auto& last=runs[std::min(runs.size()-1,i+stride-1)];
+        const int first=runs[i].first,count=last.first+last.second-first;
+        if(photons)glDrawArraysInstanced(GL_POINTS,first,count,4);else glDrawArrays(GL_POINTS,first,count);
+        lastSubmittedStars+=count;
+    }
+    // The Sun is the final authored entry, outside the procedural batches.
+    if(photons)glDrawArraysInstanced(GL_POINTS,backgroundStars.vertexCount-1,1,4);else glDrawArrays(GL_POINTS,backgroundStars.vertexCount-1,1);
     glUniform1i(glGetUniformLocation(program,"stellarPackets"),false);
     glBindVertexArray(0);
     if(!photons)galaxies.Render(vp,camera);
@@ -1361,6 +1400,7 @@ void BlackHole::RenderBackground(const glm::mat4& vp,const glm::dvec3& camera,bo
 }
 
 void BlackHole::BuildSkyCube(const glm::dvec3& origin) const {
+    const auto cameraSubmissionCount=lastSubmittedStars;
     skyCubeOrigin=origin;
     skyCubeDirty=false;
     int viewport[4],framebuffer;
@@ -1386,6 +1426,7 @@ void BlackHole::BuildSkyCube(const glm::dvec3& origin) const {
     glBindVertexArray(0);glEnable(GL_DEPTH_TEST);glDepthMask(GL_TRUE);
     glBindFramebuffer(GL_FRAMEBUFFER,framebuffer);glDeleteFramebuffers(1,&capture);
     glViewport(viewport[0],viewport[1],viewport[2],viewport[3]);
+    lastSubmittedStars=cameraSubmissionCount; // Diagnostics describe the camera, not the last cube face.
 }
 
 void BlackHole::RenderLensing(const glm::mat4& vp,const glm::dvec3& camera,double seconds,const glm::vec3& beta,
@@ -1479,7 +1520,7 @@ void BlackHole::Release() {
 
 void BlackHole::RenderCore(const glm::mat4& vp,const glm::dvec3& localCamera,int coreId,double seconds) const{
     const auto core=GalacticCores::Get(coreId);
-    if(skyCubeDirty || glm::length(skyCubeOrigin-core.position)>1.0)BuildSkyCube(core.position);
+    if(!skyRefreshDeferred && (skyCubeDirty || glm::length(skyCubeOrigin-core.position)>1.0))BuildSkyCube(core.position);
     RenderBackground(vp,core.position+localCamera);
     const double scale=Astronomy::gargantuaHorizonAu/core.RadiusAu();
     RenderLensing(vp,localCamera*scale,seconds*scale,glm::vec3(0),glm::vec3(0),false,coreId);

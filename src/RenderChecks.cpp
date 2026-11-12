@@ -14,6 +14,8 @@
 #include "GalacticCore.h"
 #include "CelestialPhenomena.h"
 #include "MilkyWayModel.h"
+#include "WormholePhysics.h"
+#include "CameraZoom.h"
 #include "../tests/KerrCaptureReference.h"
 #include "ObjectLoader.h"
 #include "glad/glad.h"
@@ -28,7 +30,7 @@
 #include <chrono>
 
 // Optional hidden-window GPU smoke checks; normal application startup never runs this.
-bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,bool galaxyOnly,bool lensingOnly)
+bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,bool galaxyOnly,bool lensingOnly,bool wormholeOnly)
 {
     if (!blackHoleReady || !starSystemReady || !quantumReady || !opticsReady)
         return false;
@@ -112,6 +114,20 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,boo
     glfwSetWindowSize(window,uiWidth,uiHeight);
     mainMenu.Show(AppMenu::Page::Home);
     StartSolarSystem();
+    if(blackHole.Catalogue().Positions().size()!=Universe::StarCount || Universe::StarCount<2000000)fail();
+    for(int index:{Universe::LegacyStarCount,Universe::LegacyStarCount+262143,800000,1500000,Universe::StarCount-1}){
+        const int id=Universe::StarId(index);const auto p=Universe::StarPosition(index);
+        if(Universe::StarIndex(id)!=index || GalacticCores::IsCore(id) || CelestialPhenomena::IsNebula(id)
+            || p!=blackHole.Catalogue().Positions()[index] || !Universe::GalaxyAt(Universe::GalaxyForStar(index)).Contains(p))fail();
+        if(blackHole.NearestStar(p)!=id)fail();
+        if(blackHole.PickCatalogueStar(p+glm::dvec3(0,0,10),glm::vec3(0,0,-1),.00001)!=id)fail();
+        StarSystem first,again;first.Generate(id,Universe::StarName(index));again.Generate(id,Universe::StarName(index));
+        if(first.Planets().size()!=again.Planets().size() || first.Planets().front().seed!=again.Planets().front().seed)fail();
+    }
+    const auto remoteName=Universe::StarName(Universe::StarCount-1);
+    const auto remoteFound=navigationCatalog.Find(remoteName,0);
+    if(remoteFound.empty() || remoteFound.front().name!=remoteName || remoteFound.front().system!=Universe::StarId(Universe::StarCount-1))fail();
+    std::cout<<"Procedural catalogue: "<<Universe::StarCount<<" stars; sampled galaxy bounds, stable IDs, nearest lookup, planets and name search passed\n";
     const HWND inputWindow=glfwGetWin32Window(window);
     const HWND information=GetDlgItem(inputWindow,2102);
     const auto informationShown=[&](){return (GetWindowLongPtrW(information,GWL_STYLE)&WS_VISIBLE)!=0;};
@@ -142,6 +158,15 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,boo
     }
     cameraFront=inputFront;cameraUp=inputUp;
     std::cout<<"Input checks: Shift+F2 information, F2 orbits, menu action and Play/pause mouse look\n";
+    for(int profile=0;profile<7;++profile){
+        ApplyVisionProfile(profile);SetMouseCaptured(false);zoomDragging=true;
+        MouseCallback(window,100,100);MouseCallback(window,100,-10000);
+        if(std::abs(CameraMagnification()-20)>1e-3 || std::abs(EffectiveMagnitudeLimit()-13.50515f)>.001f || limitingMagnitude!=7)fail();
+        zoomDragging=false;MouseButtonCallback(window,GLFW_MOUSE_BUTTON_MIDDLE,GLFW_PRESS,0);
+        if(std::abs(CameraMagnification()-1)>1e-5 || EffectiveMagnitudeLimit()!=7)fail();
+    }
+    ApplyVisionProfile(0);SyncCameraMagnitude();speedToastUntil=0;
+    std::cout<<"Zoom checks: 20x on all seven profiles; magnitude 7 -> 13.505 -> 7; middle-click reset passed\n";
     const auto finderCamera=starSystem.camera;const double finderTime=simulationTime;
     navigationPanel.Toggle(NavigationPanel::Mode::Finder,false);navigationPanel.SetQuery("Earth");navigationPanel.Refresh();
     captureUi("ui-object-finder",navigationPanel.NativeHandle());
@@ -258,6 +283,92 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,boo
         blackHole.SetSpin(.8);blackHole.SetRayBudget(160);sceneCacheValid=false;
         std::cout<<"Lensing checks "<<(success?"PASSED":"FAILED")<<"\n";
     };
+    const auto checkWormhole=[&](){
+        StartSolarSystem();scenePanel.SetVisible(false);navigationPanel.Hide();ResizeInterface();
+        simulationPlaying=false;simulationTime=0;trajectories=false;lensFlareStrength=0;visionProfile=0;
+        navigationSelectionValid=false;fieldOfView=45;exposureEv=0;
+        KeyCallback(window,1200,0,GLFW_PRESS,0);
+        int mouth=-1;
+        for(int i=0;i<static_cast<int>(starSystem.Planets().size());++i)if(starSystem.Planets()[i].wormhole)mouth=i;
+        if(mouth<0){std::cerr<<"Saturn wormhole missing\n";fail();return;}
+        const auto& body=starSystem.Planets()[mouth];
+        const double mu=Astronomy::solarGravityAu*starSystem.Planets()[5].massEarth*5.97217e24/1.98847e30;
+        const double period=glm::two_pi<double>()/OrbitalMechanics::MeanMotion(mu,body.orbit.semiMajorAxis);
+        const auto relative=[&](double t){return starSystem.Position(mouth,t)-starSystem.Position(5,t);};
+        if(body.parent!=5 || body.massEarth!=0 || !body.wormhole || body.atmosphere
+            || glm::length(relative(0)-relative(period))>1e-12
+            || glm::length(relative(0)-relative(period*.25))<.01){std::cerr<<"Wormhole Saturn-relative orbit failed\n";fail();}
+        const double M=WormholePhysics::MassLength(),a=WormholePhysics::SpinLength();
+        if(M+std::sqrt(M*M-a*a)>=1 || 1-2*M+a*a<=0){std::cerr<<"Wormhole throat is not outside the Kerr horizon\n";fail();}
+        const auto entries=navigationCatalog.Find("Saturn Kerr Wormhole",0);
+        if(entries.size()!=1 || !entries.front().wormhole || navigationCatalog.Parent(entries.front()).name!="Saturn"){
+            std::cerr<<"Wormhole name/hierarchy lookup failed\n";fail();return;
+        }
+        const auto beforeSelection=starSystem.camera;
+        ActivateNavigation(NavigationPanel::Action::Select,entries.front());
+        if(starSystem.camera!=beforeSelection || starSystem.Selected()!=mouth){std::cerr<<"Wormhole selection moved the camera\n";fail();}
+        ActivateNavigation(NavigationPanel::Action::Go,entries.front());
+        const auto followOffset=starSystem.camera-starSystem.Position(mouth,0);
+        if(std::abs(glm::length(followOffset)/WormholePhysics::ThroatRadiusAu()-12)>1e-6){std::cerr<<"Go to wormhole failed\n";fail();}
+        starSystem.ToggleFollow(0);starSystem.Update(period*.25,cameraFront,cameraUp);
+        if(glm::length(starSystem.camera-starSystem.Position(mouth,period*.25)-followOffset)>1e-12){std::cerr<<"Wormhole orbital follow failed\n";fail();}
+        starSystem.SelectPlanet(mouth);starSystem.GoToSelected(0,cameraFront,cameraUp);
+        const auto nonmaterialFront=cameraFront,nonmaterialUp=cameraUp;
+        starSystem.ToggleRotationFollow(0);starSystem.Update(period*.25,cameraFront,cameraUp);
+        if(glm::length(cameraFront-nonmaterialFront)>1e-6 || glm::length(cameraUp-nonmaterialUp)>1e-6){std::cerr<<"Wormhole acquired a material surface rotation\n";fail();}
+        starSystem.SelectPlanet(mouth);
+        starSystem.ToggleLanding(0,cameraFront,cameraUp);
+        if(starSystem.IsLanded()){std::cerr<<"Wormhole acquired a planetary surface\n";fail();}
+#ifdef _WIN32
+        navigationPanel.Toggle(NavigationPanel::Mode::Finder,false);navigationPanel.SetQuery("wormhole");navigationPanel.Refresh();
+        captureUi("ui-saturn-wormhole-finder",navigationPanel.NativeHandle());
+        navigationScope=navigationCatalog.Object(-2,5,0);navigationPanel.Toggle(NavigationPanel::Mode::Overview,false);
+        captureUi("ui-saturn-wormhole-hierarchy",navigationPanel.NativeHandle());navigationPanel.Hide();
+#endif
+        std::cout<<"Saturn wormhole orbit: "<<period/86400<<" days; selection, Go to, follow and hierarchy checked\n";
+        const auto center=starSystem.Position(mouth,0);
+        const auto offset=glm::normalize(glm::dvec3(0,.15,1))*WormholePhysics::ThroatRadiusAu()*12.0;
+        starSystem.camera=center+offset;cameraFront=glm::normalize(glm::vec3(-offset));cameraUp={0,1,0};
+        starSystem.SetWormholeEnabled(false);sceneCacheValid=false;const auto off=capture("saturn-wormhole-disabled");
+        starSystem.SetWormholeEnabled(true);sceneCacheValid=false;const auto view=capture("saturn-wormhole-exterior");
+        sceneCacheValid=false;const auto paused=capture("saturn-wormhole-paused");
+        if(view!=paused){std::cerr<<"Paused wormhole view changed\n";fail();}
+        size_t changed=0;for(size_t p=0;p<view.size();p+=3)if(std::abs(int(view[p])-int(off[p]))+std::abs(int(view[p+1])-int(off[p+1]))+std::abs(int(view[p+2])-int(off[p+2]))>8)++changed;
+        if(changed<1000){std::cerr<<"Wormhole did not refract the scene\n";fail();}
+        starSystem.SetWormholeDiagnostic(true);sceneCacheValid=false;const auto mask=capture("saturn-wormhole-ray-sides");
+        size_t other=0,local=0,unfinished=0;
+        for(size_t p=0;p<mask.size();p+=3){
+            if(mask[p]<30 && mask[p+1]>100 && mask[p+2]<30)++other;
+            if(mask[p]<30 && mask[p+1]<30 && mask[p+2]>100)++local;
+            if(mask[p]>100 && mask[p+1]<30 && mask[p+2]>100)++unfinished;
+        }
+        std::cout<<"Wormhole rays: other exterior="<<other<<"; same exterior="<<local<<"; unresolved="<<unfinished<<"; refracted="<<changed<<"\n";
+        if(other<5000 || local<5000 || unfinished>mask.size()/3*.01){std::cerr<<"Wormhole exterior classification failed\n";fail();}
+        starSystem.camera=center+glm::dvec3(0,12*WormholePhysics::ThroatRadiusAu(),0);cameraFront={0,-1,0};cameraUp={0,0,-1};sceneCacheValid=false;
+        const auto polar=capture("saturn-wormhole-spin-axis-status");size_t polarUnresolved=0,polarOther=0;
+        for(size_t p=0;p<polar.size();p+=3){if(polar[p]>100 && polar[p+1]<30 && polar[p+2]>100)++polarUnresolved;if(polar[p]<30 && polar[p+1]>100 && polar[p+2]<30)++polarOther;}
+        std::cout<<"Wormhole polar rays: other exterior="<<polarOther<<"; unresolved="<<polarUnresolved<<"\n";
+        if(polarOther<5000 || polarUnresolved>polar.size()/3*.01){std::cerr<<"Spin-axis coordinate singularity\n";fail();}
+        starSystem.SetWormholeDiagnostic(false);
+        // Put Saturn directly in front of the mouth. No lens operation may
+        // overwrite the opaque disk in front of the local metric patch.
+        const auto saturn=starSystem.Position(5,0);
+        const auto toward=glm::normalize(center-saturn);
+        starSystem.camera=saturn-toward*starSystem.Planets()[5].radiusEarth*Astronomy::earthRadiusAu*3.0;
+        cameraFront=glm::vec3(toward);cameraUp={0,1,0};
+        starSystem.SetWormholeEnabled(false);sceneCacheValid=false;const auto foreground=capture("saturn-wormhole-occluded-off");
+        starSystem.SetWormholeEnabled(true);sceneCacheValid=false;const auto blocked=capture("saturn-wormhole-occluded-on");
+        int w,h;glfwGetFramebufferSize(window,&w,&h);
+        for(int y=h/2-20;y<h/2+20;++y)for(int x=w/2-20;x<w/2+20;++x){const auto p=(static_cast<size_t>(y)*w+x)*3;for(int c=0;c<3;++c)if(foreground[p+c]!=blocked[p+c]){std::cerr<<"Wormhole overwrote foreground Saturn\n";fail();y=h;x=w;break;}}
+        starSystem.camera=center+offset*.19;cameraFront=glm::normalize(glm::vec3(-offset));cameraUp={0,1,0};sceneCacheValid=false;
+        capture("saturn-wormhole-approach");
+        starSystem.camera=starSystem.Position(2,0)+glm::dvec3(0,0,Astronomy::earthRadiusAu*5);
+        cameraFront={0,0,-1};cameraUp={0,1,0};
+        starSystem.SetWormholeEnabled(false);sceneCacheValid=false;const auto distant=capture("saturn-wormhole-distant-off");
+        starSystem.SetWormholeEnabled(true);sceneCacheValid=false;if(distant!=capture("saturn-wormhole-distant-on")){std::cerr<<"Distant wormhole changed Earth view\n";fail();}
+        std::cout<<"Wormhole checks "<<(success?"PASSED":"FAILED")<<": "<<failedLines.size()<<" failed locations\n";
+    };
+    if(wormholeOnly){checkWormhole();return success;}
     if(lensingOnly){checkLensing();return success;}
     const auto checkGalaxy=[&](){
         StartSolarSystem();scenePanel.SetVisible(false);ResizeInterface();
@@ -1147,9 +1258,14 @@ Connections: {
     SetMagnitudeLimit(3.6f);capture("magnitude-limit-3-60");
     SetMagnitudeLimit(7);capture("magnitude-limit-7-00");
     SetMagnitudeLimit(10.2f);capture("magnitude-limit-10-20");
+    fieldOfView=CameraZoom::MinimumFieldOfView(45);SetMagnitudeLimit(7);capture("zoom-20x-magnitude-13-51");
+    std::cout<<"20x star submission: "<<blackHole.LastSubmittedStars()<<" / "<<Universe::StarCount<<" catalogue points; effective magnitude="<<blackHole.MagnitudeLimit()<<"\n";
+    if(std::abs(blackHole.MagnitudeLimit()-13.50515f)>.001 || blackHole.LastSubmittedStars()>=Universe::StarCount)fail();
+    fieldOfView=75;SetMagnitudeLimit(10.2f);
     cameraFront=glm::normalize(glm::vec3(MilkyWayModel::Orientation()[1]));capture("milky-way-galactic-pole");
     if(blackHole.MilkyWayCacheBuilds()>beforeSky+1){std::cerr<<"Sky rebaked on rotation or magnitude changes\n";fail();}
     SetMagnitudeLimit(7);
+    checkWormhole();
     checkLensing();
     checkGalaxy();
     std::cout<<"Render checks "<<(success?"PASSED":"FAILED")<<": "<<captures<<" scene captures; "<<uiCaptures<<" UI captures; "<<failedLines.size()<<" assertion locations failed\n";

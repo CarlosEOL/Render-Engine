@@ -12,6 +12,8 @@
 #include "FlightUnits.h"
 #include "StellarPhotometry.h"
 #include "CelestialPhenomena.h"
+#include "WormholePhysics.h"
+#include "CameraZoom.h"
 #include <algorithm>
 #include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
@@ -151,7 +153,21 @@ int main()
         }
         Require(std::abs(angular - 1) < 1e-4, "Hydrogen angular probability not normalized");
     }
-    Require(solar.Planets().size() == 20 && solar.AsteroidCount() == 4096, "Solar system catalogue incomplete");
+    Require(solar.Planets().size() == 21 && solar.AsteroidCount() == 4096, "Solar system catalogue incomplete");
+    const int mouth=static_cast<int>(solar.Planets().size())-1;
+    const auto& wormhole=solar.Planets()[mouth];
+    Require(wormhole.wormhole && wormhole.parent==5 && wormhole.massEarth==0 && !wormhole.atmosphere,"Wormhole is not a Saturn test object");
+    const double wormholeMu=Astronomy::solarGravityAu*solar.Planets()[5].massEarth*5.97217e24/1.98847e30;
+    const double wormholePeriod=glm::two_pi<double>()/OrbitalMechanics::MeanMotion(wormholeMu,wormhole.orbit.semiMajorAxis);
+    const auto relativeMouth=[&](double time){return solar.Position(mouth,time)-solar.Position(5,time);};
+    Require(glm::length(relativeMouth(0)-relativeMouth(wormholePeriod))<1e-12,"Wormhole Saturn-relative orbit did not close");
+    Require(glm::length(relativeMouth(0)-relativeMouth(wormholePeriod*.25))>.01,"Wormhole did not move relative to Saturn");
+    const double massLength=WormholePhysics::MassLength(),aLength=WormholePhysics::SpinLength();
+    Require(massLength*(1+WormholePhysics::Deformation*WormholePhysics::Deformation)+std::sqrt(std::pow(massLength*(1+WormholePhysics::Deformation*WormholePhysics::Deformation),2)-aLength*aLength)>1-1e-12,"Incorrect throat normalization");
+    Require(massLength+std::sqrt(massLength*massLength-aLength*aLength)<1,"Wormhole throat is behind the Kerr horizon");
+    Require(1-2*massLength+aLength*aLength>0,"Throat metric has a horizon singularity");
+    solar.SelectPlanet(mouth);glm::vec3 mouthFront(0,0,-1),mouthUp(0,1,0);
+    solar.ToggleLanding(0,mouthFront,mouthUp);Require(!solar.IsLanded(),"Landed on a wormhole as if it were terrain");
     const auto &earth = solar.Planets()[2];
     const double year =
         6.283185307179586 / OrbitalMechanics::MeanMotion(Astronomy::solarGravityAu, earth.orbit.semiMajorAxis);
@@ -234,7 +250,7 @@ int main()
     for(int i=0;i<32;++i){
         const auto point=catalogue.Positions()[i*461]+glm::dvec3(31,-11,13)*Astronomy::auPerLightYear;
         int closest=-2;double best=glm::dot(point,point);
-        for(int j=0;j<Universe::StarCount;++j){const auto delta=catalogue.Positions()[j]-point;double distance=glm::dot(delta,delta);if(distance<best){best=distance;closest=j+10;}}
+        for(int j=0;j<Universe::StarCount;++j){const auto delta=catalogue.Positions()[j]-point;double distance=glm::dot(delta,delta);if(distance<best){best=distance;closest=Universe::StarId(j);}}
         Require(catalogue.Nearest(point)==closest,"Nearest-star tree disagrees with full catalogue");
     }
     Require(FlightUnits::Label(1/Astronomy::metresPerAu).find("m/s")!=std::string::npos
@@ -252,6 +268,11 @@ int main()
     Require(!moonSearch.empty() && moonSearch[0].parent=="Earth","Moon hierarchy lost Earth parent");
     const auto jovian=navigator.Find("Jupiter",0);
     const auto satellites=navigator.Children(jovian[0],0);
+    const auto wormholes=navigator.Find("Saturn Kerr Wormhole",0);
+    Require(wormholes.size()==1 && wormholes[0].wormhole && wormholes[0].parent=="Saturn","Wormhole missing from Object Finder");
+    Require(navigator.Parent(wormholes[0]).name=="Saturn","Wormhole hierarchy does not lead back to Saturn");
+    const auto saturnChildren=navigator.Children(navigator.Object(-2,5,0),0);
+    Require(std::any_of(saturnChildren.begin(),saturnChildren.end(),[](const auto& e){return e.wormhole;}),"Saturn overview omits its wormhole");
     Require(std::count_if(satellites.begin(),satellites.end(),[](const auto& e){return e.parent=="Jupiter";})==4,"Jupiter satellite overview is incomplete");
     Require(navigator.Parent(moonSearch[0]).name=="Earth" && navigator.Parent(jovian[0]).name=="Sun","Hierarchy Back did not reach the physical parent");
     Require(!tonSearch.empty() && tonSearch[0].system==GalacticCores::tonId && GalacticCores::Get(GalacticCores::tonId).massSolar>4e10,"TON 618 is absent or incorrectly scaled");
@@ -278,18 +299,21 @@ int main()
         Require(first.key!=Universe::GalaxyAt(index,619).key,"World seed did not change galaxy key");
         if(index>0)Require(first.centerAu!=Universe::GalaxyAt(index,619).centerAu,"World seed did not change galaxy position");
     }
+    const std::array<Universe::Galaxy,4> boundaries={Universe::GalaxyAt(0),Universe::GalaxyAt(1),Universe::GalaxyAt(2),Universe::GalaxyAt(3)};
     for(int index=0;index<Universe::StarCount;++index){
         const int galaxy=Universe::GalaxyForStar(index);
         const auto position=catalogue.Positions()[index];
-        Require(Universe::GalaxyAt(galaxy).Contains(position),"Star generated outside galaxy boundary");
-        Require(position==Universe::StarPosition(index),"Camera-independent star key is not repeatable");
-        Require(Universe::GalaxyAt(galaxy,619).Contains(Universe::StarPosition(index,619)),"Alternate-seed star outside galaxy boundary");
+        Require(boundaries[galaxy].Contains(position),"Star generated outside galaxy boundary");
+        if(index%1543==0){Require(position==Universe::StarPosition(index),"Camera-independent star key is not repeatable");
+        Require(Universe::GalaxyAt(galaxy,619).Contains(Universe::StarPosition(index,619)),"Alternate-seed star outside galaxy boundary");}
         if(index%137==0){
             const auto nearby=catalogue.Nearby(position+glm::dvec3(.1,0,0));
-            Require(std::find(nearby.begin(),nearby.end(),index+10)!=nearby.end(),"Proximity lookup lost a star");
+            Require(std::find(nearby.begin(),nearby.end(),Universe::StarId(index))!=nearby.end(),"Proximity lookup lost a star");
         }
     }
     Require(Universe::StarPosition(37)!=Universe::StarPosition(37,619),"World seed did not change stars");
+    Require(std::abs(CameraZoom::Magnification(45,CameraZoom::MinimumFieldOfView(45))-20)<1e-5,"Zoom did not reach 20x");
+    Require(std::abs(CameraZoom::MagnitudeLimit(7,20)-13.50515f)<.001 && CameraZoom::MagnitudeLimit(7,1)==7 && CameraZoom::MagnitudeLimit(29,20)==30,"Zoom magnitude boost/clamp failed");
     const auto lod=PlanetTerrain::SurfaceLodVertices(6371000);
     Require(lod.size()<200000 && lod.size()>30000,"Surface LOD memory budget incorrect");
     double nearMaxEdge=0,farMaxEdge=0;

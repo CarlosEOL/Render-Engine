@@ -10,6 +10,7 @@
 #include "GalacticCore.h"
 #include "CelestialPhenomena.h"
 #include "WindowManager.h"
+#include "CameraZoom.h"
 #include "InterstellarWorlds.h"
 #include "ObjectLoader.h"
 #include "Astronomy.h"
@@ -773,7 +774,7 @@ void WindowManager::StartSolarSystem() {
 #endif
     scenePanel.SetTitle("Star / object browser");
     std::vector<std::pair<int,std::string>> catalogue={{-2,"Sun / Solar System"},{0,"Gargantua / Black hole"}};
-    for (int id=4;id<10+Universe::StarCount;++id) {
+    for (int id=4;id<10+Universe::LegacyStarCount;++id) {
         if (id==9) continue;
         catalogue.push_back({id,blackHole.ResolveTarget(id,simulationTime).name});
     }
@@ -804,7 +805,7 @@ void WindowManager::StartGargantua() {
     DrawMenuBar(glfwGetWin32Window(window));
 #endif
     std::vector<std::pair<int,std::string>> catalogue={{-2,"Sun / Solar System"},{0,"Gargantua / Black hole"}};
-    for (int id=4;id<10+Universe::StarCount;++id) if (id!=9) catalogue.push_back({id,blackHole.ResolveTarget(id,simulationTime).name});
+    for (int id=4;id<10+Universe::LegacyStarCount;++id) if (id!=9) catalogue.push_back({id,blackHole.ResolveTarget(id,simulationTime).name});
     for(int core=0;core<GalacticCores::count;++core){const auto item=GalacticCores::Get(GalacticCores::firstId+core);catalogue.push_back({item.id,item.name});}
     scenePanel.SetCatalogue(std::move(catalogue));
     SelectCatalogue(0);
@@ -891,7 +892,7 @@ void WindowManager::UpdateNearbySystem(){
     // Sun and the authored fictional Gargantua preset have separate local
     // scenes at the same legacy origin. Enter the Sun explicitly from there.
     if(!inStarSystem && nearest==-2)return;
-    const auto position=nearest==-2?glm::dvec3(0):blackHole.Catalogue().Positions()[nearest-10];
+    const auto position=nearest==-2?glm::dvec3(0):blackHole.Catalogue().Positions()[Universe::StarIndex(nearest)];
     const double distance=glm::length((oldAnchor-position)+oldLocal);
     const bool arrival=distance<3;
     const bool rebase=inStarSystem && !starSystem.InDetailRange() && distance<glm::length(starSystem.camera)*.9;
@@ -919,7 +920,7 @@ void WindowManager::UpdateNavigationAnchor(){
         if(nearest>=0){navigationLocalAu=starSystem.Position(nearest,simulationTime);navigationAnchorName=starSystem.Planets()[nearest].name;}
     }else{
         const auto world=inStarSystem?systemOriginAu+starSystem.camera:cameraPos;const int id=blackHole.NearestStar(world);
-        navigationAnchorAu=id==-2?glm::dvec3(0):blackHole.Catalogue().Positions()[id-10];navigationLocalAu=glm::dvec3(0);navigationAnchorName=id==-2?"Sun":Universe::StarName(id-10);
+        navigationAnchorAu=id==-2?glm::dvec3(0):blackHole.Catalogue().Positions()[Universe::StarIndex(id)];navigationLocalAu=glm::dvec3(0);navigationAnchorName=id==-2?"Sun":Universe::StarName(Universe::StarIndex(id));
     }
 }
 NavigationEntry WindowManager::CurrentNavigationObject(){
@@ -995,7 +996,7 @@ void WindowManager::RefreshObjectEditor(){
 
 void WindowManager::RefreshPanel() {
     RefreshObjectEditor();
-    scenePanel.SetMagnitude(limitingMagnitude);
+    scenePanel.SetMagnitude(EffectiveMagnitudeLimit(),limitingMagnitude);
     if (mainMenu.Visible()) return;
     std::ostringstream playback;
     if(quantumMode)playback<<"STATE t = "<<std::fixed<<std::setprecision(3)<<quantum.Time()<<"\r\n"<<(simulationPlaying?"PLAYING":"PAUSED")<<"  |  "<<quantumRates[quantumRateIndex]<<"x";
@@ -1134,7 +1135,7 @@ void WindowManager::UpdateTitle() {
           << ':' << std::setw(2) << worldSeconds / 60 % 60 << ':' << std::setw(2) << worldSeconds % 60
           << std::setfill(' ') << " | " << timeRates[timeRateIndex] << "x time"
           << " | Speed " << _UTILITY_::SpeedLabel(inStarSystem?starSystem.speedAu:cameraSpeed,inStarSystem || showBlackHole)
-          << " | Mag limit "<<std::fixed<<std::setprecision(2)<<limitingMagnitude
+          << " | Mag limit "<<std::fixed<<std::setprecision(2)<<EffectiveMagnitudeLimit()
           << (showBlackHole ? std::string(" | Craft ") + blackHole.SpacecraftStatus() : "")
           << (showBlackHole ? " | Light age " + std::to_string(
               blackHole.SpacecraftLightAge(cameraPos, simulationTime)) + " s" : "")
@@ -1258,7 +1259,7 @@ void WindowManager::MouseCallback(GLFWwindow* window, double xpos, double ypos) 
         lastX = xpos;
         lastY = ypos;
         manager.fieldOfView = glm::clamp(manager.fieldOfView - delta * 0.1f,
-            manager.visionProfile > 0 ? 2.0f : 15.0f, 90.0f);
+            CameraZoom::MinimumFieldOfView(manager.interiorVehicle?75:CameraOptics::FieldOfView(manager.visionProfile,manager.lensAspect)),90.0f);
         manager.ShowZoomToast();
         return;
     }
@@ -1696,10 +1697,10 @@ void WindowManager::ShowZoomToast(bool force){
     const double now=glfwGetTime();
     if(!force && now<nextZoomToast)return;
     nextZoomToast=now+.1;
-    const double base=interiorVehicle?75:CameraOptics::FieldOfView(visionProfile,lensAspect);
-    const double magnification=std::tan(glm::radians(base)*.5)/std::tan(glm::radians(static_cast<double>(fieldOfView))*.5);
+    SyncCameraMagnitude();
+    const double magnification=CameraMagnification();
     std::ostringstream message;
-    message<<"Zoom "<<std::fixed<<std::setprecision(2)<<magnification<<"x  |  "<<std::setprecision(1)<<fieldOfView<<" deg";
+    message<<"Zoom "<<std::fixed<<std::setprecision(2)<<magnification<<"x  |  "<<std::setprecision(1)<<fieldOfView<<" deg  |  Mag "<<std::setprecision(2)<<EffectiveMagnitudeLimit();
     ShowStatusToast(message.str());
     speedToastUntil=now+1.0;
 }
@@ -1753,6 +1754,7 @@ void WindowManager::Update(float& dT) {
         glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
         PresentFrame(window); return;
     }
+    if(!quantumMode){if(blackHole.SetSkyRefreshDeferred(zoomDragging))sceneCacheValid=false;SyncCameraMagnitude();}
     if (quantumMode) {
         ProcessCamera(window,dT);
         idleFrame=false;
@@ -1914,7 +1916,8 @@ void WindowManager::Update(float& dT) {
             if(photonView)blackHole.RenderBackground(skyProjection*skyView,systemOriginAu+starSystem.camera,true,simulationTime,systemOriginAu+starSystem.camera);
         }
         if(starSystem.IsCore())blackHole.RenderCore(glm::perspective(glm::radians(fieldOfView),aspectRatio,.00001f,20000.f)*glm::lookAt(glm::vec3(0),cameraFront,cameraUp),starSystem.camera,activeSystemTarget,simulationTime);
-        else starSystem.Render(fieldOfView,aspectRatio,cameraFront,cameraUp,simulationTime,trajectories,photonView,pendingSystemTarget==activeSystemTarget);
+        else starSystem.Render(fieldOfView,aspectRatio,cameraFront,cameraUp,simulationTime,trajectories,photonView,pendingSystemTarget==activeSystemTarget,
+            blackHoleReady && starSystem.IsSolarSystem()?blackHole.WormholeSky():0);
         if(pendingSystemTarget>=10 && pendingSystemTarget!=activeSystemTarget)
             blackHole.RenderCatalogueSelection(projection*glm::lookAt(glm::vec3(0),cameraFront,cameraUp),
                 systemOriginAu+starSystem.camera,pendingSystemTarget,simulationTime);
@@ -2281,6 +2284,14 @@ bool WindowManager::isClosed() {
 }
 
 void WindowManager::SetMagnitudeLimit(float value){
-    limitingMagnitude=glm::clamp(value,-2.f,30.f);blackHole.SetMagnitudeLimit(limitingMagnitude);sceneCacheValid=false;
-    std::ostringstream message;message<<"Magnitude limit "<<std::fixed<<std::setprecision(2)<<limitingMagnitude;ShowStatusToast(message.str(),false);RefreshPanel();UpdateTitle();
+    limitingMagnitude=glm::clamp(value,-2.f,30.f);SyncCameraMagnitude();sceneCacheValid=false;
+    std::ostringstream message;message<<"Magnitude limit "<<std::fixed<<std::setprecision(2)<<EffectiveMagnitudeLimit();ShowStatusToast(message.str(),false);RefreshPanel();UpdateTitle();
+}
+double WindowManager::CameraMagnification() const {
+    return CameraZoom::Magnification(interiorVehicle?75:CameraOptics::FieldOfView(visionProfile,lensAspect),fieldOfView);
+}
+float WindowManager::EffectiveMagnitudeLimit() const {return CameraZoom::MagnitudeLimit(limitingMagnitude,CameraMagnification());}
+void WindowManager::SyncCameraMagnitude(){
+    const float next=EffectiveMagnitudeLimit();
+    if(next!=appliedMagnitudeLimit){appliedMagnitudeLimit=next;blackHole.SetMagnitudeLimit(next);sceneCacheValid=false;}
 }

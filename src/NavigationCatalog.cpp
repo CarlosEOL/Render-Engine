@@ -18,7 +18,7 @@ void Load(StarSystem& model,int id,const std::string& name){if(id==-2)model.Load
 }
 NavigationEntry NavigationCatalog::UniverseRoot() const{NavigationEntry e;e.kind=Kind::Universe;e.key="universe";e.name="Universe";e.type="Catalogue root";return e;}
 void NavigationCatalog::Initialize(const Universe::Catalog& source){
-    catalog=&source;systems.clear();systems.reserve(Universe::StarCount+12);
+    catalog=&source;systems.clear();systems.reserve(Universe::LegacyStarCount+12);
     const auto add=[&](int id,const std::string& name,const glm::dvec3& position){
         NavigationEntry e;e.system=id;e.key=Key(id);e.name=name;e.anchorAu=position;
         if(GalacticCores::IsCore(id)){
@@ -28,18 +28,26 @@ void NavigationCatalog::Initialize(const Universe::Catalog& source){
         else{
             StarSystem::Star star;if(id==-2){StarSystem solar;solar.LoadSolarSystem();star=solar.Host();}else star=StarSystem::DescribeStar(id,name);
             e.type=star.classification;e.temperature=star.temperature;e.luminosity=star.luminositySolar;e.diameterKm=2*star.radiusSolar*Astronomy::solarRadiusAu*Astronomy::metresPerAu/1000;e.color=star.temperature>7500?glm::vec3(.55,.72,1):star.temperature<4500?glm::vec3(1,.45,.18):glm::vec3(1,.85,.50);
-            const int galaxy=id>=10?Universe::GalaxyForStar(id-10):0;e.parentKey=id>=4 && id<=8?Key(0):"galaxy:"+std::to_string(galaxy);e.parent=id>=4 && id<=8?"Gargantua":galaxy==0?"Milky Way":"Galaxy "+std::to_string(galaxy);
+            const int galaxy=Universe::IsStar(id)?Universe::GalaxyForStar(Universe::StarIndex(id)):0;e.parentKey=id>=4 && id<=8?Key(0):"galaxy:"+std::to_string(galaxy);e.parent=id>=4 && id<=8?"Gargantua":galaxy==0?"Milky Way":"Galaxy "+std::to_string(galaxy);
         }
         systems.push_back(std::move(e));
     };
     add(-2,"Sun",glm::dvec3(0));add(0,"Gargantua",glm::dvec3(0));
     for(int id=4;id<=8;++id)add(id,"Orbiting star "+std::to_string(id-3),glm::dvec3(0));
-    for(int i=0;i<Universe::StarCount;++i)add(i+10,Universe::StarName(i),source.Positions()[i]);
+    for(int i=0;i<Universe::LegacyStarCount;++i)add(Universe::StarId(i),Universe::StarName(i),source.Positions()[i]);
     for(int i=0;i<GalacticCores::count;++i){const auto core=GalacticCores::Get(GalacticCores::firstId+i);add(core.id,core.name,core.position);}
     for(const auto& nebula:CelestialPhenomena::Nebulae()){NavigationEntry e;e.kind=Kind::Nebula;e.system=nebula.id;e.key="nebula:"+std::to_string(nebula.id);e.parentKey="galaxy:0";e.name=nebula.name;e.parent="Milky Way";e.type=nebula.classification;e.anchorAu=nebula.positionAu;e.diameterKm=nebula.radiusLy*2*Astronomy::auPerLightYear*Astronomy::metresPerAu/1000;e.color=nebula.color;systems.push_back(e);}
 }
 NavigationEntry NavigationCatalog::System(int id,double seconds) const{
-    if(id>=10 && id<10+Universe::StarCount)return systems.at(7+id-10);
+    const int index=Universe::StarIndex(id);
+    if(index>=Universe::LegacyStarCount){
+        NavigationEntry e;e.system=id;e.key=Key(id);e.name=Universe::StarName(index);e.anchorAu=catalog->Positions()[index];
+        const auto star=StarSystem::DescribeStar(id,e.name);e.type=star.classification;e.temperature=star.temperature;e.luminosity=star.luminositySolar;
+        e.diameterKm=2*star.radiusSolar*Astronomy::solarRadiusAu*Astronomy::metresPerAu/1000;
+        const int galaxy=Universe::GalaxyForStar(index);e.parentKey="galaxy:"+std::to_string(galaxy);e.parent=galaxy==0?"Milky Way":"Galaxy "+std::to_string(galaxy);
+        e.color=star.temperature>7500?glm::vec3(.55,.72,1):star.temperature<4500?glm::vec3(1,.45,.18):glm::vec3(1,.85,.50);return e;
+    }
+    if(index>=0)return systems.at(7+index);
     for(auto entry:systems)if(entry.system==id){if(id>=4 && id<=8)entry.anchorAu=InterstellarWorlds::Orientation()*OrbitalMechanics::PositionAtTimeDouble(InterstellarWorlds::CompanionOrbit(id-4),Astronomy::gargantuaGravityAu,seconds);return entry;}
     throw std::invalid_argument("Unknown navigation system");
 }
@@ -56,7 +64,7 @@ std::vector<NavigationEntry> NavigationCatalog::Bodies(int id,double seconds){
     // Only instantiate a queried system; inactive systems never integrate orbits.
     StarSystem model;Load(model,id,root.name);std::vector<NavigationEntry> out;out.reserve(model.Planets().size());
     for(int i=0;i<static_cast<int>(model.Planets().size());++i){
-        const auto& body=model.Planets()[i];NavigationEntry e;e.kind=Kind::Planet;e.system=id;e.body=i;e.key=Key(id)+"/"+std::to_string(i);e.parentKey=body.parent<0?Key(id):Key(id)+"/"+std::to_string(body.parent);e.name=body.name;e.parent=body.parent<0?root.name:model.Planets()[body.parent].name;e.type=body.classification;e.anchorAu=root.anchorAu;e.localAu=model.Position(i,seconds);e.diameterKm=body.radiusEarth*6371.0084*2;e.temperature=body.temperature;e.color=body.color;e.massEarth=body.massEarth;out.push_back(e);
+        const auto& body=model.Planets()[i];NavigationEntry e;e.kind=Kind::Planet;e.wormhole=body.wormhole;e.system=id;e.body=i;e.key=Key(id)+"/"+std::to_string(i);e.parentKey=body.parent<0?Key(id):Key(id)+"/"+std::to_string(body.parent);e.name=body.name;e.parent=body.parent<0?root.name:model.Planets()[body.parent].name;e.type=body.classification;e.anchorAu=root.anchorAu;e.localAu=model.Position(i,seconds);e.diameterKm=body.radiusEarth*6371.0084*2;e.temperature=body.temperature;e.color=body.color;e.massEarth=body.massEarth;out.push_back(e);
     }
     for(auto& body:out)body.satelliteCount=static_cast<int>(std::count_if(out.begin(),out.end(),[&](const auto& child){return child.parentKey==body.key;}));
     return out;
@@ -64,6 +72,15 @@ std::vector<NavigationEntry> NavigationCatalog::Bodies(int id,double seconds){
 std::vector<NavigationEntry> NavigationCatalog::Find(const std::string& query,double seconds){
     const auto q=Normalize(query);std::vector<NavigationEntry> result;
     const auto matches=[&](const NavigationEntry& entry){auto name=Normalize(entry.name);return q.empty() || name.find(q)!=std::string::npos || (entry.system==-2 && entry.kind==Kind::Star && q=="solarsystem") || (entry.kind==Kind::Core && q=="blackhole") || (entry.name=="Sagittarius A*" && (q=="sgra" || q=="sgra*"));};
+    const std::string prefix="proceduralstar";
+    if(q.rfind(prefix,0)==0){
+        const auto start=prefix.size();size_t end=start;while(end<q.size() && std::isdigit(static_cast<unsigned char>(q[end])))++end;
+        if(end>start){
+            try{const auto serial=std::stoll(q.substr(start,end-start));
+                if(serial>0 && serial<=Universe::StarCount-Universe::LegacyStarCount){const int id=Universe::StarId(Universe::LegacyStarCount+static_cast<int>(serial)-1);auto e=System(id,seconds);if(matches(e))result.push_back(e);for(auto body:Bodies(id,seconds))if(matches(body))result.push_back(std::move(body));}
+            }catch(const std::exception&){} // Invalid/overflowing names simply have no result.
+        }else if(q==prefix){for(int i=0;i<1000;++i)result.push_back(System(Universe::StarId(Universe::LegacyStarCount+i),seconds));}
+    }
     for(int i=0;i<4;++i){auto galaxy=Galaxy(i);if(matches(galaxy))result.push_back(galaxy);}
     for(auto system:systems){
         if(system.system>=4 && system.system<=8)system=System(system.system,seconds);
@@ -87,6 +104,7 @@ std::vector<NavigationEntry> NavigationCatalog::Nearby(const glm::dvec3& anchor,
     if(!std::isfinite(radiusLy) || radiusLy<=0 || radiusLy>1e12)throw std::invalid_argument("Enter a radius greater than zero, up to 1e12 light-years.");
     std::vector<NavigationEntry> result;const double radius=radiusLy*Astronomy::auPerLightYear;
     for(auto entry:systems){if(entry.kind==Kind::Nebula)continue;if(entry.system>=4 && entry.system<=8)entry=System(entry.system,seconds);entry.distanceAu=entry.Distance(anchor,local);if(entry.distanceAu<=radius)result.push_back(std::move(entry));}
+    for(int id:catalog->Closest(anchor+local,radius,1000))if(Universe::StarIndex(id)>=Universe::LegacyStarCount){auto e=System(id,seconds);e.distanceAu=e.Distance(anchor,local);result.push_back(std::move(e));}
     std::sort(result.begin(),result.end(),[](const auto& a,const auto& b){return a.distanceAu<b.distanceAu;});if(result.size()>1000)result.resize(1000);
     for(auto& entry:result){if(entry.kind==Kind::Star){StarSystem model;Load(model,entry.system,entry.name);entry.planetCount=static_cast<int>(model.Planets().size());}}
     return result;

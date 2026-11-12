@@ -1,5 +1,6 @@
 #include "Astronomy.h"
 #include "StarSystem.h"
+#include "WormholePhysics.h"
 #include <cmath>
 #include <glm/gtc/constants.hpp>
 #include <random>
@@ -222,6 +223,19 @@ void StarSystem::LoadSolarSystem()
     moon("Titan", 5, 2574.7, .0225, 1221870, .0288, 15.945, 4);
     moon("Triton", 7, 1353.4, .00358, 354759, .000016, 5.877, 5);
     planets.back().orbit.inclination = glm::radians(156.8);
+    Planet mouth{};
+    mouth.name="Saturn Kerr Wormhole";
+    mouth.classification="Theoretical Kerr-like wormhole (rotating Damour-Solodukhin)";
+    mouth.orbit=WormholePhysics::SaturnOrbit();
+    mouth.parent=WormholePhysics::SaturnIndex;
+    mouth.radiusEarth=WormholePhysics::ThroatRadiusKm/6371.0;
+    mouth.massEarth=0; // Prescribed test-object orbit; no planetary backreaction.
+    mouth.temperature=0; // A view through a throat, not an emitting surface.
+    mouth.daySeconds=Astronomy::secondsPerDay;
+    mouth.seaLevel=-1;
+    mouth.color={.32f,.72f,.9f};
+    mouth.wormhole=true;
+    planets.push_back(mouth);
     // Representative populations, deliberately not named or advertised as surveyed asteroids.
     std::mt19937_64 random(0x501a2);
     const auto rand = [&](double low, double high) {

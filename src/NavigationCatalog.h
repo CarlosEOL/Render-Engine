@@ -7,6 +7,7 @@
 struct NavigationEntry {
     enum class Kind {Universe,Galaxy,Star,Planet,Core,Craft,Asteroid,Barycentre,Group,Nebula};
     Kind kind=Kind::Star;
+    bool wormhole=false;
     int system=-2,body=-1,planetCount=-1,satelliteCount=0;
     std::string key,parentKey,name,parent,type;
     // Subtract anchors before adding local offsets: never flatten a landed

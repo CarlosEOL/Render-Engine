@@ -42,7 +42,7 @@ public:
     void ReleaseGraphics();
     double GetSimulationTime() const { return simulationTime; }
     int GetFrameLimit() const { return !isFocused || mainMenu.Visible() || idleFrame ? glm::min(frameLimit,30) : frameLimit; }
-    bool RunRenderChecks(const std::string& directory, bool uiOnly = false, bool galaxyOnly = false, bool lensingOnly = false);
+    bool RunRenderChecks(const std::string& directory, bool uiOnly = false, bool galaxyOnly = false, bool lensingOnly = false, bool wormholeOnly = false);
 
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
     static void MouseCallback(GLFWwindow* window, double xPos, double yPos);
@@ -85,6 +85,9 @@ private:
     void ShowStatusToast(const std::string& text,bool compact=true);
     void ShowZoomToast(bool force=false);
     void SetMagnitudeLimit(float value);
+    double CameraMagnification() const;
+    float EffectiveMagnitudeLimit() const;
+    void SyncCameraMagnitude();
     void RenderSpeedToast();
     void ApplyVisionProfile(int profile);
     void LookAtPlanet();
@@ -147,6 +150,7 @@ private:
     float lensAspect = static_cast<float>(WIDTH) / HEIGHT;
     float exposureEv = 0.0f;
     float limitingMagnitude=7;
+    float appliedMagnitudeLimit=-100;
     bool hdrMode = true;
     bool landed = false;
     bool observerGravity = false;

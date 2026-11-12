@@ -21,6 +21,10 @@ int Icon(HIMAGELIST images,const NavigationEntry& entry){
     const auto tint=entry.color;const bool stellar=entry.kind==NavigationEntry::Kind::Star,core=entry.kind==NavigationEntry::Kind::Core;
     if(entry.kind==NavigationEntry::Kind::Barycentre || entry.kind==NavigationEntry::Kind::Galaxy || entry.kind==NavigationEntry::Kind::Universe || entry.kind==NavigationEntry::Kind::Group){
         auto pen=CreatePen(PS_SOLID,2,UiTheme::Accent);auto oldPen=SelectObject(dc,pen),oldBrush=SelectObject(dc,GetStockObject(NULL_BRUSH));Ellipse(dc,9,29,87,67);Ellipse(dc,31,10,65,85);SelectObject(dc,oldBrush);SelectObject(dc,oldPen);DeleteObject(pen);
+    }else if(entry.wormhole){
+        auto pen=CreatePen(PS_SOLID,2,RGB(102,206,230));auto oldPen=SelectObject(dc,pen),oldBrush=SelectObject(dc,GetStockObject(NULL_BRUSH));
+        Ellipse(dc,14,14,82,82);Ellipse(dc,19,28,77,68);Ellipse(dc,29,19,67,77);
+        SelectObject(dc,oldBrush);SelectObject(dc,oldPen);DeleteObject(pen);
     }else{
         if(entry.name=="Saturn"){auto ring=CreatePen(PS_SOLID,9,RGB(165,147,113));auto oldPen=SelectObject(dc,ring),oldBrush=SelectObject(dc,GetStockObject(NULL_BRUSH));Ellipse(dc,2,36,94,69);SelectObject(dc,oldBrush);SelectObject(dc,oldPen);DeleteObject(ring);}
         for(int i=0;i<30;++i){const double shade=stellar?.75+i*.008:core?.05:.12+i*.025;const int r=static_cast<int>(std::clamp(tint.r*shade*255,0.0,255.0)),g=static_cast<int>(std::clamp(tint.g*shade*255,0.0,255.0)),b=static_cast<int>(std::clamp(tint.b*shade*255,0.0,255.0));auto brush=CreateSolidBrush(RGB(r,g,b));auto previous=SelectObject(dc,brush),pen=SelectObject(dc,GetStockObject(NULL_PEN));Ellipse(dc,14+i/3,14+i/3,83-i,83-i);SelectObject(dc,previous);SelectObject(dc,pen);DeleteObject(brush);}
@@ -44,6 +48,7 @@ struct NavigationPanelWin32 {
         RECT title{card.left+8,top+100,card.right-8,top+100+UiTheme::Px(list,35)};
         std::wstring name(entry.name.begin(),entry.name.end());UiTheme::TextAt(draw->nmcd.hdc,list,name,title,12,selected?UiTheme::Accent:UiTheme::Text,FW_SEMIBOLD,DT_CENTER|DT_WORDBREAK);
         std::wostringstream detail;
+        if(entry.wormhole)detail<<L"Theoretical throat\n";
         if(entry.diameterKm>0)detail<<std::fixed<<std::setprecision(entry.diameterKm<1000?1:0)<<entry.diameterKm<<L" km";
         if(entry.temperature>0)detail<<L"\n"<<std::fixed<<std::setprecision(0)<<entry.temperature-273.15<<L" C";
         if(entry.satelliteCount>0)detail<<L"\n"<<entry.satelliteCount<<L" satellites";

@@ -141,6 +141,8 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\External_Lib\include;$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp20</LanguageStandard>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
       <Optimization>MaxSpeed</Optimization>
@@ -156,6 +158,8 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(ProjectDir)..\External_Lib\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>$(CoreLibraryDependencies);glfw3.lib;opengl32.lib;assimp-vc143-mtd.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -172,6 +176,8 @@
     <ClCompile Include="src\KerrSpacetime.cpp" />
     <ClCompile Include="src\Atmosphere.cpp" />
     <ClCompile Include="src\SaturnRings.cpp" />
+    <ClCompile Include="src\WormholePhysics.cpp" />
+    <ClCompile Include="src\KerrWormhole.cpp" />
     <ClCompile Include="src\VehicleInterior.cpp" />
     <ClCompile Include="src\CameraOptics.cpp" />
     <ClCompile Include="src\ExposureMeter.cpp" />
@@ -210,8 +216,11 @@
     <ClInclude Include="src\KerrSpacetime.h" />
     <ClInclude Include="src\Atmosphere.h" />
     <ClInclude Include="src\SaturnRings.h" />
+    <ClInclude Include="src\WormholePhysics.h" />
+    <ClInclude Include="src\KerrWormhole.h" />
     <ClInclude Include="src\VehicleInterior.h" />
     <ClInclude Include="src\CameraOptics.h" />
+    <ClInclude Include="src\CameraZoom.h" />
     <ClInclude Include="src\ExposureMeter.h" />
     <ClInclude Include="src\LensCalibration.h" />
     <ClInclude Include="src\GalaxyBackground.h" />

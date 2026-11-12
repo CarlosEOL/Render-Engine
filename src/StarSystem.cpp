@@ -15,6 +15,7 @@
 #include <sstream>
 #include <stdexcept>
 #include "GalacticCore.h"
+#include "WormholePhysics.h"
 
 unsigned int compileShaderProgram(const char *, const char *);
 
@@ -41,6 +42,13 @@ void AlignUp(glm::vec3 &front, glm::vec3 &up, const glm::vec3 &nextUp)
 
 StarSystem::Star StarSystem::DescribeStar(int id, const std::string &name)
 {
+    if(Universe::StarIndex(id)>=Universe::LegacyStarCount){
+        const auto p=Universe::Properties(Universe::StarIndex(id));Star result;
+        result.id=id;result.name=name;result.systemSeed=Universe::SystemSeed(id);
+        result.massSolar=p.massSolar;result.radiusSolar=p.radiusSolar;result.temperature=p.temperature;
+        result.luminositySolar=p.luminositySolar;result.ageGyr=p.ageGyr;
+        result.classification=std::string(1,p.spectral)+" V procedural main-sequence star";return result;
+    }
     if(id>=4 && id<=8) {
         const double temperatures[]={5200,10000,3500,6200,8500};
         const double radii[]={1,2,.65,1.2,1.8};
@@ -58,7 +66,7 @@ StarSystem::Star StarSystem::DescribeStar(int id, const std::string &name)
     result.id = id;
     result.name = name;
     result.systemSeed=Universe::SystemSeed(id);
-    const auto population=id>=10 && id<10+Universe::StarCount?Universe::StarPopulation(id-10):Universe::Population::LocalDisk;
+    const auto population=Universe::IsStar(id)?Universe::StarPopulation(Universe::StarIndex(id)):Universe::Population::LocalDisk;
     const bool oldPopulation=population==Universe::Population::Bulge || population==Universe::Population::Halo;
     double choice = Random(random, 0, 1);
     if(oldPopulation)choice*=.90;
@@ -274,6 +282,7 @@ glm::mat4 StarSystem::Rotation(int planet, double seconds) const
 }
 
 glm::dmat3 StarSystem::RotationDouble(int planet,double seconds) const {
+    if(planet>=0 && planets[planet].wormhole)return glm::dmat3(1); // Stationary axisymmetric throat, no material surface spin.
     const double period=planet<0?25.38*Astronomy::secondsPerDay:planets[planet].daySeconds;
     const double tilt=planet<0?0:planets[planet].tilt;
     auto rotation=glm::rotate(glm::dmat4(1),tilt,glm::dvec3(1,0,0));
@@ -286,7 +295,7 @@ double StarSystem::SurfaceRadius(int planet, const glm::dvec3 &direction, double
     const auto local =
         glm::normalize(glm::vec3(glm::transpose(Rotation(planet, seconds)) * glm::vec4(glm::vec3(direction), 0)));
     const double radius = body.radiusEarth * Astronomy::earthRadiusAu;
-    if (body.gas)
+    if (body.gas || body.wormhole)
         return radius;
     return radius * (1.0+PlanetTerrain::SurfaceElevation(
                         local, body.seed, static_cast<float>(std::remainder(seconds, glm::two_pi<double>())),
@@ -368,8 +377,8 @@ void StarSystem::Move(GLFWwindow *window, float realSeconds, glm::vec3 &front, g
             if (glm::length(delta) < radius * 1.01)
             {
                 const auto radial = glm::length(delta) > 0 ? glm::normalize(delta) : glm::dvec3(0, 0, 1);
-                camera = Position(planet, lastTime) +
-                         radial * (SurfaceRadius(planet, radial, lastTime) + Astronomy::observerClearanceAu);
+                camera = Position(planet, lastTime) + radial * (planets[planet].wormhole
+                    ? radius*1.01 : SurfaceRadius(planet, radial, lastTime) + Astronomy::observerClearanceAu);
             }
         }
     }
@@ -385,7 +394,8 @@ void StarSystem::GoToSelected(double seconds, glm::vec3 &front, glm::vec3 &up)
     auto offset = camera - target;
     if (glm::length(offset) < radius)
         offset = glm::dvec3(0, 0, 1);
-    camera = target + glm::normalize(offset) * radius * 5.0;
+    const double framing=selected>=0 && planets[selected].wormhole?12.0:5.0;
+    camera = target + glm::normalize(offset) * radius * framing;
     front = glm::normalize(glm::vec3(target - camera));
     up = glm::vec3(0, 1, 0);
     speedAu = radius * 0.5;
@@ -414,7 +424,7 @@ void StarSystem::ToggleLanding(double seconds, glm::vec3 &front, glm::vec3 &up)
         camera += glm::dvec3(up) * 1000.0 / Astronomy::metresPerAu;
         return;
     }
-    if (selected < 0 || planets[selected].gas)
+    if (selected < 0 || planets[selected].gas || planets[selected].wormhole)
         return;
     landedPlanet = selected;
     landed = true;
@@ -490,7 +500,7 @@ double StarSystem::ObserverClockRate(double seconds) const {
             const auto v=glm::dvec3(OrbitalMechanics::VelocityAtTime(planets[body].orbit,GravityFor(body),seconds));
             velocity+=glm::dvec3(v.x,v.z,-v.y);
         }
-        if(landed || followingRotation){
+        if((landed || followingRotation) && !planets[carried].wormhole){
             const auto axis=RotationDouble(carried,seconds)*glm::dvec3(0,1,0);
             velocity+=glm::cross(axis,camera-Position(carried,seconds))*(glm::two_pi<double>()/planets[carried].daySeconds);
         }
@@ -512,6 +522,16 @@ std::string StarSystem::Information(double seconds) const
     if (selected >= 0)
     {
         const auto &body = planets[selected];
+        if(body.wormhole){
+            text<<"\n"<<body.name<<"\n"<<body.classification
+                <<"\nParent  Saturn\nThroat radius  "<<WormholePhysics::ThroatRadiusKm<<" km"
+                <<"\nSpin a/M  "<<WormholePhysics::Spin<<"\nDeformation  "<<WormholePhysics::Deformation
+                <<"\nSaturn orbit  "<<WormholePhysics::OrbitRadiusKm<<" km"
+                <<"\nPeriod  "<<glm::two_pi<double>()/OrbitalMechanics::MeanMotion(GravityFor(selected),body.orbit.semiMajorAxis)/86400<<" days"
+                <<"\n\nFictional orbit; theoretical geometry\nOther exterior visible through throat\nNo solid surface or event horizon\nOptical view only; no camera transit\n";
+            text<<(following?"\nFollowing orbit":"\nFree camera");
+            return text.str();
+        }
         text << "\n"
              << body.name << "\n"
              << body.classification << "\n"
@@ -669,7 +689,7 @@ void main() {
     upload(patchVao, patchBuffer, {{0, 0, 0}});
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
-    if (!atmosphere.Initialize() || !stellarActivity.Initialize() || !saturnRings.Initialize()) {
+    if (!atmosphere.Initialize() || !stellarActivity.Initialize() || !saturnRings.Initialize() || !wormhole.Initialize()) {
         Release();
         return false;
     }
@@ -688,7 +708,7 @@ void StarSystem::UpdatePatch(const glm::dvec3 &direction,double radiusMetres)
 }
 
 void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front, const glm::vec3 &up, double seconds,
-                        bool trajectories, bool photonView, bool showSelection)
+                        bool trajectories, bool photonView, bool showSelection, unsigned int wormholeSky)
 {
     if (!program || planets.empty())
         return;
@@ -735,6 +755,7 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
     for (int planet = 0; planet < static_cast<int>(planets.size()); ++planet)
     {
         const auto &body = planets[planet];
+        if(body.wormhole)continue; // The throat is rendered by null-ray transport, never terrain.
         const auto center = Position(planet, seconds);
         const double radius = body.radiusEarth * Astronomy::earthRadiusAu;
         if(radius/glm::max(radius,glm::length(center-camera))*pixelsPerRadian<.75)continue;
@@ -787,7 +808,7 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
     };
     std::vector<glm::vec3> markers;
     for (int planet = -1; planet < static_cast<int>(planets.size()); ++planet)
-        markers.push_back(glm::vec3(Position(planet, seconds) - camera));
+        if(planet<0 || !planets[planet].wormhole)markers.push_back(glm::vec3(Position(planet, seconds) - camera));
     drawLines(markers, GL_POINTS, glm::vec3(.15f, .45f, .65f), 3);
     if (trajectories)
     {
@@ -859,6 +880,9 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
                           static_cast<float>(planets[planet].radiusEarth * Astronomy::earthRadiusAu), true,
                           glm::vec3(-camera),earthCloudsEnabled && solarSystem && planet==2,seconds,glm::mat3(Rotation(planet,seconds)));
     }
+    for(int body=0;body<static_cast<int>(planets.size());++body)
+        if(planets[body].wormhole)wormhole.Render(vp,Position(body,seconds)-camera,
+            planets[body].radiusEarth*Astronomy::earthRadiusAu,wormholeSky);
     const auto clip = vp * glm::vec4(glm::vec3(Position(selected, seconds) - camera), 1);
     if (showSelection && clip.w > 0)
     {
@@ -885,6 +909,7 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
 
 void StarSystem::Release()
 {
+    wormhole.Release();
     saturnRings.Release();
     stellarActivity.Release();
     atmosphere.Release();

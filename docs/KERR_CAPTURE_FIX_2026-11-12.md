@@ -1,5 +1,7 @@
 # Kerr shadow and false-image fix — November 12, 2026
 
+Later cleanup removed this entry's superseded build/capture folders. Current launchers and validation are listed in [the zoom/catalogue update](ZOOM_AND_MILLION_SYSTEMS_2026-11-12.md); small earlier logs are archived under `build/history-logs`. The results below describe the original repair run.
+
 The repeated miniature images inside Gargantua were a rendering defect already present in earlier saved captures. The brighter Milky Way made it easier to see. Earlier render checks verified finite output, source changes and capture creation, but did not verify the shadow's capture/escape geometry; those checks were insufficient to catch this defect.
 
 ## Changes and reasons

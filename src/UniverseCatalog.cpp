@@ -8,6 +8,8 @@
 #include <stdexcept>
 #include <algorithm>
 #include <numeric>
+#include <queue>
+#include <functional>
 
 namespace {
 std::uint64_t Mix(std::uint64_t x) {
@@ -19,6 +21,7 @@ std::uint64_t Mix(std::uint64_t x) {
 double Unit(std::mt19937_64 &rng) {
   return static_cast<double>(rng() >> 11) * 0x1.0p-53;
 }
+double FastUnit(std::uint64_t& state){state=Mix(state);return static_cast<double>(state>>11)*0x1.0p-53;}
 } // namespace
 
 bool Universe::Galaxy::Contains(const glm::dvec3 &position) const {
@@ -59,9 +62,11 @@ std::uint64_t Universe::SystemSeed(int id, std::uint64_t seed) {
 }
 int Universe::GalaxyForStar(int index){
   if(index<0 || index>=StarCount)throw std::invalid_argument("Unknown star catalogue entry");
+  if(index>=LegacyStarCount)return index<LegacyStarCount+262144?0:index%8<5?0:1+(index%8-5);
   return index<1600 || index>=7000?0:1+(index-1600)/1800;
 }
 std::string Universe::StarName(int index){
+  if(index>=LegacyStarCount)return "Procedural star "+std::to_string(index-LegacyStarCount+1);
   if(index<1024)return "Local star "+std::to_string(index+1);
   if(GalaxyForStar(index)==0)return "Milky Way star "+std::to_string(index+1);
   return "Galaxy "+std::to_string(GalaxyForStar(index))+" star "+std::to_string((index-1600)%1800+1);
@@ -80,6 +85,33 @@ glm::dvec3 Universe::StarPosition(int index, std::uint64_t seed) {
   if (index < 0 || index >= StarCount)
     throw std::invalid_argument("Unknown star catalogue entry");
   const int galaxy = GalaxyForStar(index);
+  if(index>=LegacyStarCount){
+    static const std::array<Galaxy,4> defaultGalaxies={GalaxyAt(0),GalaxyAt(1),GalaxyAt(2),GalaxyAt(3)};
+    const auto group=seed==WorldSeed?defaultGalaxies[galaxy]:GalaxyAt(galaxy,seed);
+    auto state=SystemSeed(StarId(index),seed)^group.key;
+    const auto u=[&](){return FastUnit(state);};
+    const double angle=u()*glm::two_pi<double>();
+    if(index<LegacyStarCount+262144){
+      // Fixed solar-neighbourhood population; never attached to the camera.
+      const double radius=std::cbrt(u())*2500*Astronomy::auPerLightYear,y=u()*2-1;
+      return {radius*std::sqrt(1-y*y)*std::cos(angle),radius*y,radius*std::sqrt(1-y*y)*std::sin(angle)};
+    }
+    const auto population=StarPopulation(index);
+    if(galaxy==0){
+      double radius;do{radius=-MilkyWayModel::diskScaleKpc*std::log(std::max(1e-12,u()*u()));}while(radius>16);
+      double azimuth=angle,height=(u()*2-1)*(population==Population::SpiralArm?.12:.6);
+      if(population==Population::SpiralArm)azimuth=(index%4)*glm::half_pi<double>()+std::log(std::max(.1,radius))/.22+(u()-.5)*.25;
+      if(population==Population::Bulge){radius=std::pow(u(),.65)*4;height=(u()*2-1)*1.1;}
+      if(population==Population::Halo){radius=std::cbrt(u())*43;const double y=u()*2-1;return MilkyWayModel::ToWorldAu({radius*std::sqrt(1-y*y)*std::cos(angle),radius*y,radius*std::sqrt(1-y*y)*std::sin(angle)});}
+      glm::dvec3 p(radius*std::cos(azimuth),height,radius*std::sin(azimuth));p.y+=MilkyWayModel::WarpKpc(p);
+      return MilkyWayModel::ToWorldAu(p);
+    }
+    double radius;do{radius=-.16*std::log(std::max(1e-12,u()*u()));}while(radius>.9);
+    const double height=(u()*2-1)*(galaxy==3?.28:.025);
+    const double azimuth=galaxy==3?angle:(index%(galaxy==2?2:4))*glm::two_pi<double>()/(galaxy==2?2:4)+std::log(std::max(.02,radius))/.3;
+    const glm::dvec3 q(radius*std::cos(azimuth),height,radius*std::sin(azimuth));
+    return group.centerAu+group.rotation*(q*group.axesAu);
+  }
   const auto group = GalaxyAt(galaxy, seed);
   std::mt19937_64 rng(SystemSeed(index + 10, seed) ^ group.key);
   const double ly = Astronomy::auPerLightYear;
@@ -146,26 +178,16 @@ glm::dvec3 Universe::StarPosition(int index, std::uint64_t seed) {
   return group.centerAu + group.rotation * (q * group.axesAu);
 }
 
-size_t Universe::Catalog::Hash::operator()(const Cell &cell) const {
-  return static_cast<size_t>(Mix(cell[0]) ^ Mix(cell[1] + 0x1234) ^
-                             Mix(cell[2] + 0x5678));
-}
-Universe::Catalog::Cell Universe::Catalog::CellAt(const glm::dvec3 &p) {
-  return {static_cast<std::int64_t>(std::floor(p.x / 8)),
-          static_cast<std::int64_t>(std::floor(p.y / 8)),
-          static_cast<std::int64_t>(std::floor(p.z / 8))};
-}
 void Universe::Catalog::Generate(std::uint64_t seed) {
   positions.clear();
   positions.reserve(StarCount);
-  cells.clear();
   for (int index = 0; index < StarCount; ++index) {
     const auto p = StarPosition(index, seed);
     positions.push_back(p);
-    cells[CellAt(p)].push_back(index + 10);
   }
   std::vector<int> indices(StarCount);std::iota(indices.begin(),indices.end(),0);
   tree.clear();tree.reserve(StarCount);BuildTree(indices,0,StarCount,0);
+  drawOrder=std::move(indices);
 }
 int Universe::Catalog::BuildTree(std::vector<int>& indices,int begin,int end,int depth){
   if(begin>=end)return -1;
@@ -179,7 +201,7 @@ void Universe::Catalog::SearchTree(int node,const glm::dvec3& camera,int& neares
   if(node<0)return;
   const auto& entry=tree[node];const auto delta=camera-positions[entry.star];
   const double distance=glm::dot(delta,delta);
-  if(distance<squared){squared=distance;nearest=entry.star+10;}
+  if(distance<squared){squared=distance;nearest=StarId(entry.star);}
   const double axis=delta[entry.axis];
   SearchTree(axis<0?entry.left:entry.right,camera,nearest,squared);
   if(axis*axis<squared)SearchTree(axis<0?entry.right:entry.left,camera,nearest,squared);
@@ -191,19 +213,34 @@ int Universe::Catalog::Nearest(const glm::dvec3& camera) const{
 }
 std::vector<int> Universe::Catalog::Nearby(const glm::dvec3 &camera,
                                            double radius) const {
-  std::vector<int> result;
-  if (radius <= 0 || radius > 8)
-    return result;
-  const auto cell = CellAt(camera);
-  for (int z = -1; z <= 1; ++z)
-    for (int y = -1; y <= 1; ++y)
-      for (int x = -1; x <= 1; ++x) {
-        const auto found = cells.find({cell[0] + x, cell[1] + y, cell[2] + z});
-        if (found == cells.end())
-          continue;
-        for (int id : found->second)
-          if (glm::length(positions[id - 10] - camera) < radius)
-            result.push_back(id);
-      }
-  return result;
+  return radius>0 && radius<=8?Closest(camera,radius,64):std::vector<int>{};
+}
+std::vector<int> Universe::Catalog::Closest(const glm::dvec3& camera,double radius,size_t limit) const{
+  if(radius<=0 || limit==0)return {};
+  std::priority_queue<std::pair<double,int>> heap;const double radius2=radius*radius;
+  const auto search=[&](const auto& self,int node)->void{
+    if(node<0)return;const auto& entry=tree[node];const auto delta=camera-positions[entry.star];
+    const double distance=glm::dot(delta,delta),axis=delta[entry.axis];
+    if(distance<=radius2){heap.emplace(distance,entry.star);if(heap.size()>limit)heap.pop();}
+    self(self,axis<0?entry.left:entry.right);
+    const double bound=heap.size()==limit?std::min(radius2,heap.top().first):radius2;
+    if(axis*axis<=bound)self(self,axis<0?entry.right:entry.left);
+  };
+  if(!tree.empty())search(search,0);
+  std::vector<int> result(heap.size());for(size_t i=result.size();i>0;--i){result[i-1]=StarId(heap.top().second);heap.pop();}return result;
+}
+
+Universe::ProceduralProperties Universe::Properties(int index){
+  auto state=SystemSeed(StarId(index));const auto u=[&](){return FastUnit(state);};
+  const double choice=u();char spectral;double mass,temperature;
+  if(choice<.55){spectral='M';mass=.1+.45*u();temperature=2700+1200*u();}
+  else if(choice<.78){spectral='K';mass=.55+.3*u();temperature=3900+1300*u();}
+  else if(choice<.90){spectral='G';mass=.85+.25*u();temperature=5200+800*u();}
+  else if(choice<.96){spectral='F';mass=1.1+.4*u();temperature=6000+1500*u();}
+  else if(choice<.985){spectral='A';mass=1.5+u();temperature=7500+2500*u();}
+  else if(choice<.998){spectral='B';mass=2.5+9.5*u();temperature=10000+20000*u();}
+  else {spectral='O';mass=15+20*u();temperature=30000+15000*u();}
+  const double radius=std::pow(mass,.8),ratio=temperature/5772,luminosity=radius*radius*ratio*ratio*ratio*ratio;
+  const double lifetime=std::min(13.7,10*mass/luminosity);
+  return {mass,radius,temperature,luminosity,(.02+.88*u())*lifetime,spectral};
 }
