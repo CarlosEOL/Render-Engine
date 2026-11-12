@@ -2099,6 +2099,10 @@ void WindowManager::MakeNewWindow() {
                 return 0;
             }
             if (message==WM_SIZE && manager) manager->ResizeInterface();
+            if(message==WM_MEASUREITEM){
+                auto* item=reinterpret_cast<MEASUREITEMSTRUCT*>(lParam);
+                if(item && item->CtlType==ODT_LISTBOX){item->itemHeight=UiTheme::Px(handle,item->CtlID==3020?35:33);return TRUE;}
+            }
             if(message==WM_DRAWITEM && UiTheme::DrawList(reinterpret_cast<DRAWITEMSTRUCT*>(lParam)))return TRUE;
             if ((message==WM_CTLCOLORSTATIC || message==WM_CTLCOLOREDIT || message==WM_CTLCOLORLISTBOX) && manager) {
                 const int id=GetDlgCtrlID(reinterpret_cast<HWND>(lParam));

@@ -19,11 +19,13 @@
     <ClCompile>
       <AdditionalIncludeDirectories>$(ProjectDir)..\External_Lib\include;$(ProjectDir)src</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>RENDER_ENGINE_DX12;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <DebugInformationFormat>OldStyle</DebugInformationFormat>
+      <DebugInformationFormat Condition="'$(Configuration)'=='Debug'">OldStyle</DebugInformationFormat>
+      <DebugInformationFormat Condition="'$(Configuration)'=='Release'">ProgramDatabase</DebugInformationFormat>
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
       <OutputFile>$(OutDir)$(TargetName).exe</OutputFile>
+      <LinkTimeCodeGeneration Condition="'$(Configuration)'=='Release'">UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
       <AdditionalLibraryDirectories>$(ProjectDir)..\External_Lib\lib;$(ProjectDir)..\External_Lib\build\ShaderTranslator\Release</AdditionalLibraryDirectories>
       <AdditionalDependencies>$(CoreLibraryDependencies);d3d12.lib;dxgi.lib;d3dcompiler.lib;dxguid.lib;ShaderTranslator.lib;glfw3.lib;assimp-vc143-mtd.lib;comctl32.lib</AdditionalDependencies>
     </Link>

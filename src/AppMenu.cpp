@@ -82,6 +82,10 @@ void AppMenu::Show(Page next)
     GetClientRect(window, &rect);
     Resize(rect.right, rect.bottom);
     SetFocus(GetDlgItem(window, page == Page::Home ? 3010 : page == Page::Planetorium ? 3012 : 3020));
+    if(page==Page::Quantum){
+        SendDlgItemMessageW(window,3020,LB_SETITEMHEIGHT,0,UiTheme::Px(window,35));
+        SendDlgItemMessageW(window,3020,LB_SETTOPINDEX,std::max(0,SelectedQuantum()),0);
+    }
     RedrawWindow(window,nullptr,nullptr,RDW_INVALIDATE|RDW_ALLCHILDREN|RDW_ERASE|RDW_UPDATENOW);
 }
 
