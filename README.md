@@ -1,6 +1,14 @@
 # Render-Engine
 3D Render Engine with GLFW, GLAD, GLEW & glm
 
+## DX12 migration preview
+
+The `build/dx12` branch now also contains a **native DX12 preview**. Run `Build-DX12.cmd Debug`, then `build\dx12\Debug\bin\Render-Engine-DX12.exe`. It renders a GPU Kerr black hole with HDR/Pure Auto exposure, free flight and the F5 spin editor. F7 cycles exposure modes; right-drag looks around; WASD/RF moves and QE rolls. Space resumes the disk; `<`/`>` changes its time rate.
+
+The complete Planetorium/Quantum scenes, planets, Endurance/interiors, galaxy assets and lens flares remain in the OpenGL application. DLSS is not integrated. The fixed OpenGL renderer is preserved on `build/opengl`. See [the migration record](docs/DX12_MIGRATION.md) for every native change, its reason, build/check commands and remaining ports.
+
+![Native DX12 Kerr preview, captured on the GPU](assets/screenshots/dx12-native-kerr.png)
+
 ## Startup laboratories
 
 The app opens at a main menu. Choose **Planetorium** for either **Solar System - 1:1 scale** or the **Gargantua system**. Choose **Quantum Simulation** for 38 selectable examples: infinite-well states and superpositions, harmonic-oscillator states, coherent and squeezed states, free packets, 3D hydrogen orbitals, spin states, Bell states, and numerical tunneling/scattering experiments.

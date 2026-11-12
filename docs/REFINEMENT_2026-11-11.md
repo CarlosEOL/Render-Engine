@@ -1,5 +1,9 @@
 # Refinement changes and reasons — November 11, 2026
 
+## Native DX12 follow-up
+
+The `build/dx12` branch now includes a separately buildable native DX12 preview. [DX12_MIGRATION.md](DX12_MIGRATION.md) records every added file, every change/reason, controls, GPU validation and remaining ports. The OpenGL fixes below are preserved in checkpoint `e1fa2a0` on `build/opengl`. Full migration and DLSS remain unfinished. The fresh full CPU-suite rerun failed with Windows “Access is denied” before producing an executable; the new native CPU/GPU Kerr probe comparisons pass independently.
+
 ## Follow-up: object editor and black-hole visibility
 
 | Files | Change and reason |
@@ -15,7 +19,7 @@
 | `src/RenderChecks.cpp` — ship/range checks | Compares close-up ship pixels with spin 0 and 0.8, requires at least 100 stable neutral ship pixels, checks the HDR scene for nonfinite components, and captures Gargantua from 650 AU. This separates ship shading/foreground masking from the legitimately changing lensed sky. |
 | `README.md`, this log | Explain the controls, supported spin range and the artistic display adjustment separately from physical simulation. |
 
-This is the file-by-file record for the latest refinement batch. Earlier implementations and their replacements remain in [SIMULATION_CHANGES.md](SIMULATION_CHANGES.md). The current renderer is OpenGL; [DX12_MIGRATION.md](DX12_MIGRATION.md) records the separate migration status.
+This section records the OpenGL refinement batch. Earlier implementations and their replacements remain in [SIMULATION_CHANGES.md](SIMULATION_CHANGES.md). [DX12_MIGRATION.md](DX12_MIGRATION.md) records the separate native preview and remaining ports.
 
 Follow-up verification: Debug x64 build passed; **81 GPU captures passed with zero OpenGL errors**. The close Endurance view contains no nonfinite HDR components; 14,679 ship pixels match across spin changes. Both assisted HDR and assisted Pure Auto produce greater disk-region brightness than their unassisted controls. Native editor validation and paused-scene updates pass.
 
@@ -96,8 +100,8 @@ The Schwarzschild circular-orbit clock is checked against the [analytic solution
 | `src/RenderChecks.cpp` | Adds cool-star state isolation, identical galaxy revisits, zero inactive orbital work, new surfaces/rings/scattering, spin differences, separate optical eligibility/brightness, staging/interiors, upright cabin controls, selection-only behavior and timed zoom overlays. Pixel readback occurs only in this opt-in harness. |
 | `.gitignore`, deleted generated products | Removed old build experiments and legacy `Render-Engine/x64` products (initial cleanup: 543 files / 1,271,102,063 bytes). Ignore generated build/output directories to keep them out of future changes. Preserve current binaries/checks under `build/current`. |
 | `README.md`, `assets/screenshots/`, `assets/README.md` | Document current controls/limits and embed actual engine captures from Earth, Miller, Mann, Edmunds and Saturn, with provenance. |
-| `docs/DX12_MIGRATION.md` | Record completed preparation, audited API dependencies, intended port order and validation criteria. The document explicitly states that no DX12 backend or DLSS build has shipped. |
-| Git branches | Keep the OpenGL checkpoint on `build/opengl`; start `build/dx12` from that checkpoint so future DX12 work has a separate history. No remote push is performed. |
+| `docs/DX12_MIGRATION.md` | Initially recorded preparation and API dependencies; now also records the implemented native preview, validation and full-parity work remaining. DLSS is still absent. |
+| Git branches | Preserve the full application on `build/opengl`; add the native preview on `build/dx12` for a separate history. No remote push is performed. |
 
 Validation commands:
 
