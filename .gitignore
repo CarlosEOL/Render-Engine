@@ -31,7 +31,6 @@
 *.out
 *.app
 
-# Local validation outputs (existing tracked artifacts remain tracked).
-/build/menu-preview/
-/build/physical/
-/build/checks/
+# Generated build and validation outputs.
+/build/
+/Render-Engine/x64/

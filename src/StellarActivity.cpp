@@ -9,6 +9,7 @@ unsigned int compileShaderProgram(const char *, const char *);
 std::string StellarActivity::ShaderFunctions() {
   return R"(
 uniform bool stellarEnabled;
+uniform bool stellarWarmColor;
 uniform float stellarTime;
 uniform float stellarSeed;
 uniform float stellarPulse;
@@ -39,13 +40,21 @@ float stellarNoise(vec3 p) {
                mix(mix(stellarCellHash(cell+vec3(0,0,1)),stellarCellHash(cell+vec3(1,0,1)),f.x),
                    mix(stellarCellHash(cell+vec3(0,1,1)),stellarCellHash(cell+vec3(1,1,1)),f.x),f.y),f.z);
 }
-vec3 stellarSurface(vec3 radial, vec3 tint, float mu) {
+vec3 stellarSurface(vec3 radial, vec3 tint, float mu, float temperature) {
+    // Optional artistic display grade; the physical temperature stays unchanged.
+    float warmth=smoothstep(3800.0,5000.0,temperature)*(1.0-smoothstep(6500.0,8500.0,temperature));
+    if(stellarWarmColor){
+        // Artistic display calibration: cool stellar photospheres remain visibly
+        // emissive instead of resembling dim, lit planetary rock at default EV.
+        tint*=max(1.0,2.0/max(max(tint.r,tint.g),max(tint.b,.0001)));
+        tint=mix(tint,max(tint.r,max(tint.g,tint.b))*vec3(1.0,.40,.055),warmth*.90);
+    }
     if(!stellarEnabled) return tint;
     float phase=stellarTime*6.2831853/3600.0;
     vec3 drift=vec3(sin(phase),cos(phase),sin(phase*2.0));
     float grain=stellarNoise(radial*140.0+drift*2.0);
     float cells=stellarNoise(radial*35.0+drift*.5);
-    vec3 result=tint*(.40+.48*grain+.12*cells)*(.3+.7*sqrt(max(mu,0.0)));
+    vec3 result=tint*(.78+.18*grain+.04*cells)*(.3+.7*sqrt(max(mu,0.0)));
     for(int i=0;i<6;++i) {
         float d=1.0-dot(radial,stellarAnchor(float(i)));
         float event=stellarEnvelope(float(i));
@@ -155,6 +164,7 @@ void main() {
 void StellarActivity::BindTime(unsigned int target, int seed,
                                double seconds) const {
   glUniform1i(glGetUniformLocation(target, "stellarEnabled"), enabled);
+  glUniform1i(glGetUniformLocation(target, "stellarWarmColor"), warmColor);
   glUniform1f(glGetUniformLocation(target, "stellarSeed"),
               static_cast<float>(seed % 10000));
   glUniform1f(glGetUniformLocation(target, "stellarTime"),
@@ -206,7 +216,9 @@ void StellarActivity::Render(const glm::mat4 &vp, const glm::mat4 &model,
                      glm::value_ptr(model));
   glUniform1f(glGetUniformLocation(program, "temperature"), temperature);
   glEnable(GL_BLEND);
-  glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+  // Alpha is optical-source eligibility in the HDR scene. Plasma adds visible
+  // radiance but clears eligibility so bright strands cannot spawn lens flares.
+  glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE, GL_ZERO, GL_ZERO);
   glDepthMask(GL_FALSE);
   glDisable(GL_CULL_FACE);
   glBindVertexArray(vao);

@@ -29,7 +29,7 @@ void AppMenu::Create(void *nativeParent, const std::vector<std::string> &names)
     add(L"BUTTON", L"Quantum Simulation\nExplore particle states", 3011, BS_MULTILINE | WS_TABSTOP);
     add(L"BUTTON", L"Solar System - 1:1 scale\nSun, eight planets, moons, dwarf planets and asteroids", 3012,
         BS_MULTILINE | WS_TABSTOP);
-    add(L"BUTTON", L"Gargantua system\nBlack hole, ocean worlds and spacecraft", 3013, BS_MULTILINE | WS_TABSTOP);
+    add(L"BUTTON", L"Gargantua system\nMiller, Mann, Edmunds and spacecraft", 3013, BS_MULTILINE | WS_TABSTOP);
     add(L"STATIC",
         L"Distances and body radii use the same physical scale. Small objects have selection markers.\nGargantua uses "
         L"100 million solar masses; Miller is Earth-sized. Its orbit is a Schwarzschild approximation.",

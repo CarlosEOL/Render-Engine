@@ -185,7 +185,7 @@ void StarSystem::LoadSolarSystem()
         body.massEarth = d.massEarth;
         body.temperature = d.temperature;
         body.daySeconds = d.day * Astronomy::secondsPerDay;
-        body.tilt = index == 2 ? .4091f : index == 6 ? 1.706f : .05f;
+        body.tilt = index == 2 ? .4091f : index == 5 ? glm::radians(26.73f) : index == 6 ? 1.706f : .05f;
         body.seed = 100 + index * 719;
         body.seaLevel = index == 2 ? .03f : -1;
         body.gas = d.gas;

@@ -10,6 +10,7 @@ public:
   bool Initialize();
   void Release();
   void SetEnabled(bool value) { enabled = value; }
+  void SetWarmColor(bool value) { warmColor = value; }
   void Trigger(double seconds) { eruptionStart = seconds; }
   void BindSurface(unsigned int surfaceProgram, int seed, double seconds) const;
   void Render(const glm::mat4 &vp, const glm::mat4 &model, float temperature,
@@ -18,6 +19,7 @@ public:
 
 private:
   bool enabled = true;
+  bool warmColor = true;
   double eruptionStart = -std::numeric_limits<double>::infinity();
   unsigned int program = 0, vao = 0, buffer = 0;
   int vertices = 0;

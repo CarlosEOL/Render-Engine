@@ -1,6 +1,7 @@
 #include "OrbitalMechanics.h"
 
 #include <cmath>
+#include <algorithm>
 #include <stdexcept>
 #include <glm/geometric.hpp>
 
@@ -108,6 +109,60 @@ void OrbitalMechanics::AdvanceParticle(ParticleState& state, double gravitationa
     state.velocity = nextVelocity;
 }
 
+double OrbitalMechanics::SchwarzschildClockRate(const ParticleState& state,double horizon,double c){
+    const double r=glm::length(state.position),f=1-horizon/r;
+    if(f<=0)return 0;
+    const auto radial=state.position/r;
+    const double vr=glm::dot(state.velocity,radial);
+    const double vt2=glm::dot(state.velocity,state.velocity)-vr*vr;
+    return std::sqrt(glm::max(0.0,f-vr*vr/(f*c*c)-vt2/(c*c)));
+}
+
+double OrbitalMechanics::SchwarzschildEnergy(const ParticleState& state,double horizon,double c){
+    const double rate=SchwarzschildClockRate(state,horizon,c);
+    if(rate<=0)throw std::invalid_argument("Energy requires an exterior timelike state");
+    return (1-horizon/glm::length(state.position))/rate;
+}
+
+glm::dvec3 OrbitalMechanics::SchwarzschildAcceleration(const ParticleState& state,double mu,double c,double thrust){
+    const double r=glm::length(state.position),rs=2*mu/(c*c),f=1-rs/r;
+    if(f<=0 || !std::isfinite(r))throw std::invalid_argument("Schwarzschild dynamics require exterior coordinates");
+    const auto er=state.position/r;
+    const double vr=glm::dot(state.velocity,er);
+    const auto tangent=state.velocity-er*vr;
+    const double vt2=glm::dot(tangent,tangent);
+    // Timelike geodesic with Schwarzschild coordinate time as the parameter.
+    auto acceleration=er*(-mu*f/(r*r)+1.5*rs*vr*vr/(r*r*f)-rs*vt2/(r*r))
+        +tangent*(rs*vr/(r*r*f));
+    if(thrust>0){
+        const auto localVelocity=er*(vr/f)+tangent/std::sqrt(f);
+        const double v=glm::length(localVelocity);
+        if(v>0){
+            const double inverseGamma=std::sqrt(glm::max(0.0,1-v*v/(c*c)));
+            const auto localAcceleration=localVelocity/v*(thrust*inverseGamma*inverseGamma*inverseGamma);
+            const auto ar=er*glm::dot(localAcceleration,er);
+            acceleration+=ar*(f*std::sqrt(f))+(localAcceleration-ar)*f;
+        }
+    }
+    return acceleration;
+}
+
+double OrbitalMechanics::AdvanceSchwarzschild(ParticleState& state,double mu,double c,double thrust,double dt){
+    if(!std::isfinite(dt) || dt<0 || mu<=0 || c<=0 || thrust<0)
+        throw std::invalid_argument("Invalid relativistic step");
+    const double horizon=2*mu/(c*c);
+    const auto derivative=[&](const ParticleState& p){return ParticleState{p.velocity,SchwarzschildAcceleration(p,mu,c,thrust)};};
+    const auto offset=[](const ParticleState& p,const ParticleState& k,double t){return ParticleState{p.position+k.position*t,p.velocity+k.velocity*t};};
+    const auto k1=derivative(state),s2=offset(state,k1,dt*.5),k2=derivative(s2);
+    const auto s3=offset(state,k2,dt*.5),k3=derivative(s3),s4=offset(state,k3,dt),k4=derivative(s4);
+    const double proper=dt*(SchwarzschildClockRate(state,horizon,c)+2*SchwarzschildClockRate(s2,horizon,c)
+        +2*SchwarzschildClockRate(s3,horizon,c)+SchwarzschildClockRate(s4,horizon,c))/6;
+    state.position+=dt*(k1.position+2.0*k2.position+2.0*k3.position+k4.position)/6.0;
+    state.velocity+=dt*(k1.velocity+2.0*k2.velocity+2.0*k3.velocity+k4.velocity)/6.0;
+    if(SchwarzschildClockRate(state,horizon,c)<=0)throw std::runtime_error("Integration left the timelike domain");
+    return proper;
+}
+
 double OrbitalMechanics::ObserverClockRate(double radius, double speed, double gravitationalParameter, double horizonRadius) {
     const double lightSpeedSquared = 2.0 * gravitationalParameter / horizonRadius;
     const double gravity = glm::max(0.0, 1.0 - horizonRadius / radius);
@@ -120,10 +175,27 @@ double OrbitalMechanics::LightTravelDelay(const glm::dvec3& emitter, const glm::
     const double lightSpeed = std::sqrt(2.0 * gravitationalParameter / horizonRadius);
     const double distance = glm::length(emitter - observer);
     const double radii = glm::length(emitter) + glm::length(observer);
+    const double emitterR=glm::length(emitter),observerR=glm::length(observer);
+    if(emitterR>horizonRadius && observerR>horizonRadius){
+        if(distance<.001*std::min(emitterR,observerR)){
+            const auto midpoint=(emitter+observer)*.5;
+            const double f=1-horizonRadius/glm::length(midpoint);
+            const double radial=distance>0?glm::dot((observer-emitter)/distance,glm::normalize(midpoint)):0;
+            return distance/lightSpeed*std::sqrt((1+(1/f-1)*radial*radial)/f);
+        }
+        const double impact=distance>0?glm::length(glm::cross(emitter,observer))/distance:0;
+        if(impact<1e-8*std::min(emitterR,observerR) && glm::dot(emitter,observer)>0)
+            return distance/lightSpeed+horizonRadius/lightSpeed*std::abs(std::log((observerR-horizonRadius)/(emitterR-horizonRadius)));
+    }
     // First-order Schwarzschild (Shapiro) delay for a direct path.
     const double denominator = glm::max(radii - distance, horizonRadius * 0.0001);
-    return distance / lightSpeed + horizonRadius / lightSpeed
+    double delay=distance / lightSpeed + horizonRadius / lightSpeed
         * std::log(glm::max(1.0, (radii + distance) / denominator));
+    if(emitterR>horizonRadius && observerR>horizonRadius){
+        const auto correction=[&](double r){return std::log1p(distance/(r-horizonRadius))-std::log1p(distance/r);};
+        delay+=horizonRadius/lightSpeed*(correction(emitterR)+correction(observerR));
+    }
+    return delay;
 }
 
 const char* OrbitalMechanics::RelativityShaderFunctions() {

@@ -1,11 +1,13 @@
 #pragma once
 #include "Atmosphere.h"
 #include "StellarActivity.h"
+#include "SaturnRings.h"
 #include "OrbitalMechanics.h"
 #include <glm/glm.hpp>
 #include <string>
 #include <vector>
 #include <limits>
+#include <cstdint>
 
 struct GLFWwindow;
 
@@ -22,6 +24,7 @@ class StarSystem
         double temperature = 5772;
         double luminositySolar = 1;
         double ageGyr = 4.6;
+        std::uint64_t systemSeed = 0;
     };
     struct Planet
     {
@@ -46,6 +49,7 @@ class StarSystem
     void LoadSolarSystem();
     bool Initialize();
     void SetStellarActivity(bool enabled) { stellarActivity.SetEnabled(enabled); }
+    void SetWarmStellarColor(bool enabled) { stellarActivity.SetWarmColor(enabled); }
     void TriggerStellarFlare(double seconds) { stellarActivity.Trigger(seconds); }
     void Release();
     void Update(double seconds, glm::vec3 &front, glm::vec3 &up);
@@ -59,6 +63,9 @@ class StarSystem
     void ToggleFollow(double seconds);
     void ToggleRotationFollow(double seconds);
     bool IsRotationFollowing() const { return followingRotation; }
+    double DetailRadiusAu() const;
+    bool InDetailRange() const { return glm::length(camera)<DetailRadiusAu(); }
+    size_t PositionEvaluations() const { return positionEvaluations; }
     void SetPhotonDetector() { photonDetector=camera; }
     glm::dvec3 Position(int planet, double seconds) const;
     const Star &Host() const
@@ -96,6 +103,7 @@ class StarSystem
         return following;
     }
     std::string Information(double seconds) const;
+    double ObserverClockRate(double seconds) const;
     glm::dvec3 camera = glm::dvec3(0, 0, 3);
     double speedAu = 0.1;
 
@@ -104,7 +112,7 @@ class StarSystem
     glm::dmat3 RotationDouble(int planet, double seconds) const;
     double SurfaceRadius(int planet, const glm::dvec3 &direction, double seconds) const;
     void ConstrainSurface(double seconds, glm::vec3 &front, glm::vec3 &up);
-    void UpdatePatch(const glm::vec3 &direction);
+    void UpdatePatch(const glm::dvec3 &direction,double radiusMetres);
     Star star;
     std::vector<Planet> planets;
     std::vector<OrbitalMechanics::Orbit> asteroids;
@@ -113,6 +121,7 @@ class StarSystem
     glm::dvec3 RelativePosition(int planet, double seconds) const;
     void InvalidateCaches();
     mutable double cachedPositionTime = std::numeric_limits<double>::quiet_NaN();
+    mutable size_t positionEvaluations=0;
     mutable std::vector<glm::dvec3> cachedPositions;
     std::vector<std::vector<glm::dvec3>> cachedOrbits;
     std::vector<glm::dvec3> cachedAsteroids;
@@ -131,7 +140,9 @@ class StarSystem
     unsigned int lineVao = 0, lineBuffer = 0;
     unsigned int patchVao = 0, patchBuffer = 0;
     int sphereCount = 0, patchCount = 0;
-    glm::vec3 patchDirection = glm::vec3(0);
+    glm::dvec3 patchDirection = glm::dvec3(0);
+    double patchRadiusMetres = 0;
     Atmosphere atmosphere;
     StellarActivity stellarActivity;
+    SaturnRings saturnRings;
 };

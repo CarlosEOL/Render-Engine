@@ -2,6 +2,11 @@
 #include "CameraMotion.h"
 #include "QuantumStates.h"
 #include "StarSystem.h"
+#include "UniverseCatalog.h"
+#include "PlanetTerrain.h"
+#include "InterstellarWorlds.h"
+#include "KerrSpacetime.h"
+#include <algorithm>
 #include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
@@ -30,6 +35,20 @@ int main()
         Require(glm::length(p)>=1-eccentricity-1e-12 && glm::length(p)<=1+eccentricity+1e-12,"Fast Kepler solver left orbital bounds");
     }
     using namespace QuantumStates;
+    Require(std::abs(KerrSpacetime::Horizon(2,0)-2)<1e-12 && std::abs(KerrSpacetime::ProgradeIsco(2,0)-6)<1e-12,"Kerr zero-spin limit is wrong");
+    for(double spin:{-.8,0.0,.8,.98}){
+        auto ray=KerrSpacetime::PastRay({20,2,3},glm::normalize(glm::dvec3(-1,.24,-.04)),2,spin);
+        Require(std::abs(KerrSpacetime::Hamiltonian(ray,2,spin))<1e-12,"Kerr observer tetrad is not null");
+        const double angular=glm::cross(ray.position,ray.momentum).z;
+        double error=0;
+        for(int step=0;step<20000;++step){
+            if(KerrSpacetime::Radius(ray.position,2,spin)<KerrSpacetime::Horizon(2,spin)*1.1)break;
+            KerrSpacetime::AdvanceRay(ray,2,spin,.002);
+            error=std::max(error,std::abs(KerrSpacetime::Hamiltonian(ray,2,spin)));
+        }
+        Require(error<1e-7 && std::abs(glm::cross(ray.position,ray.momentum).z-angular)<1e-7,"Kerr null-ray invariants drifted");
+        std::cout<<"Kerr spin="<<spin<<" max |H|="<<error<<"\n";
+    }
     for (const auto &example : Examples())
     {
         if (example.family == Family::Box || example.family == Family::Oscillator || example.family == Family::Packet)
@@ -86,6 +105,17 @@ int main()
     }
     StarSystem solar;
     solar.LoadSolarSystem();
+    {
+        const auto earth=solar.Position(2,0);
+        const auto outward=glm::normalize(earth);
+        solar.camera=earth+outward*Astronomy::earthRadiusAu*1.000001;
+        const double surfaceClock=solar.ObserverClockRate(0);
+        solar.camera=earth+outward*Astronomy::earthRadiusAu*1.2;
+        const double orbitClock=solar.ObserverClockRate(0);
+        Require(surfaceClock<orbitClock && orbitClock-surfaceClock<1e-8,"Nearby planetary gravity is missing from camera time");
+        std::cout.precision(12);std::cout<<"Earth clock surface="<<surfaceClock<<"; elevated="<<orbitClock<<"\n";
+        solar.camera={0,0,3};
+    }
     for (int orbital = 0; orbital < 7; ++orbital)
     {
         double norm = 0, angular = 0;
@@ -145,6 +175,78 @@ int main()
     for (int i = 0; i < static_cast<int>(a.Planets().size()); ++i)
         Require(glm::length(a.Position(i, 12345) - b.Position(i, 12345)) < 1e-12,
                 "Generated positions not deterministic");
+    Universe::Catalog catalogue;catalogue.Generate();
+    Require(catalogue.Positions().size()==Universe::StarCount,"Stellar catalogue size changed");
+    for(int index=0;index<4;++index){
+        const auto first=Universe::GalaxyAt(index),again=Universe::GalaxyAt(index);
+        Require(first.key==again.key && first.centerAu==again.centerAu && first.axesAu==again.axesAu
+            && first.rotation==again.rotation,"Galaxy generation changed for the same seed");
+        Require(first.key!=Universe::GalaxyAt(index,619).key,"World seed did not change galaxy key");
+        if(index>0)Require(first.centerAu!=Universe::GalaxyAt(index,619).centerAu,"World seed did not change galaxy position");
+    }
+    for(int index=0;index<Universe::StarCount;++index){
+        const int galaxy=index<1600?0:1+(index-1600)/1800;
+        const auto position=catalogue.Positions()[index];
+        Require(Universe::GalaxyAt(galaxy).Contains(position),"Star generated outside galaxy boundary");
+        Require(position==Universe::StarPosition(index),"Camera-independent star key is not repeatable");
+        Require(Universe::GalaxyAt(galaxy,619).Contains(Universe::StarPosition(index,619)),"Alternate-seed star outside galaxy boundary");
+        if(index%137==0){
+            const auto nearby=catalogue.Nearby(position+glm::dvec3(.1,0,0));
+            Require(std::find(nearby.begin(),nearby.end(),index+10)!=nearby.end(),"Proximity lookup lost a star");
+        }
+    }
+    Require(Universe::StarPosition(37)!=Universe::StarPosition(37,619),"World seed did not change stars");
+    const auto lod=PlanetTerrain::SurfaceLodVertices(6371000);
+    Require(lod.size()<200000 && lod.size()>30000,"Surface LOD memory budget incorrect");
+    double nearMaxEdge=0,farMaxEdge=0;
+    for(size_t i=0;i<lod.size();i+=3){
+        const auto a=glm::dvec3(lod[i]),b=glm::dvec3(lod[i+1]),c=glm::dvec3(lod[i+2]);
+        Require(glm::cross(b-a,c-a).z>0,"Surface LOD has reversed or degenerate triangle");
+        const double r=std::max({glm::length(a),glm::length(b),glm::length(c)});
+        const double edge=std::max({glm::length(a-b),glm::length(a-c),glm::length(b-c)});
+        if(r<=100.01)nearMaxEdge=std::max(nearMaxEdge,edge);
+        if(r>1000)farMaxEdge=std::max(farMaxEdge,edge);
+    }
+    Require(nearMaxEdge<4 && farMaxEdge>100,"Terrain mesh does not lower detail with distance");
+    std::cout<<"Galaxy bounds/repeatability: "<<Universe::StarCount<<" stars; terrain vertices="<<lod.size()<<"\n";
+    auto ship=InterstellarWorlds::DepartureState(0);
+    {
+        const double mu=Astronomy::gargantuaGravityAu,c=Astronomy::lightSpeedAu,rs=Astronomy::gargantuaHorizonAu;
+        const double r=8*rs,omega=std::sqrt(mu/(r*r*r));
+        OrbitalMechanics::ParticleState circular{{r,0,0},{0,r*omega,0}};
+        const double rate=OrbitalMechanics::SchwarzschildClockRate(circular,rs,c);
+        Require(std::abs(rate-std::sqrt(1-1.5*rs/r))<1e-12,"Schwarzschild circular-orbit clock is wrong");
+        const double energy=OrbitalMechanics::SchwarzschildEnergy(circular,rs,c);
+        const double period=glm::two_pi<double>()/omega;
+        double proper=0;
+        for(int step=0;step<4000;++step)proper+=OrbitalMechanics::AdvanceSchwarzschild(circular,mu,c,0,period/4000);
+        Require(std::abs(glm::length(circular.position)/r-1)<1e-8,"Relativistic circular orbit drifted");
+        Require(std::abs(OrbitalMechanics::SchwarzschildEnergy(circular,rs,c)-energy)<1e-10,"Relativistic geodesic lost energy");
+        Require(std::abs(proper/period-rate)<1e-9,"Proper-time integration disagrees with circular solution");
+        const auto delay=[&](double radius){return OrbitalMechanics::LightTravelDelay({radius,0,0},{100*rs,0,0},mu,rs);};
+        Require(delay(1.000001*rs)>delay(1.001*rs),"Near-horizon received-light delay did not increase");
+        const auto separated=InterstellarWorlds::SeparateRangers(ship);
+        Require(glm::length((separated[0].velocity+separated[1].velocity)*.5-ship.velocity)<1e-16,"Symmetric Ranger release changed assembly momentum");
+        std::cout<<"Schwarzschild circular clock="<<rate<<"; conserved energy="<<energy<<"\n";
+    }
+    const auto mann=InterstellarWorlds::Orientation()*OrbitalMechanics::PositionAtTimeDouble(InterstellarWorlds::Get(1).orbit,Astronomy::gargantuaGravityAu,0);
+    Require(glm::length(ship.position-mann)*Astronomy::metresPerAu<7e6,"Craft did not depart near Mann");
+    const double initialSpeed=glm::length(ship.velocity);
+    double fuel=InterstellarWorlds::FuelSeconds,time=0,minRadius=1e9,maxSpeed=initialSpeed,properTotal=0;
+    bool firing=false,burned=false;
+    while(time<180*Astronomy::secondsPerDay){
+        const double before=fuel;
+        double proper=0;
+        time+=InterstellarWorlds::AdvanceMission(ship,fuel,firing,false,180*Astronomy::secondsPerDay-time,&proper);
+        properTotal+=proper;
+        burned=burned || fuel<before;
+        minRadius=std::min(minRadius,glm::length(ship.position));maxSpeed=std::max(maxSpeed,glm::length(ship.velocity));
+    }
+    Require(burned && fuel>=0,"Autonomous periapsis burn did not occur");
+    Require(fuel==0 && properTotal<time && properTotal>time*.8,"Fuel or proper-time clock was not integrated correctly");
+    Require(minRadius>3*Astronomy::gargantuaHorizonAu && maxSpeed>initialSpeed*4,"Gravity-assisted inbound acceleration failed");
+    Require(InterstellarWorlds::SpecificEnergy(ship)>0 && glm::dot(ship.position,ship.velocity)>0,"Craft did not escape on an unbound outbound trajectory");
+    std::cout<<"Mann flyby: periapsis="<<minRadius<<" AU; fuel remaining="<<fuel<<" s; escape energy="<<InterstellarWorlds::SpecificEnergy(ship)<<"\n";
     std::cout << Examples().size()
               << " quantum presets checked; solar scale, hierarchy and generation checks passed.\n";
 }

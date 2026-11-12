@@ -25,6 +25,12 @@ namespace OrbitalMechanics {
     double GravitationalFrequencyRatio(double emitterRadius, double observerRadius, double horizonRadius);
     void AdvanceParticle(ParticleState& state, double gravitationalParameter, double thrustAcceleration, double seconds);
     double ObserverClockRate(double radius, double speed, double gravitationalParameter, double horizonRadius);
+    double SchwarzschildClockRate(const ParticleState& state,double horizonRadius,double lightSpeed);
+    double SchwarzschildEnergy(const ParticleState& state,double horizonRadius,double lightSpeed);
+    glm::dvec3 SchwarzschildAcceleration(const ParticleState& state,double gravitationalParameter,
+        double lightSpeed,double properThrust=0);
+    double AdvanceSchwarzschild(ParticleState& state,double gravitationalParameter,double lightSpeed,
+        double properThrust,double coordinateSeconds);
     double LightTravelDelay(const glm::dvec3& emitter, const glm::dvec3& observer,
                            double gravitationalParameter, double horizonRadius);
     const char* RelativityShaderFunctions();

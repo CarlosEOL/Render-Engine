@@ -46,7 +46,7 @@ void ScenePanel::Resize(int width, int height)
         return;
     const auto window = static_cast<HWND>(parent);
     const float scale = GetDpiForWindow(window) / 96.0f;
-    widthPixels = std::min(static_cast<int>(360 * scale), width / 2);
+    widthPixels = std::min(static_cast<int>(288 * scale), width * 3 / 10);
     const int x = width - widthPixels;
     const int margin = static_cast<int>(12 * scale);
     const int bodyWidth = widthPixels - 2 * margin;

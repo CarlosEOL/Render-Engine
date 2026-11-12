@@ -82,6 +82,9 @@ in vec2 screenPosition;
 out vec4 fragColor;
 uniform sampler2D scene;
 uniform sampler2D flareSources;
+uniform sampler2D exposureState;
+uniform bool automaticExposure;
+uniform bool referenceGlare;
 uniform float flareStrength;
 uniform int profile;
 uniform int distortionModel;
@@ -155,40 +158,108 @@ void main() {
         glow+=max(textureLod(scene,uv+offset,4.0).rgb-.5,vec3(0))*.0035;
     }
     color += glow;
-    // Flare is an illustrative optical profile. Only distortion/TCA/vignetting
-    // use measured Lensfun coefficients.
+    vec3 opticalLight=vec3(0);
+    // Analytic optical signatures, not measured coating/internal reflection data.
     if(profile>0 && flareStrength>0) {
         for(int source=0;source<8;++source) {
             vec4 emitter=texelFetch(flareSources,ivec2(source*2,0),0);
             if(emitter.z<=0)continue;
             bool duplicate=false;
-            for(int previous=0;previous<source;++previous)
-                if(length(texelFetch(flareSources,ivec2(previous*2,0),0).xy-emitter.xy)<texel.y*5.0)duplicate=true;
+            for(int previous=0;previous<source;++previous) {
+                vec4 earlier=texelFetch(flareSources,ivec2(previous*2,0),0);
+                if(earlier.z>0 && length((earlier.xy-emitter.xy)*vec2(texel.y/texel.x,1))
+                    <max(.008,earlier.w+emitter.w))duplicate=true;
+            }
             if(duplicate)continue;
             vec3 tint=texelFetch(flareSources,ivec2(source*2+1,0),0).rgb;
             vec2 p=(uv-emitter.xy)*vec2(texel.y/texel.x,1);
             float r=length(p);
             float sourceAngle=r>1e-7?atan(p.y,p.x):0.0;
-            float energy=min(.3,log2(1+emitter.z)*.045)*flareStrength;
-            float halo=.00004/(r*r+.00012)*exp(-r/.055);
+            float energy=min(2.5,log2(1+emitter.z))*.65*flareStrength;
+            float sourceRadius=emitter.w;
+            float coreRadius=.018+sourceRadius*.7;
+            float halo=coreRadius*coreRadius/(r*r+coreRadius*coreRadius)*exp(-r/(coreRadius*4.0));
             if(profile==1) {
                 float irregular=.8+.2*cos(7*sourceAngle+sin(11*sourceAngle));
-                color+=tint*energy*(halo+irregular*.00002/(r*r+.0003)*exp(-r/.09));
+                opticalLight+=tint*energy*halo*(.65+.35*irregular);
             }else{
-                float blades=profile==2?8.0:profile==5?10.0:18.0;
-                float angle=sourceAngle+float(profile)*.11;
-                float spikes=pow(abs(cos(angle*blades*.5)),48.0);
-                vec3 wavelength=vec3(1.18,1,.82);
-                vec3 tail=exp(-r/(.075*wavelength))*.00007/(r*r+.00015);
-                color+=tint*energy*(halo*.65+tail*spikes);
+                // Canon: eight warm rays; Nikon: broad cool halo/eighteen rays;
+                // Otus: fine violet starburst; telephoto: long clean diffraction;
+                // Distagon: soft amber glare and green internal reflections.
+                float rays=8.0,rotation=.10,reach=.19,sharpness=150.0,ringRadius=.12;
+                vec3 coating=vec3(1,.55,.22);
+                int ghosts=2;
+                if(profile==3){rays=18.0;rotation=.03;reach=.12;sharpness=90.0;ringRadius=.19;coating=vec3(.22,.72,1);ghosts=4;}
+                if(profile==4){rays=18.0;rotation=.21;reach=.16;sharpness=270.0;ringRadius=.075;coating=vec3(.65,.28,1);ghosts=1;}
+                if(profile==5){rays=10.0;rotation=0;reach=.34;sharpness=340.0;ringRadius=.045;coating=vec3(.55,.72,1);ghosts=0;}
+                if(profile==6){rays=18.0;rotation=.33;reach=.14;sharpness=65.0;ringRadius=.145;coating=vec3(.35,1,.42);ghosts=3;}
+                float finiteSource=1.0/(1.0+sourceRadius*150.0);
+                float spikes=pow(abs(cos((sourceAngle+rotation)*rays*.5)),sharpness);
+                vec3 tail=exp(-r/(reach*vec3(1.12,1,.86)))*.018/(r+.018);
+                float ring=exp(-pow((r-ringRadius)/(.008+sourceRadius*.25),2.0));
+                opticalLight+=energy*(tint*(halo*.55+tail*spikes*finiteSource*2.5)
+                    +coating*ring*.045*finiteSource);
+                float offAxis=smoothstep(.025,.23,length(emitter.xy-.5));
+                for(int ghost=0;ghost<4;++ghost) {
+                    if(ghost>=ghosts)break;
+                    float index=float(ghost);
+                    vec2 ghostCenter=.5+(.5-emitter.xy)*(.35+index*.62);
+                    vec2 q=(uv-ghostCenter)*vec2(texel.y/texel.x,1);
+                    float size=.012+index*.009+float(profile==3)*.016;
+                    float a=atan(q.y,q.x)+rotation;
+                    float polygon=cos(3.14159265/rays)/cos(mod(a,6.2831853/rays)-3.14159265/rays);
+                    float edge=length(q)/(size*polygon);
+                    float aperture=(1.0-smoothstep(.75,1.0,edge))*.32+exp(-pow((edge-.92)*12.0,2.0))*.5;
+                    vec3 ghostTint=mix(coating,coating.brg,index*.2);
+                    opticalLight+=ghostTint*energy*aperture*offAxis*.13;
+                }
+                if(referenceGlare) {
+                    // Soft radial scatter, broad spectral arcs and a reflection train.
+                    // These are analytic light shapes, not a texture over the scene.
+                    float detail=.5+.5*sin(sourceAngle*83.0+sin(sourceAngle*37.0)*2.0+rotation);
+                    float fineRays=pow(detail,7.0);
+                    float scatter=exp(-r/.22)*.018/(r+.025);
+                    float smallSource=1.0/(1.0+sourceRadius*90.0);
+                    vec3 warmWhite=normalize(tint+vec3(1.2,1.1,.85))*1.7;
+                    float core=exp(-r*r/.00012)*6.0;
+                    float streak=exp(-abs(p.y)/(.0012+r*.003))*exp(-abs(p.x)/.48)*.10;
+                    opticalLight+=warmWhite*energy*smallSource*(core+scatter*(.2+fineRays*2.0)+streak);
+                    float aspect=texel.y/texel.x;
+                    float arcRadius=(.36+.015*float(profile))*aspect;
+                    vec3 bands=exp(-pow((vec3(r)-arcRadius*vec3(1.055,1.0,.945))
+                        /(arcRadius*.055),vec3(2)));
+                    float lateral=pow(abs(p.x)/max(r,.0001),6.0);
+                    opticalLight+=bands*energy*smallSource*lateral*.12;
+                    // Soft overlapping discs/rings avoid hard opaque "bubble" ghosts.
+                    for(int reflection=0;reflection<5;++reflection) {
+                        float index=float(reflection);
+                        vec2 center=.5+(.5-emitter.xy)*(.3+index*.70);
+                        vec2 q=(uv-center)*vec2(aspect,1);
+                        float size=.018+index*.017;
+                        float edge=length(q)/size;
+                        float soft=exp(-edge*edge*2.0)*.18+exp(-pow((edge-.9)*3.0,2.0))*.22;
+                        vec3 tintGhost=mix(vec3(.28,.65,.22),vec3(.45,.18,.65),index*.25);
+                        float lensResponse=profile==4?.45:profile==3?1.2:.8;
+                        // An ideal telephoto has diffraction/scatter but no internal reflections.
+                        if(profile!=5)opticalLight+=tintGhost*energy*soft*offAxis*smallSource*lensResponse*.35;
+                    }
+                }
             }
         }
     }
-    color = max(color * exposureGain, vec3(0));
-    if (hdrMode)
-        color = clamp((color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14), 0.0, 1.0);
-    else
+    float adaptedGain=automaticExposure?exp2(texelFetch(exposureState,ivec2(0),0).r):1.0;
+    color = max(color * exposureGain * adaptedGain, vec3(0));
+    if (hdrMode) {
+        // Apply the shoulder to peak radiance, preserving highlight hue ratios.
+        float peak=max(color.r,max(color.g,color.b));
+        float mappedPeak=clamp((peak*(2.51*peak+.03))/(peak*(2.43*peak+.59)+.14),0.0,1.0);
+        color*=mappedPeak/max(peak,.000001);
+    } else
         color = clamp(color, 0.0, 1.0);
+    // Expose/tone-map the scene first. Optical artifacts add bounded local light
+    // without entering scene metering or rescaling its RGB highlight shoulder.
+    vec3 glare=1.0-exp(-max(opticalLight*exposureGain*adaptedGain,vec3(0)));
+    color+=(1.0-color)*glare;
     color = mix(12.92 * color, 1.055 * pow(color, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), color));
     fragColor = vec4(color, 1.0);
 }
@@ -209,36 +280,105 @@ void main() {
     const char *extract = R"(#version 330 core
 out vec4 result;
 uniform sampler2D scene;
-float brightness(vec3 c){return max(c.r,max(c.g,c.b));}
+uniform vec3 stellarHint;
+// Rank real stellar continua above a green selection crosshair at every mip.
+float brightness(vec4 c){return max(c.r,c.b)*clamp(c.a,0.0,1.0);}
+float stellarBrightness(vec4 c){
+    return brightness(c)*step(.99,c.a)*(1.0-smoothstep(1.15,1.5,c.g/max(max(c.r,c.b),.0001)));
+}
+float extent(vec2 position,vec2 direction,float threshold,vec2 dimensions) {
+    float previous=0;
+    for(int step=0;step<24;++step) {
+        float distance=pow(float(step+1),2.0)*1.5;
+        vec2 candidate=position+direction*distance/dimensions;
+        if(any(lessThan(candidate,vec2(0))) || any(greaterThan(candidate,vec2(1))))break;
+        if(brightness(textureLod(scene,candidate,0))<threshold)break;
+        previous=distance;
+    }
+    return previous;
+}
 void main(){
     int pixel=int(gl_FragCoord.x),tile=pixel/2;
     vec2 origin=vec2(tile%4,tile/4)/vec2(4,2);
     vec2 tileSize=1.0/vec2(4,2);
     vec2 dimensions=vec2(textureSize(scene,0));
-    float level=max(0.0,floor(log2(max(dimensions.x/32.0,dimensions.y/16.0))));
+    // The coarse grid must cover every mip texel, including narrow sources at
+    // tile boundaries. Rounding down can skip the central column entirely.
+    float level=max(0.0,ceil(log2(max(dimensions.x/32.0,dimensions.y/16.0))));
     float best=-1;vec2 position=origin+tileSize*.5;
     for(int y=0;y<8;++y)for(int x=0;x<8;++x){
         vec2 candidate=origin+(vec2(x,y)+.5)*tileSize/8.0;
-        float b=brightness(textureLod(scene,candidate,level).rgb);
+        vec2 mipSize=vec2(textureSize(scene,int(level)));
+        candidate=(floor(candidate*mipSize)+.5)/mipSize;
+        float b=brightness(textureLod(scene,candidate,level));
         if(b>best){best=b;position=candidate;}
     }
     for(int step=7;step>=0;--step){
-        if(float(step)>level)continue;
-        vec2 spacing=exp2(float(step))/dimensions;
-        vec2 center=(floor(position*dimensions/exp2(float(step+1)))+.5)*exp2(float(step+1))/dimensions;
+        if(float(step)>=level)continue;
+        // Use actual mip sizes: a 1021px framebuffer does not halve evenly.
+        vec2 mipSize=vec2(textureSize(scene,step));
+        vec2 cell=floor(position*mipSize);
         best=-1;
-        for(int y=0;y<2;++y)for(int x=0;x<2;++x){
-            vec2 candidate=center+(vec2(x,y)-.5)*spacing;
-            float b=brightness(textureLod(scene,candidate,float(step)).rgb);
+        for(int y=-1;y<=1;++y)for(int x=-1;x<=1;++x){
+            vec2 candidate=(cell+vec2(x,y)+.5)/mipSize;
+            float b=brightness(textureLod(scene,candidate,float(step)));
             if(b>best){best=b;position=candidate;}
         }
     }
-    vec3 color=textureLod(scene,position,0).rgb;
-    float value=brightness(color);
-    float broad=brightness(textureLod(scene,position,3).rgb);
-    float compact=smoothstep(2.0,8.0,value/max(broad,.00001))*smoothstep(1.25,2.0,value);
-    if(pixel%2==0)result=vec4(position,value*compact,compact);
-    else result=vec4(color/max(value,.00001),1);
+    // A known host provides a search seed, never synthetic radiance. Visibility
+    // and brightness still come from the composited image, including occlusion.
+    int hintTile=int(stellarHint.x*4.0)+int(stellarHint.y*2.0)*4;
+    if(stellarHint.z>0 && all(greaterThanEqual(stellarHint.xy,vec2(0)))
+        && all(lessThan(stellarHint.xy,vec2(1))) && hintTile==tile)
+        position=stellarHint.xy;
+    // Resolve a real highlight beside a selection crosshair. Suppressing green
+    // during the coarse mip search would also erase the star underneath it.
+    vec2 anchor=(floor(position*dimensions)+.5)/dimensions;
+    best=-1;
+    for(int y=-3;y<=3;++y)for(int x=-3;x<=3;++x){
+        vec2 candidate=anchor+vec2(x,y)/dimensions;
+        float b=stellarBrightness(textureLod(scene,candidate,0));
+        if(b>best){best=b;position=candidate;}
+    }
+    vec4 source=textureLod(scene,position,0);
+    vec3 color=source.rgb;
+    float value=max(color.r,max(color.g,color.b));
+    float broad=brightness(textureLod(scene,position,3));
+    float compact=smoothstep(1.7,5.0,value/max(broad,.00001))*smoothstep(.70,1.15,value);
+    float threshold=max(.35,value*.25);
+    float left=extent(position,vec2(-1,0),threshold,dimensions);
+    float right=extent(position,vec2(1,0),threshold,dimensions);
+    float down=extent(position,vec2(0,-1),threshold,dimensions);
+    float up=extent(position,vec2(0,1),threshold,dimensions);
+    float radius=max(left+right,down+up)*.5;
+    float extended=smoothstep(1.5,6.0,min(left+right,down+up)) * smoothstep(.70,1.4,value);
+    vec2 center=position+vec2(right-left,up-down)*.5/dimensions;
+    // The navigation reticle is green; real stellar continua are not green-dominant.
+    float rejectReticle=1.0-smoothstep(1.15,1.5,color.g/max(max(color.r,color.b),.0001));
+    float accepted=max(compact,extended)*rejectReticle*step(.99,source.a);
+    bool hostVisible=stellarHint.z>0 && all(greaterThanEqual(stellarHint.xy,vec2(0)))
+        && all(lessThan(stellarHint.xy,vec2(1)));
+    if(hostVisible) {
+        float distance=length((position-stellarHint.xy)*vec2(dimensions.x/dimensions.y,1));
+        if(tile==hintTile) {
+            // One disk, one optical center. Read the visible photosphere rather
+            // than the brightest erupting strand or active-region footpoint.
+            vec3 sum=vec3(0);float count=0;
+            for(int i=0;i<16;++i){
+                float angle=(float(i)+.37)*6.2831853/16.0;
+                vec2 uv=stellarHint.xy+vec2(cos(angle)*dimensions.y/dimensions.x,sin(angle))*stellarHint.z*.55;
+                if(any(lessThan(uv,vec2(0))) || any(greaterThan(uv,vec2(1))))continue;
+                vec4 sample=textureLod(scene,uv,0);
+                if(stellarBrightness(sample)>.05){sum+=sample.rgb;count+=1;}
+            }
+            color=count>=3?sum/count:vec3(0);
+            value=max(color.r,max(color.g,color.b));
+            accepted=count>=3?smoothstep(.70,1.15,value):0;
+            position=center=stellarHint.xy;radius=stellarHint.z*dimensions.y;
+        } else if(distance<stellarHint.z*1.9+4.0/dimensions.y)accepted=0;
+    }
+    if(pixel%2==0)result=vec4(mix(position,center,extended),value*accepted,radius/dimensions.y);
+    else result=vec4(color/max(value,.00001),value);
 })";
     flareProgram = compileShaderProgram(vertex, extract);
     glGetProgramiv(flareProgram, GL_LINK_STATUS, &linked);
@@ -262,6 +402,7 @@ void main(){
         Release();
         return false;
     }
+    if(!exposureMeter.Initialize()) { Release(); return false; }
     return true;
 }
 
@@ -302,7 +443,7 @@ void CameraOptics::BeginFrame()
 }
 
 void CameraOptics::Render(int profile, float fieldOfView, float exposureEv, bool hdrMode, float flareStrength,
-                          bool reuseScene) const
+                          bool reuseScene, float realSeconds) const
 {
     if (!program || !frameActive)
         return;
@@ -316,6 +457,7 @@ void CameraOptics::Render(int profile, float fieldOfView, float exposureEv, bool
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     int viewport[4];
     glGetIntegerv(GL_VIEWPORT, viewport);
+    const bool adaptive=!hdrMode && autoExposure;
     if (profile > 0 && flareStrength > 0)
     {
         glBindFramebuffer(GL_FRAMEBUFFER, flareFramebuffer);
@@ -325,10 +467,13 @@ void CameraOptics::Render(int profile, float fieldOfView, float exposureEv, bool
         glDisable(GL_BLEND);
         glUseProgram(flareProgram);
         glUniform1i(glGetUniformLocation(flareProgram, "scene"), 0);
+        glUniform3fv(glGetUniformLocation(flareProgram,"stellarHint"),1,glm::value_ptr(stellarHint));
         glBindVertexArray(vao);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
     }
+    if(adaptive) exposureMeter.Update(sceneTexture,stellarHint,realSeconds);
+    else exposureMeter.Reset();
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glUseProgram(program);
     glUniform1i(glGetUniformLocation(program, "scene"), 0);
@@ -336,6 +481,12 @@ void CameraOptics::Render(int profile, float fieldOfView, float exposureEv, bool
     glBindTexture(GL_TEXTURE_2D, flareTexture);
     glActiveTexture(GL_TEXTURE0);
     glUniform1i(glGetUniformLocation(program, "flareSources"), 1);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D,exposureMeter.Texture());
+    glUniform1i(glGetUniformLocation(program,"exposureState"),2);
+    glUniform1i(glGetUniformLocation(program,"automaticExposure"),adaptive);
+    glUniform1i(glGetUniformLocation(program,"referenceGlare"),referenceGlare);
+    glActiveTexture(GL_TEXTURE0);
     glUniform1f(glGetUniformLocation(program, "flareStrength"), flareStrength);
     glUniform1i(glGetUniformLocation(program, "profile"), profile);
     const auto &lens = profiles[profile];
@@ -364,6 +515,7 @@ void CameraOptics::Render(int profile, float fieldOfView, float exposureEv, bool
 
 void CameraOptics::Release()
 {
+    exposureMeter.Release();
     if (flareProgram)
         glDeleteProgram(flareProgram);
     if (flareFramebuffer)

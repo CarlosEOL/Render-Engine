@@ -12,7 +12,8 @@ namespace Astronomy {
     constexpr double gargantuaMassSolar = 1.0e8;
     constexpr double gargantuaGravityAu = solarGravityAu * gargantuaMassSolar;
     constexpr double gargantuaHorizonAu = 2 * gargantuaGravityAu / (lightSpeedAu * lightSpeedAu);
-    constexpr double millerOrbitAu = 3.1 * gargantuaHorizonAu;
+    // Wider illustrative spacing; this is not the film's near-extremal Kerr orbit.
+    constexpr double millerOrbitAu = 12.0 * gargantuaHorizonAu;
     constexpr double millerRadiusAu = earthRadiusAu;
     constexpr double observerLengthMetres = 13.2;
     constexpr double observerWidthMetres = 4.2;

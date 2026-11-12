@@ -1,4 +1,5 @@
 #pragma once
+#include "VehicleInterior.h"
 
 #include <vector>
 #include <array>
@@ -76,8 +77,12 @@ private:
     void InitializeOverlay();
     void ReleaseOverlay();
     void ShowSpeedToast(float speed, bool starSystem);
+    void ShowStatusToast(const std::string& text,bool small=true);
+    void ShowZoomToast(bool force=false);
     void RenderSpeedToast();
     void ApplyVisionProfile(int profile);
+    void LookAtPlanet();
+    void SetVehicleView(int vehicle);
     void AlignCameraUp(const glm::vec3& up);
     void HandleInterfaceCommand(int id, int notification);
     void OpenMainMenu();
@@ -90,8 +95,9 @@ private:
     void ResizeInterface();
     void SyncCameraAngles();
     void PrepareCurrentBrowser();
-    int frameLimit = 60;
-    float blackHoleResolution = .75f;
+    void UpdateNearbySystem();
+    int frameLimit = 30;
+    float blackHoleResolution = .5f;
     float lensFlareStrength = .45f;
     bool sceneCacheValid = false;
     bool idleFrame = false;
@@ -108,6 +114,11 @@ private:
     bool trajectories = true;
     int pendingSystemTarget = 0;
     int activeSystemTarget = -2;
+    glm::dvec3 systemOriginAu = glm::dvec3(0);
+    double cameraClockRate=1;
+    VehicleInterior vehicleInterior;
+    int interiorVehicle=0;
+    glm::dmat3 lastCabinRotation=glm::dmat3(1);
     int quantumRateIndex = 2;
     void* nativeMenu = nullptr;
     CameraOptics optics;
@@ -154,4 +165,5 @@ private:
     int overlayWidth = 0;
     int overlayHeight = 0;
     double speedToastUntil = 0.0;
+    double nextZoomToast=0;
 };

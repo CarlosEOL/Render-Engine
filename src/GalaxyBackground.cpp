@@ -7,6 +7,7 @@
 #include "GalaxyBackground.h"
 #include "AssetManager.h"
 #include "Astronomy.h"
+#include "UniverseCatalog.h"
 #include <filesystem>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -14,11 +15,11 @@
 unsigned int compileShaderProgram(const char*, const char*);
 
 const std::array<GalaxyBackground::Group, 3>& GalaxyBackground::Groups() {
-    static const std::array<Group, 3> groups = {{
-        {{0, static_cast<float>(.4e6*Astronomy::auPerLightYear), static_cast<float>(-2.5e6*Astronomy::auPerLightYear)}, .7f, static_cast<float>(50000*Astronomy::auPerLightYear)},
-        {{static_cast<float>(1.2e6*Astronomy::auPerLightYear),static_cast<float>(-.3e6*Astronomy::auPerLightYear),static_cast<float>(-3e6*Astronomy::auPerLightYear)},1,static_cast<float>(48000*Astronomy::auPerLightYear)},
-        {{static_cast<float>(-1.7e6*Astronomy::auPerLightYear),static_cast<float>(.8e6*Astronomy::auPerLightYear),static_cast<float>(-4e6*Astronomy::auPerLightYear)},1.3f,static_cast<float>(60000*Astronomy::auPerLightYear)}
-    }};
+    static const std::array<Group,3> groups=[](){
+        std::array<Group,3> result;
+        for(int i=0;i<3;++i){const auto galaxy=Universe::GalaxyAt(i+1);result[i]={glm::vec3(galaxy.centerAu),galaxy.tilt,static_cast<float>(galaxy.axesAu.x)};}
+        return result;
+    }();
     return groups;
 }
 

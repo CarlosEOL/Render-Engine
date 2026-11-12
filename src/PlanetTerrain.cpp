@@ -1,4 +1,8 @@
 #include "PlanetTerrain.h"
+#include "Astronomy.h"
+#include "glad/glad.h"
+#include <glm/gtc/type_ptr.hpp>
+#include <stdexcept>
 #include <glm/glm.hpp>
 #include <cmath>
 #include <cstdint>
@@ -40,8 +44,11 @@ std::vector<glm::vec3> PlanetTerrain::SpherePatch(const glm::vec3& direction,int
     return vertices;
 }
 
-float PlanetTerrain::SurfaceRadius(const glm::vec3& direction, unsigned int seed, float wavePhase,
-                                  float seaLevel, float relief, float waves) {
+float PlanetTerrain::SurfaceElevation(const glm::vec3& direction,unsigned int seed,float wavePhase,
+    float seaLevel,float relief,float waves,bool oceanOnly) {
+    const float wave = (std::sin(35.0f * direction.y + 4.0f * std::sin(10.0f * direction.x) + wavePhase)
+        + 0.35f * std::sin(80.0f * direction.y + 8.0f * direction.x - wavePhase)) / 1.35f;
+    if(oceanOnly)return waves*wave;
     auto position = direction * 2.6f;
     float continents = 0.0f;
     float amplitude = 0.5f;
@@ -55,9 +62,64 @@ float PlanetTerrain::SurfaceRadius(const glm::vec3& direction, unsigned int seed
     const float height = 0.75f * continents + 0.22f * (ridges * ridges - 0.5f)
         * glm::smoothstep(-0.1f, 0.25f, continents);
     const float water = 1.0f - glm::smoothstep(seaLevel - 0.008f, seaLevel + 0.008f, height);
-    const float wave = (std::sin(35.0f * direction.y + 4.0f * std::sin(10.0f * direction.x) + wavePhase)
-        + 0.35f * std::sin(80.0f * direction.y + 8.0f * direction.x - wavePhase)) / 1.35f;
-    return 1.0f + relief * glm::max(height, seaLevel) + water * waves * wave;
+    return relief * glm::max(height, seaLevel) + water * waves * wave;
+}
+
+float PlanetTerrain::SurfaceRadius(const glm::vec3& direction,unsigned int seed,float phase,
+    float seaLevel,float relief,float waves) {
+    return 1+SurfaceElevation(direction,seed,phase,seaLevel,relief,waves);
+}
+
+std::vector<glm::vec3> PlanetTerrain::SurfaceLodVertices(double radiusMetres) {
+    if(!std::isfinite(radiusMetres) || radiusMetres<1000)throw std::invalid_argument("Invalid terrain radius");
+    struct Ring{double radius;int segments;};
+    std::vector<Ring> rings={{0,1}};
+    for(int i=1;i<=40;++i)rings.push_back({i*2.5,256});
+    const double outer=radiusMetres*std::tan(.020)*1.03;
+    double start=100;
+    int level=0;
+    while(start<outer){
+        const double finish=std::min(outer,start*2);
+        const int segments=std::max(16,128>>std::min(level,3));
+        for(int i=1;i<=8;++i)rings.push_back({start+(finish-start)*i/8,segments});
+        start=finish;++level;
+    }
+    std::vector<glm::vec3> vertices;vertices.reserve(100000);
+    const auto point=[](const Ring& ring,int i){
+        const double angle=glm::two_pi<double>()*static_cast<double>(i%ring.segments)/ring.segments;
+        return glm::vec3(ring.radius*std::cos(angle),ring.radius*std::sin(angle),0);
+    };
+    const auto triangle=[&](const glm::vec3& a,const glm::vec3& b,const glm::vec3& c){vertices.insert(vertices.end(),{a,b,c});};
+    for(size_t ring=1;ring<rings.size();++ring){
+        const auto& a=rings[ring-1];const auto& b=rings[ring];
+        if(a.radius==0){for(int j=0;j<b.segments;++j)triangle(glm::vec3(0),point(b,j),point(b,j+1));continue;}
+        int i=0,j=0;
+        while(i<a.segments || j<b.segments){
+            const int nextA=(i+1)*b.segments,nextB=(j+1)*a.segments;
+            if(nextA==nextB){
+                triangle(point(a,i),point(b,j),point(a,i+1));
+                triangle(point(a,i+1),point(b,j),point(b,j+1));++i;++j;
+            }else if(nextA<nextB){triangle(point(a,i),point(b,j),point(a,i+1));++i;}
+            else{triangle(point(a,i),point(b,j),point(b,j+1));++j;}
+        }
+    }
+    return vertices;
+}
+
+void PlanetTerrain::ConfigureSurfacePatch(unsigned int program,const glm::dvec3& direction,
+    const glm::dmat3& rotation,const glm::dvec3& centerRelativeAu,double radiusMetres,float elevation) {
+    const auto anchor=glm::normalize(direction);
+    const auto reference=std::abs(anchor.y)<.9?glm::dvec3(0,1,0):glm::dvec3(1,0,0);
+    const auto right=glm::normalize(glm::cross(reference,anchor)),up=glm::cross(anchor,right);
+    const auto frame=glm::mat3(rotation*glm::dmat3(right,up,anchor));
+    const auto origin=glm::vec3(centerRelativeAu+rotation*anchor*(radiusMetres*(1.0+elevation)/Astronomy::metresPerAu));
+    const auto textureOrigin=glm::vec3(glm::mod(anchor*(radiusMetres*(1.0+elevation)),glm::dvec3(4096)));
+    const auto v3=[&](const char* name,const glm::vec3& value){glUniform3fv(glGetUniformLocation(program,name),1,glm::value_ptr(value));};
+    v3("patchCenter",glm::vec3(anchor));v3("patchRight",glm::vec3(right));v3("patchUp",glm::vec3(up));
+    v3("patchRelativeOrigin",origin);v3("patchTextureOrigin",textureOrigin);
+    glUniformMatrix3fv(glGetUniformLocation(program,"patchWorldFrame"),1,GL_FALSE,glm::value_ptr(frame));
+    glUniform1f(glGetUniformLocation(program,"patchRadiusMetres"),static_cast<float>(radiusMetres));
+    glUniform1f(glGetUniformLocation(program,"patchAnchorElevation"),elevation);
 }
 
 std::vector<glm::vec3> PlanetTerrain::SphereVertices(int latitudeSegments, int longitudeSegments) {
@@ -87,6 +149,25 @@ uniform float terrainSeed;
 uniform float seaLevel;
 uniform float terrainRelief;
 uniform float waterWaveHeight;
+uniform bool patchDrawing;
+uniform vec3 patchCenter,patchRight,patchUp,patchRelativeOrigin,patchTextureOrigin;
+uniform mat3 patchWorldFrame;
+uniform float patchRadiusMetres,patchAnchorElevation;
+
+vec3 surfacePatchDirection(vec2 metres){
+    return normalize(patchCenter+(patchRight*metres.x+patchUp*metres.y)/patchRadiusMetres);
+}
+vec3 surfacePatchDelta(vec2 metres,float elevation){
+    float r=patchRadiusMetres;
+    float squared=dot(metres,metres);
+    float scale=sqrt(1.0+squared/(r*r));
+    vec2 tangent=metres*(1.0+elevation)/scale;
+    float radial=-squared*(1.0+elevation)/(r*scale*(scale+1.0))+(elevation-patchAnchorElevation)*r;
+    return patchRight*tangent.x+patchUp*tangent.y+patchCenter*radial;
+}
+vec3 surfacePatchRelative(vec3 delta){
+    return patchRelativeOrigin+patchWorldFrame*vec3(dot(delta,patchRight),dot(delta,patchUp),dot(delta,patchCenter))/149597870700.0;
+}
 
 float terrainHash(vec3 cell) {
     uvec3 coordinate = uvec3(ivec3(cell));
@@ -138,6 +219,43 @@ vec3 planetSurface(vec3 direction, float height, float phase) {
     float radius = 1.0 + terrainRelief * max(height, seaLevel);
     radius += water * waterWaveHeight * oceanWave(direction, phase);
     return direction * radius;
+}
+
+float surfaceElevation(vec3 direction,float height,float phase,bool oceanOnly){
+    float water=oceanOnly?1.0:1.0-smoothstep(seaLevel-.008,seaLevel+.008,height);
+    return (oceanOnly?0.0:terrainRelief*max(height,seaLevel))+water*waterWaveHeight*oceanWave(direction,phase);
+}
+)";
+}
+
+const char* PlanetTerrain::SurfaceDetailShaderFunctions(){
+    return R"(
+float groundNoise(vec3 p){
+    vec3 cell=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);
+    float a=mix(mix(terrainHash(mod(cell,256.0)),terrainHash(mod(cell+vec3(1,0,0),256.0)),f.x),
+                mix(terrainHash(mod(cell+vec3(0,1,0),256.0)),terrainHash(mod(cell+vec3(1,1,0),256.0)),f.x),f.y);
+    float b=mix(mix(terrainHash(mod(cell+vec3(0,0,1),256.0)),terrainHash(mod(cell+vec3(1,0,1),256.0)),f.x),
+                mix(terrainHash(mod(cell+vec3(0,1,1),256.0)),terrainHash(mod(cell+vec3(1,1,1),256.0)),f.x),f.y);
+    return mix(a,b,f.z);
+}
+void groundDetail(inout vec3 material,inout vec3 normal,vec3 delta,float water,float cameraDistance,float phase){
+    if(!patchDrawing || cameraDistance>=100.0)return;
+    float fade=1.0-smoothstep(80.0,100.0,cameraDistance);
+    vec3 p=patchTextureOrigin+delta;
+    float footprint=max(length(dFdx(p)),length(dFdy(p)));
+    float fine=1.0-smoothstep(.35,.8,footprint*16.0);
+    float grain=groundNoise(p*16.0),pebbles=groundNoise(p*2.0),strata=groundNoise(p*.25);
+    float height=(pebbles*.035+strata*.10+grain*.006*fine)*(1.0-water);
+    if(water>.5)height=.025*(sin(dot(p,vec3(.7,.1,.5))*2.0+phase)+.4*sin(dot(p,vec3(-.3,.2,.8))*5.0-phase));
+    vec3 dx=dFdx(delta),dy=dFdy(delta);
+    vec3 r1=cross(dy,normal),r2=cross(normal,dx);
+    float determinant=dot(dx,r1);
+    if(abs(determinant)>1e-12){
+        vec3 gradient=sign(determinant)*(dFdx(height)*r1+dFdy(height)*r2);
+        normal=normalize(abs(determinant)*normal-gradient*fade);
+    }
+    float variation=.70+.32*pebbles+.18*strata+.08*(grain-.5)*fine;
+    material*=mix(1.0,variation,fade*(1.0-water));
 }
 )";
 }

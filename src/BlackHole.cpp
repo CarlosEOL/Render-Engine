@@ -3,6 +3,8 @@
 #include "OrbitalMechanics.h"
 #include "PlanetTerrain.h"
 #include "StarSystem.h"
+#include "InterstellarWorlds.h"
+#include "KerrSpacetime.h"
 
 #include <cmath>
 #include <algorithm>
@@ -24,8 +26,7 @@ namespace {
     constexpr float outerDiskRadius = horizonRadius * (1.03f/.24f);
     constexpr double distanceScale = Astronomy::gargantuaHorizonAu / .24;
     const double timeScale = std::sqrt(distanceScale*distanceScale*distanceScale*1.8/gravitationalParameter);
-    const OrbitalMechanics::Orbit spacecraftOrbit{1.7*distanceScale, 0.46, 0.35, 0.9, glm::pi<double>()};
-    const double boosterAcceleration = .85*distanceScale/(timeScale*timeScale);
+    const double boosterAcceleration=InterstellarWorlds::EngineAccelerationMetres/Astronomy::metresPerAu;
     constexpr float craftScale = static_cast<float>(25.0/Astronomy::metresPerAu/.045);
 
     enum Surface { Planet = 2, Star = 3 };
@@ -39,9 +40,9 @@ namespace {
     };
 
     const Body bodies[] = {
-        {{Astronomy::millerOrbitAu, 0.0, 0.20, 0.2, 0.8}, static_cast<float>(Astronomy::millerRadiusAu), {0.22f, 0.60f, 1.0f}, Planet, 0.0f},
-        {{8.0*horizonRadius, 0.03, 0.32, 1.7, 2.4}, static_cast<float>(Astronomy::earthRadiusAu*.85), {0.35f, 0.70f, 0.85f}, Planet, 0.0f},
-        {{14.0*horizonRadius, 0.04, 0.55, 0.7, 4.8}, static_cast<float>(Astronomy::earthRadiusAu*1.12), {0.25f, 0.55f, 0.90f}, Planet, 0.0f},
+        {InterstellarWorlds::Get(0).orbit,static_cast<float>(InterstellarWorlds::Get(0).radiusEarth*Astronomy::earthRadiusAu),InterstellarWorlds::Get(0).color,Planet,0},
+        {InterstellarWorlds::Get(1).orbit,static_cast<float>(InterstellarWorlds::Get(1).radiusEarth*Astronomy::earthRadiusAu),InterstellarWorlds::Get(1).color,Planet,0},
+        {InterstellarWorlds::Get(2).orbit,static_cast<float>(InterstellarWorlds::Get(2).radiusEarth*Astronomy::earthRadiusAu),InterstellarWorlds::Get(2).color,Planet,0},
         {{50, 0.03, 0.45, 0.1, 2.2}, static_cast<float>(Astronomy::solarRadiusAu), {1.0f, 0.77f, 0.45f}, Star, 5200.0f},
         {{80, 0.12, 0.83, 1.4, 4.5}, static_cast<float>(Astronomy::solarRadiusAu*2), {0.64f, 0.80f, 1.0f}, Star, 10000.0f},
         {{120, 0.15, 0.72, 2.3, 0.4}, static_cast<float>(Astronomy::solarRadiusAu*.65), {1.0f, 0.52f, 0.36f}, Star, 3500.0f},
@@ -50,7 +51,7 @@ namespace {
     };
 
     glm::mat4 DiskOrientation() {
-        return glm::rotate(glm::mat4(1.0f), glm::radians(67.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+        return glm::mat4(glm::mat3(InterstellarWorlds::Orientation()));
     }
 
     glm::mat4 AttitudeAlong(const glm::vec3& direction) {
@@ -70,10 +71,13 @@ layout (location = 0) in vec3 position;
 layout (location = 1) in vec3 packetColor;
 layout (location = 2) in float stellarTemperature;
 layout (location = 3) in float stellarLuminosity;
+layout (location = 4) in vec3 positionLow;
+uniform vec3 cameraLow;
+uniform bool stellarPackets;
+uniform vec3 detectorHigh,detectorLow;
+uniform float stellarSeconds;
 uniform mat4 model;
 uniform bool patchEnabled;
-uniform bool patchDrawing;
-uniform vec3 patchCenter;
 uniform mat4 viewProjection;
 uniform float wavePhase;
 uniform int surface;
@@ -81,16 +85,25 @@ uniform bool oceanWorld;
 out vec3 localPosition;
 out vec3 worldPosition;
 out vec3 relativePosition;
+out vec3 patchDeltaMetres;
 uniform vec3 cameraPosition;
 out vec3 photonColor;
 out float sourceTemperature;
 out float sourceLuminosity;
 
 void main() {
+    patchDeltaMetres=vec3(0);
+    if(surface==2 && patchDrawing){
+        localPosition=surfacePatchDirection(position.xy);
+        patchDeltaMetres=surfacePatchDelta(position.xy,interstellarElevation(localPosition,wavePhase));
+        relativePosition=surfacePatchRelative(patchDeltaMetres);
+        worldPosition=relativePosition+cameraPosition;
+        photonColor=vec3(0);sourceTemperature=0;sourceLuminosity=0;
+        gl_Position=viewProjection*vec4(relativePosition,1);return;
+    }
     vec3 displaced = position;
     if (surface == 2) {
-        displaced = oceanWorld ? position * (1.0 + waterWaveHeight * oceanWave(position, wavePhase))
-            : planetSurface(position, terrainHeight(position), wavePhase);
+        displaced=position*(1.0+interstellarElevation(position,wavePhase));
     }
     vec4 world = model * vec4(displaced, 1.0);
     localPosition = position;
@@ -100,7 +113,17 @@ void main() {
     sourceTemperature=stellarTemperature;
     sourceLuminosity=stellarLuminosity;
     gl_Position = viewProjection * world;
-    if(surface==7)gl_Position.z=gl_Position.w*.999999;
+    if(surface==7){
+        relativePosition=(position-cameraPosition)+(positionLow-cameraLow);
+        if(stellarPackets){
+            vec3 toDetector=(detectorHigh-position)+(detectorLow-positionLow);
+            float duration=max(length(toDetector)/0.0020039888,.001);
+            float fraction=fract(stellarSeconds/duration+float(gl_InstanceID)*.25);
+            relativePosition+=toDetector*fraction;
+        }else if(length(relativePosition)<3.0){gl_Position=vec4(2,2,2,1);return;}
+        gl_Position=viewProjection*vec4(relativePosition,1);
+        gl_Position.z=gl_Position.w*.999999;
+    }
 }
 )";
 
@@ -108,6 +131,7 @@ void main() {
 in vec3 localPosition;
 in vec3 worldPosition;
 in vec3 relativePosition;
+in vec3 patchDeltaMetres;
 in vec3 photonColor;
 in float sourceTemperature;
 in float sourceLuminosity;
@@ -118,23 +142,24 @@ uniform vec3 bodyColor;
 uniform vec3 cameraPosition;
 uniform vec3 velocityBeta;
 uniform float temperature;
+uniform bool stellarPackets;
 uniform float wavePhase;
 uniform mat4 model;
 uniform bool patchEnabled;
-uniform bool patchDrawing;
-uniform vec3 patchCenter;
 
 void main() {
     gl_FragDepth=surface==7?0.999999:clamp(log2(1.0+length(relativePosition)*1e12)/log2(1.0+20000.0*1e12),0.0,.999998);
     if (surface == 2) {
         vec3 radial = normalize(localPosition);
         if(patchEnabled && ((dot(radial,patchCenter)>cos(.020))!=patchDrawing))discard;
-        float height = oceanWorld ? seaLevel - 0.3 : terrainHeight(radial);
-        float water = oceanWorld ? 1.0 : 1.0 - smoothstep(seaLevel - 0.008, seaLevel + 0.008, height);
-        float depth = max(seaLevel - height, 0.0);
-        vec3 surfacePosition = oceanWorld ? radial * (1.0 + waterWaveHeight * oceanWave(radial, wavePhase))
-            : planetSurface(radial, height, wavePhase);
-        vec3 localNormal = oceanWorld?radial:normalize(cross(dFdx(surfacePosition), dFdy(surfacePosition)));
+        vec3 surfacePosition=radial*(1.0+interstellarElevation(radial,wavePhase));
+        vec3 localNormal=patchDrawing?normalize(cross(dFdx(patchDeltaMetres),dFdy(patchDeltaMetres))):normalize(cross(dFdx(surfacePosition),dFdy(surfacePosition)));
+        vec3 material=bodyColor;
+        if(!oceanWorld){
+            float fractures=abs(sin(dot(radial,vec3(31,19,43)))+sin(dot(radial,vec3(73,-41,17))));
+            if(interstellarPlanet==1)material=mix(vec3(.18,.32,.42),vec3(.82,.88,.91),smoothstep(.06,.5,fractures));
+            else material*=.7+.3*sin(radial.x*36.0+sin(radial.z*17.0));
+        }
         if(oceanWorld) {
             localNormal=radial;
             vec3 reference=abs(radial.y)<.9?vec3(0,1,0):vec3(1,0,0);
@@ -145,46 +170,37 @@ void main() {
         }
         if (dot(localNormal, radial) < 0.0)
             localNormal = -localNormal;
+        groundDetail(material,localNormal,patchDeltaMetres,oceanWorld?1.0:0.0,length(relativePosition)*149597870700.0,wavePhase);
         vec3 normal = normalize(mat3(transpose(inverse(model))) * localNormal);
         vec3 lightDirection = normalize(-worldPosition);
         vec3 viewDirection = normalize(-relativePosition);
         float light = max(dot(normal, lightDirection), 0.0);
-        float specular = pow(max(dot(normal, normalize(lightDirection + viewDirection)), 0.0), 100.0) * water;
+        float specular = pow(max(dot(normal, normalize(lightDirection + viewDirection)), 0.0), 100.0)*(oceanWorld?1.0:interstellarPlanet==1?.3:.03);
         if(oceanWorld) {
             float fresnel=.02+.98*pow(1.0-max(dot(normal,viewDirection),0.0),5.0);
             vec3 ocean=mix(vec3(.006,.025,.065),vec3(.045,.10,.15),fresnel);
             fragColor=vec4(ocean*(.03+.97*light)+specular*.65,1);
             return;
         }
-        vec3 ocean = mix(vec3(0.04, 0.42, 0.46), vec3(0.005, 0.025, 0.09),
-            1.0 - exp(-12.0 * depth));
-        float moisture = 0.5 + 0.5 * terrainNoise(radial * 5.0 + vec3(31.0));
-        vec3 land = mix(vec3(0.40, 0.30, 0.15), vec3(0.07, 0.23, 0.09), moisture);
-        land = mix(vec3(0.62, 0.54, 0.35), land, smoothstep(seaLevel, seaLevel + 0.045, height));
-        land = mix(land, vec3(0.30, 0.29, 0.27), smoothstep(0.12, 0.28, height));
-        float snow = smoothstep(0.22, 0.36, height + 0.15 * pow(abs(radial.y), 4.0));
-        land = mix(land, vec3(0.86, 0.90, 0.92), snow);
-        land *= 0.82 + 0.30 * (0.5 + 0.5 * terrainNoise(radial * 350.0));
-        float foam = (1.0 - smoothstep(0.003, 0.018, depth))
-            * (0.5 + 0.5 * oceanWave(radial, wavePhase)) * water;
-        vec3 albedo = mix(land, ocean, water);
-        albedo = mix(albedo, vec3(0.78, 0.87, 0.86), 0.45 * foam);
-        fragColor = vec4(albedo * (0.30 + 0.70 * light) + specular, 1.0);
+        fragColor=vec4(material*(.035+.965*light)+specular,1);
     } else if (surface == 3) {
         float shift = frequencyRatio(length(worldPosition), length(cameraPosition),
             velocityBeta, normalize(-relativePosition));
         vec3 radial=normalize(localPosition);
         float mu=dot(normalize(mat3(model)*radial),normalize(-relativePosition));
-        fragColor = vec4(stellarSurface(radial,blackbody(temperature * shift),mu), 1.0);
+        fragColor = vec4(stellarSurface(radial,blackbody(temperature * shift),mu,temperature*shift), 1.0);
     } else if (surface == 8) {
         fragColor = vec4(photonColor, 1.0);
     } else if (surface == 7) {
+        if(stellarPackets){fragColor=vec4(.35,.65,.85,1);return;}
         float seed = fract(sin(dot(worldPosition, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
         float distanceSquared = dot(relativePosition,relativePosition);
         vec2 psf=gl_PointCoord*2.0-1.0;
         float pointRadius=dot(psf,psf);
         if(pointRadius>1.0)discard;
-        float flux = max(sourceLuminosity,.001) * 1.0e9 / max(distanceSquared, 1.0)*exp(-pointRadius*2.0);
+        // A display visibility floor keeps the distant navigation catalogue
+        // visible; the ceiling prevents subpixel points overwhelming nearby disks.
+        float flux = clamp(max(sourceLuminosity,.001)*1.0e9/max(distanceSquared,1.0),.035,4.0)*exp(-pointRadius*2.0);
         vec3 tint = blackbody(max(sourceTemperature,2500.0));
         tint/=max(max(tint.r,tint.g),max(tint.b,.00001));
         fragColor = vec4(tint * flux, 1.0);
@@ -233,6 +249,9 @@ uniform float plasmaTime;
 uniform sampler2D sourceScene;
 uniform sampler2D sourceDepth;
 uniform samplerCube sky;
+uniform float blackHoleSpin;
+uniform int rayStepBudget;
+uniform float captureRadius;
 
 float depthDistance(float depth) {
     return (exp2(depth*log2(1.0+20000.0*1e12))-1.0)/1e12;
@@ -275,13 +294,19 @@ void main() {
     vec4 farPoint = inverseViewProjection * vec4(screenPosition, 1.0, 1.0);
     vec3 cameraDirection = normalize(farPoint.xyz);
     vec3 direction = observerRayDirection(cameraDirection);
+    bool spinning=abs(blackHoleSpin)>.0001;
+    mat3 toDisk=mat3(inverseDiskOrientation),fromDisk=transpose(toDisk);
+    vec3 kx=toDisk*cameraPosition,kp=vec3(0);
+    float pt=1.0;
+    if(spinning)kerrPastRay(kx,toDisk*direction,horizonRadius,blackHoleSpin,kp,pt);
+    float angularZ=cross(kx,kp).z;
     vec2 originalUv=screenPosition*.5+.5;
     float originalDepth=texture(sourceDepth,originalUv).r;
     if(originalDepth<.99999 && depthDistance(originalDepth)<max(0.0,length(cameraPosition)-3.0*horizonRadius)) {
         fragColor=texture(sourceScene,originalUv);gl_FragDepth=originalDepth;return;
     }
     float observerRadius = length(cameraPosition);
-    bool insideHorizon = observerRadius < horizonRadius;
+    bool insideHorizon = (spinning?kerrRadius(kx,.5*horizonRadius*blackHoleSpin):observerRadius) < captureRadius;
     // Rays whose impact parameters exceed the disk's apparent extent miss the scene.
     if (dot(cameraPosition, direction) > 0.0 && observerRadius > diskRadii.y*1.5)
         discard;
@@ -295,11 +320,14 @@ void main() {
     float travelled = 0.0;
     bool hit = false;
     vec3 radiance = vec3(0.0);
+    float opticalEligibility = 1.0;
     vec3 plasma = vec3(0.0);
 
-    for (int step = 0; step < 360; ++step) {
+    for (int step = 0; step < 384; ++step) {
+        if(step>=rayStepBudget)break;
         float radius = length(position);
-        if (!insideHorizon && radius < horizonRadius * 1.015) {
+        float metricRadius=spinning?kerrRadius(kx,.5*horizonRadius*blackHoleSpin):radius;
+        if (!insideHorizon && metricRadius < captureRadius * 1.015) {
             hit = true;
             break;
         }
@@ -310,22 +338,36 @@ void main() {
         if (radius > max(observerRadius, 3.0) + 4.0 && dot(position, tangent) > 0.0)
             break;
 
-        float interval = clamp(radius * 0.055, 0.003, 0.45);
+        float interval = clamp(radius * (spinning?.04:.055), 0.003, spinning?.75:.45);
         float diskFraction = (radius - diskRadii.x) / (diskRadii.y - diskRadii.x);
         float planeDistance = abs(dot(position, diskAxis));
         // Resolve the vertical plasma structure with fine steps through the slab.
         if (diskFraction > -0.08 && diskFraction < 1.12)
             interval = min(interval, max(0.0025, planeDistance * 0.35 + 0.0025));
 
-        vec3 acceleration = photonAcceleration(position, angularMomentumSquared);
-        vec3 nextPosition = position + interval * tangent + 0.5 * interval * interval * acceleration;
-        vec3 nextTangent = tangent + 0.5 * interval
-            * (acceleration + photonAcceleration(nextPosition, angularMomentumSquared));
+        vec3 nextPosition,nextTangent;
+        if(spinning){
+            vec3 dx1,dp1,dx2,dp2,dx3,dp3,dx4,dp4;
+            kerrDerivative(kx,kp,pt,horizonRadius,blackHoleSpin,dx1,dp1);
+            interval/=max(1.0,length(dx1));
+            kerrDerivative(kx+.5*interval*dx1,kp+.5*interval*dp1,pt,horizonRadius,blackHoleSpin,dx2,dp2);
+            kerrDerivative(kx+.5*interval*dx2,kp+.5*interval*dp2,pt,horizonRadius,blackHoleSpin,dx3,dp3);
+            kerrDerivative(kx+interval*dx3,kp+interval*dp3,pt,horizonRadius,blackHoleSpin,dx4,dp4);
+            kx+=interval*(dx1+2.0*dx2+2.0*dx3+dx4)/6.0;
+            kp+=interval*(dp1+2.0*dp2+2.0*dp3+dp4)/6.0;
+            vec3 dx,dp;kerrDerivative(kx,kp,pt,horizonRadius,blackHoleSpin,dx,dp);
+            nextPosition=fromDisk*kx;nextTangent=fromDisk*dx;
+        }else{
+            vec3 acceleration=photonAcceleration(position,angularMomentumSquared);
+            nextPosition=position+interval*tangent+.5*interval*interval*acceleration;
+            nextTangent=tangent+.5*interval*(acceleration+photonAcceleration(nextPosition,angularMomentumSquared));
+        }
 
         vec3 segment = nextPosition - position;
         float segmentLength = length(segment);
         vec3 midpoint = position + 0.5 * segment;
         float midRadius = length(midpoint);
+        if(spinning)midRadius=kerrRadius(toDisk*midpoint,.5*horizonRadius*blackHoleSpin);
         float midFraction = (midRadius - diskRadii.x) / (diskRadii.y - diskRadii.x);
         float midPlane = dot(midpoint, diskAxis);
 
@@ -348,6 +390,7 @@ void main() {
                 vec3 toObserver = -localPhotonDirection(midpoint, tangent);
                 float shift = clamp(frequencyRatio(midRadius, observerRadius,
                     circularVelocityBeta(midpoint, diskAxis), toObserver), 0.05, 6.0);
+                if(spinning)shift=kerrDiskShift(kerrRadius(toDisk*midpoint,.5*horizonRadius*blackHoleSpin),horizonRadius,blackHoleSpin,pt,angularZ,observerBeta,direction);
                 float temperature = 5200.0 * pow(max(midRadius / diskRadii.x, 1.0), -0.75);
                 float beaming = pow(shift, 3.2);
                 plasma += blackbody(temperature * shift) * beaming * density * segmentLength * 0.55;
@@ -360,6 +403,7 @@ void main() {
             float fraction = planeBefore / (planeBefore - planeAfter);
             vec3 intersection = mix(position, nextPosition, fraction);
             float diskRadius = length(intersection);
+            if(spinning)diskRadius=kerrRadius(toDisk*intersection,.5*horizonRadius*blackHoleSpin);
             if (diskRadius > diskRadii.x && diskRadius < diskRadii.y) {
                 vec3 diskPosition = (inverseDiskOrientation * vec4(intersection, 1.0)).xyz;
                 float radial = (diskRadius - diskRadii.x) / (diskRadii.y - diskRadii.x);
@@ -370,6 +414,7 @@ void main() {
                 vec3 toObserver = -localPhotonDirection(intersection, mix(tangent, nextTangent, fraction));
                 float shift = clamp(frequencyRatio(diskRadius, observerRadius,
                     circularVelocityBeta(intersection, diskAxis), toObserver), 0.05, 6.0);
+                if(spinning)shift=kerrDiskShift(kerrRadius(toDisk*intersection,.5*horizonRadius*blackHoleSpin),horizonRadius,blackHoleSpin,pt,angularZ,observerBeta,direction);
                 float temperature = 5200.0 * pow(diskRadius / diskRadii.x, -0.75);
                 float edge = smoothstep(0.0, 0.06, radial) * (1.0 - smoothstep(0.82, 1.0, radial));
                 float beaming = pow(shift, 3.6);
@@ -392,14 +437,19 @@ void main() {
             vec2 mappedUv=mapped.xy/mapped.w*.5+.5;
             if(min(mappedUv.x,mappedUv.y)>0 && max(mappedUv.x,mappedUv.y)<1) {
                 float mappedDepth=texture(sourceDepth,mappedUv).r;
-                if(mappedDepth>=.99999 || depthDistance(mappedDepth)>max(0.0,length(cameraPosition)-3.0*horizonRadius))
-                    radiance=texture(sourceScene,mappedUv).rgb;
+                if(mappedDepth>=.99999 || depthDistance(mappedDepth)>max(0.0,length(cameraPosition)-3.0*horizonRadius)) {
+                    vec4 source=texture(sourceScene,mappedUv);
+                    radiance=source.rgb;
+                    opticalEligibility=source.a;
+                }
             }
         }
     } else if(originalDepth<.99999 && depthDistance(originalDepth)<travelled) {
         fragColor=texture(sourceScene,originalUv);gl_FragDepth=originalDepth;return;
     }
-    fragColor = vec4(radiance + plasma, 1.0);
+    // Preserve stellar-plasma exclusion through lensing; the accretion disk's
+    // own emissive plasma remains an eligible optical light source.
+    fragColor = vec4(radiance + plasma, opticalEligibility);
     // Approximate depth allows the rasterized orbiting bodies to cross the lensed disk.
     gl_FragDepth = hit?clamp(log2(1.0+travelled*1e12)/log2(1.0+20000.0*1e12),0.0,.999998):.999999;
 }
@@ -451,12 +501,12 @@ void main() {
 
 bool BlackHole::Initialize() {
     const std::string vertexSource = std::string("#version 330 core\n")
-        + PlanetTerrain::ShaderFunctions() + vertexBody;
+        + PlanetTerrain::ShaderFunctions() + InterstellarWorlds::ShaderFunctions() + vertexBody;
     const std::string fragmentSource = std::string("#version 330 core\nuniform float horizonRadius;\nuniform vec3 observerBeta;\n")
-        + OrbitalMechanics::RelativityShaderFunctions() + PlanetTerrain::ShaderFunctions() + StellarActivity::ShaderFunctions() + fragmentBody;
+        + OrbitalMechanics::RelativityShaderFunctions() + PlanetTerrain::ShaderFunctions() + PlanetTerrain::SurfaceDetailShaderFunctions() + InterstellarWorlds::ShaderFunctions() + StellarActivity::ShaderFunctions() + fragmentBody;
     program = compileShaderProgram(vertexSource.c_str(), fragmentSource.c_str());
     const std::string lensSource = std::string("#version 330 core\nuniform float horizonRadius;\nuniform vec3 observerBeta;\n")
-        + OrbitalMechanics::RelativityShaderFunctions() + lensFragmentBody;
+        + OrbitalMechanics::RelativityShaderFunctions() + KerrSpacetime::ShaderFunctions() + lensFragmentBody;
     lensProgram = compileShaderProgram(screenVertexSource, lensSource.c_str());
     int linked = GL_FALSE;
     glGetProgramiv(program, GL_LINK_STATUS, &linked);
@@ -479,6 +529,12 @@ bool BlackHole::Initialize() {
     };
     upload(sphere, MakeSphere());
     upload(craftRing, MakeCraftRing());
+    {
+        // A compact, tapered Ranger silhouette, expressed in physical metres.
+        const glm::vec3 p[]={{-2,-1,-4},{2,-1,-4},{-3,-1,3},{3,-1,3},{-1,1.5,-1},{1,1.5,-1},{-2,1,3},{2,1,3}};
+        const int faces[]={0,1,4,1,5,4,0,4,2,2,4,6,1,3,5,3,7,5,4,5,6,5,7,6,2,6,3,3,6,7,0,2,1,1,2,3};
+        std::vector<glm::vec3> vertices;for(int index:faces)vertices.push_back(p[index]);upload(rangerMesh,vertices);
+    }
     glGenVertexArrays(1, &photonPackets.vao);
     glGenBuffers(1, &photonPackets.buffer);
     glBindVertexArray(photonPackets.vao);
@@ -508,50 +564,23 @@ bool BlackHole::Initialize() {
     glBindVertexArray(waterPatch.vao);glBindBuffer(GL_ARRAY_BUFFER,waterPatch.buffer);
     glBufferData(GL_ARRAY_BUFFER,sizeof(glm::vec3),nullptr,GL_DYNAMIC_DRAW);
     glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,sizeof(glm::vec3),nullptr);glEnableVertexAttribArray(0);
-    std::mt19937 random(618);
-    std::uniform_real_distribution<float> component(-1.0f, 1.0f);
-    std::vector<glm::vec3> stars;
-    while (stars.size() < 1600) {
-        const glm::vec3 direction(component(random), component(random), component(random));
-        const float squaredRadius = glm::dot(direction, direction);
-        if (squaredRadius > 0.01f && squaredRadius <= 1.0f)
-            stars.push_back(glm::normalize(direction) * static_cast<float>(45.0*Astronomy::auPerLightYear));
+    catalogue.Generate();destinations=catalogue.Positions();
+    std::vector<glm::vec3> stars,residuals;stars.reserve(destinations.size());residuals.reserve(destinations.size());
+    for(const auto& position:destinations){
+        const glm::vec3 high(position);stars.push_back(high);residuals.push_back(glm::vec3(position-glm::dvec3(high)));
     }
-    upload(backgroundStars, stars);
-    // Each cluster has a spiral disk, a finite thickness, and a compact bulge.
-    std::uniform_real_distribution<float> unit(0.0f, 1.0f);
-    std::normal_distribution<float> elliptical(0.0f,.24f);
-    for (int galaxy = 0; galaxy < 3; ++galaxy) {
-        const auto& group = GalaxyBackground::Groups()[galaxy];
-        const float diskRadius = group.radius * GalaxyBackground::StarDiskRadiusFraction;
-        for (int star = 0; star < 1800; ++star) {
-            const float radius = diskRadius * std::sqrt(unit(random));
-            const float arm = glm::two_pi<float>() * (star % 3) / 3.0f;
-            const float angle = arm + radius / diskRadius * 6.0f + (unit(random) - 0.5f) * 0.65f;
-            const float thickness = (unit(random) - 0.5f)
-                * (0.4f + 1.2f * std::exp(-radius / diskRadius)) * (group.radius / 12.2f);
-            auto local = glm::vec3(radius * std::cos(angle), thickness, radius * std::sin(angle));
-            if(galaxy==1 && star%5==0) {
-                const float u=local.x,v=local.z*.12f;
-                local.x=u*std::cos(.8f)-v*std::sin(.8f);
-                local.z=u*std::sin(.8f)+v*std::cos(.8f);
-            }else if(galaxy==2) {
-                local={elliptical(random)*diskRadius,elliptical(random)*diskRadius*.75f,elliptical(random)*diskRadius};
-            }
-            const auto tilt = glm::rotate(glm::mat4(1), group.tilt, glm::vec3(1, 0, 0));
-            stars.push_back(group.center + glm::vec3(tilt * glm::vec4(local, 0)));
-        }
-    }
-    // Reuse the uploaded star buffer for the complete navigable catalogue.
-    glBindBuffer(GL_ARRAY_BUFFER, backgroundStars.buffer);
-    glBufferData(GL_ARRAY_BUFFER, stars.size() * sizeof(glm::vec3), stars.data(), GL_STATIC_DRAW);
-    backgroundStars.vertexCount = static_cast<int>(stars.size());
-    destinations = std::move(stars);
+    // The authored Solar preset shares the same far-point tier when left behind.
+    stars.push_back(glm::vec3(0));residuals.push_back(glm::vec3(0));
+    upload(backgroundStars,stars);
+    glGenBuffers(1,&stellarResiduals);glBindBuffer(GL_ARRAY_BUFFER,stellarResiduals);
+    glBufferData(GL_ARRAY_BUFFER,residuals.size()*sizeof(glm::vec3),residuals.data(),GL_STATIC_DRAW);
+    glVertexAttribPointer(4,3,GL_FLOAT,GL_FALSE,sizeof(glm::vec3),nullptr);glEnableVertexAttribArray(4);
     std::vector<glm::vec2> properties;properties.reserve(destinations.size());
     for(int star=0;star<static_cast<int>(destinations.size());++star) {
         const auto metadata=StarSystem::DescribeStar(star+10,"");
         properties.push_back({static_cast<float>(metadata.temperature),static_cast<float>(metadata.luminositySolar)});
     }
+    properties.push_back({5772,1});
     glGenBuffers(1,&stellarProperties);glBindBuffer(GL_ARRAY_BUFFER,stellarProperties);
     glBufferData(GL_ARRAY_BUFFER,properties.size()*sizeof(glm::vec2),properties.data(),GL_STATIC_DRAW);
     glVertexAttribPointer(2,1,GL_FLOAT,GL_FALSE,sizeof(glm::vec2),nullptr);glEnableVertexAttribArray(2);
@@ -572,14 +601,14 @@ bool BlackHole::Initialize() {
 }
 
 void BlackHole::ResetSpacecraft(double seconds) {
-    spacecraft.position = glm::dvec3(DiskOrientation() * glm::vec4(
-        OrbitalMechanics::PositionAtTime(spacecraftOrbit, gravitationalParameter, 0.0), 1.0f));
-    spacecraft.velocity = glm::dvec3(DiskOrientation() * glm::vec4(
-        OrbitalMechanics::VelocityAtTime(spacecraftOrbit, gravitationalParameter, 0.0), 0.0f));
+    spacecraft=InterstellarWorlds::DepartureState(seconds);
     spacecraftTime = seconds;
-    fuelSeconds = 1.2*timeScale;
+    fuelSeconds = InterstellarWorlds::FuelSeconds;
     boosterFiring = false;
+    manualBoost = false;
     spacecraftCaptured = false;
+    spacecraftProperTime=0;rangersDetached=false;rangerSeparationTime=0;rangerHistory.clear();
+    rangers=InterstellarWorlds::SeparateRangers(spacecraft);
     trailSampleTime = seconds;
     trail.assign(1, spacecraft.position);
     missionStart = seconds;
@@ -587,8 +616,14 @@ void BlackHole::ResetSpacecraft(double seconds) {
 }
 
 void BlackHole::BoostSpacecraft() {
-    if (!spacecraftCaptured && fuelSeconds > 0.0)
+    if (!spacecraftCaptured && fuelSeconds > 0.0){
         boosterFiring = true;
+        manualBoost=true;
+    }
+}
+
+double BlackHole::SpacecraftEnergy() const {
+    return InterstellarWorlds::SpecificEnergy(spacecraft);
 }
 
 const char* BlackHole::SpacecraftStatus() const {
@@ -596,8 +631,10 @@ const char* BlackHole::SpacecraftStatus() const {
         return "Captured";
     if (boosterFiring && fuelSeconds > 0.0)
         return "Boosting";
+    if(InterstellarWorlds::SpecificEnergy(spacecraft)>0)
+        return glm::dot(spacecraft.position,spacecraft.velocity)>0?"Unbound outbound / escaping":"Unbound flyby";
     if (fuelSeconds > 0.0)
-        return "Coasting / periapsis burn armed";
+        return "Inbound from Mann / Oberth burn armed";
     const double specificEnergy = 0.5 * glm::dot(spacecraft.velocity, spacecraft.velocity)
         - gravitationalParameter / glm::length(spacecraft.position);
     return specificEnergy > 0.0 ? "Escape trajectory" : "Bound orbit";
@@ -613,25 +650,32 @@ void BlackHole::Update(double seconds) {
             flightHistory.push_back({spacecraftTime, spacecraft, false, true});
             break;
         }
-        // A periapsis-burn controller responds to radius and inbound velocity.
-        if (radius < 1.05*distanceScale && glm::dot(spacecraft.position, spacecraft.velocity) < 0.0)
-            BoostSpacecraft();
-
-        double interval = glm::min(seconds - spacecraftTime,
-            glm::min(10.0*timeScale, 0.01 * std::sqrt(radius * radius * radius / gravitationalParameter)));
-        const double thrust = boosterFiring && fuelSeconds > 0.0 ? boosterAcceleration : 0.0;
-        if (thrust > 0.0)
-            interval = glm::min(interval, fuelSeconds);
-        OrbitalMechanics::AdvanceParticle(spacecraft, gravitationalParameter, thrust, interval);
-        spacecraftTime += interval;
-        if (thrust > 0.0) {
-            fuelSeconds = glm::max(0.0, fuelSeconds - interval);
-            if (fuelSeconds == 0.0)
-                boosterFiring = false;
+        const double fuelBefore=fuelSeconds;
+        double proper=0;
+        const double interval=InterstellarWorlds::AdvanceMission(spacecraft,fuelSeconds,boosterFiring,manualBoost,seconds-spacecraftTime,&proper);
+        spacecraftProperTime+=proper;
+        if(rangersDetached){
+            for(auto& ranger:rangers)OrbitalMechanics::AdvanceSchwarzschild(ranger,gravitationalParameter,Astronomy::lightSpeedAu,0,interval);
         }
-        const double sampleInterval = glm::max(0.02*timeScale, (spacecraftTime - missionStart) * 0.01);
-        if (spacecraftTime - flightHistory.back().time >= sampleInterval || thrust > 0.0)
-            flightHistory.push_back({spacecraftTime, spacecraft, boosterFiring, false});
+        const bool burning=fuelBefore>fuelSeconds;
+        spacecraftTime += interval;
+        const bool separation=!rangersDetached && fuelBefore>0 && fuelSeconds==0;
+        if(separation){
+            const auto axis=glm::dmat3(TargetRotation(9,spacecraftTime))*glm::dvec3(1,0,0);
+            const double lapse=std::sqrt(1-Astronomy::gargantuaHorizonAu/glm::length(spacecraft.position));
+            for(int i=0;i<2;++i){
+                rangers[i]=RangerAt(spacecraftTime,i);
+                rangers[i].velocity+=axis*((i==0?-1:1)*3*lapse/Astronomy::metresPerAu);
+            }
+            rangersDetached=true;rangerSeparationTime=spacecraftTime;
+            rangerHistory.push_back({spacecraftTime,rangers});
+        }
+        const double sampleInterval = std::max(1.0,std::min(std::max(0.02*timeScale,(spacecraftTime-missionStart)*.01),
+            .02*std::sqrt(radius*radius*radius/gravitationalParameter)));
+        if (spacecraftTime - flightHistory.back().time >= sampleInterval || burning || separation)
+            flightHistory.push_back({spacecraftTime, spacecraft, boosterFiring, false,spacecraftProperTime});
+        if(rangersDetached && spacecraftTime-rangerHistory.back().time>=sampleInterval)
+            rangerHistory.push_back({spacecraftTime,rangers});
         if (spacecraftTime - trailSampleTime >= 0.04*timeScale) {
             if (trail.size() == 2048)
                 trail.erase(trail.begin(), trail.begin() + 512);
@@ -643,18 +687,16 @@ void BlackHole::Update(double seconds) {
 
 BlackHole::FlightSample BlackHole::FlightAt(double seconds) const {
     if(seconds<=spacecraftTime && seconds>=spacecraftTime-1.0) {
-        const double dt=spacecraftTime-seconds,radius=glm::length(spacecraft.position);
-        auto acceleration=-gravitationalParameter*spacecraft.position/(radius*radius*radius);
-        if(boosterFiring && glm::length(spacecraft.velocity)>0)acceleration+=boosterAcceleration*glm::normalize(spacecraft.velocity);
+        const double dt=spacecraftTime-seconds;
+        const auto acceleration=OrbitalMechanics::SchwarzschildAcceleration(spacecraft,gravitationalParameter,Astronomy::lightSpeedAu,boosterFiring?boosterAcceleration:0);
         return {seconds,{spacecraft.position-spacecraft.velocity*dt+.5*acceleration*dt*dt,
-            spacecraft.velocity-acceleration*dt},boosterFiring,spacecraftCaptured};
+            spacecraft.velocity-acceleration*dt},boosterFiring,spacecraftCaptured,
+            spacecraftProperTime-dt*OrbitalMechanics::SchwarzschildClockRate(spacecraft,horizonRadius,Astronomy::lightSpeedAu)};
     }
     if (seconds < missionStart) {
-        auto state = OrbitalMechanics::ParticleState{
-            glm::dvec3(DiskOrientation() * glm::vec4(OrbitalMechanics::PositionAtTime(
-                spacecraftOrbit, gravitationalParameter, seconds - missionStart), 1)),
-            glm::dvec3(DiskOrientation() * glm::vec4(OrbitalMechanics::VelocityAtTime(
-                spacecraftOrbit, gravitationalParameter, seconds - missionStart), 0))};
+        const auto position=PlanetPosition(seconds,1);
+        auto state=OrbitalMechanics::ParticleState{position+glm::normalize(position)*(bodies[1].radius+100000/Astronomy::metresPerAu),
+            InterstellarWorlds::Orientation()*glm::dvec3(OrbitalMechanics::VelocityAtTime(bodies[1].orbit,gravitationalParameter,seconds))};
         return {seconds, state, false, false};
     }
     auto upper = std::lower_bound(flightHistory.begin(), flightHistory.end(), seconds,
@@ -667,13 +709,13 @@ BlackHole::FlightSample BlackHole::FlightAt(double seconds) const {
         const double fraction = span > 0.0 ? glm::clamp((seconds - lower.time) / span, 0.0, 1.0) : 0.0;
         return {seconds, {glm::mix(lower.state.position, spacecraft.position, fraction),
                           glm::mix(lower.state.velocity, spacecraft.velocity, fraction)},
-                lower.firing, spacecraftCaptured};
+                lower.firing, spacecraftCaptured,glm::mix(lower.properTime,spacecraftProperTime,fraction)};
     }
     const auto& lower = *(upper - 1);
     const double fraction = (seconds - lower.time) / (upper->time - lower.time);
     return {seconds, {glm::mix(lower.state.position, upper->state.position, fraction),
                       glm::mix(lower.state.velocity, upper->state.velocity, fraction)},
-            lower.firing, lower.captured};
+            lower.firing, lower.captured,glm::mix(lower.properTime,upper->properTime,fraction)};
 }
 
 BlackHole::FlightSample BlackHole::ObservedFlight(const glm::dvec3& camera, double seconds) const {
@@ -681,7 +723,7 @@ BlackHole::FlightSample BlackHole::ObservedFlight(const glm::dvec3& camera, doub
     double lower = missionStart - OrbitalMechanics::LightTravelDelay(
         flightHistory.front().state.position, glm::dvec3(camera), gravitationalParameter, horizonRadius) - 10.0;
     double upper = seconds;
-    for (int iteration = 0; iteration < 40; ++iteration) {
+    for (int iteration = 0; iteration < 56; ++iteration) {
         const double emission = 0.5 * (lower + upper);
         const auto sample = FlightAt(emission);
         const double arrival = emission + OrbitalMechanics::LightTravelDelay(
@@ -694,12 +736,76 @@ BlackHole::FlightSample BlackHole::ObservedFlight(const glm::dvec3& camera, doub
     return FlightAt(0.5 * (lower + upper));
 }
 
+OrbitalMechanics::ParticleState BlackHole::RangerAt(double seconds,int index) const {
+    if(!rangersDetached || seconds<rangerSeparationTime){
+        const auto flight=FlightAt(seconds);
+        const auto rotation=glm::dmat3(TargetRotation(9,seconds));
+        const double sign=index==0?-1:1;
+        const auto offset=rotation*glm::dvec3(sign*25/Astronomy::metresPerAu,0,0);
+        const double rate=OrbitalMechanics::SchwarzschildClockRate(flight.state,horizonRadius,Astronomy::lightSpeedAu);
+        return {flight.state.position+offset,flight.state.velocity+glm::cross(rotation*glm::dvec3(0,0,.4*rate),offset)};
+    }
+    if(seconds>=spacecraftTime-1){
+        const auto& current=rangers[index];const double dt=spacecraftTime-seconds;
+        const auto acceleration=OrbitalMechanics::SchwarzschildAcceleration(current,gravitationalParameter,Astronomy::lightSpeedAu);
+        return {current.position-current.velocity*dt+.5*acceleration*dt*dt,current.velocity-acceleration*dt};
+    }
+    auto upper=std::lower_bound(rangerHistory.begin(),rangerHistory.end(),seconds,
+        [](const RangerSample& sample,double time){return sample.time<time;});
+    if(upper==rangerHistory.begin())return upper->state[index];
+    const auto& lower=*(upper-1);
+    const auto& next=upper==rangerHistory.end()?rangers[index]:upper->state[index];
+    const double nextTime=upper==rangerHistory.end()?spacecraftTime:upper->time;
+    const double t=glm::clamp((seconds-lower.time)/(nextTime-lower.time),0.0,1.0);
+    return {glm::mix(lower.state[index].position,next.position,t),glm::mix(lower.state[index].velocity,next.velocity,t)};
+}
+
+OrbitalMechanics::ParticleState BlackHole::ObservedRanger(const glm::dvec3& camera,double seconds,int index) const {
+    double lower=missionStart-OrbitalMechanics::LightTravelDelay(flightHistory.front().state.position,camera,gravitationalParameter,horizonRadius)-10,upper=seconds;
+    for(int iteration=0;iteration<56;++iteration){
+        const double t=.5*(lower+upper);
+        const auto sample=RangerAt(t,index);
+        if(t+OrbitalMechanics::LightTravelDelay(sample.position,camera,gravitationalParameter,horizonRadius)<seconds)lower=t;
+        else upper=t;
+    }
+    return RangerAt(.5*(lower+upper),index);
+}
+
+double BlackHole::ObserverClockRate(const glm::dvec3& camera,double seconds,const glm::dvec3& velocity) const {
+    double rate=OrbitalMechanics::SchwarzschildClockRate({camera,velocity},Astronomy::gargantuaHorizonAu,Astronomy::lightSpeedAu);
+    const double c2=Astronomy::lightSpeedAu*Astronomy::lightSpeedAu;
+    double potential=0;
+    if(glm::length(camera)>20000)return rate;
+    for(int planet=0;planet<3;++planet){
+        const double r=std::max(glm::length(camera-PlanetPosition(seconds,planet)),static_cast<double>(bodies[planet].radius));
+        potential+=Astronomy::solarGravityAu*(InterstellarWorlds::Get(planet).massEarth/332946.0487)/r;
+    }
+    return rate*std::sqrt(std::max(0.0,1-2*potential/c2));
+}
+
 double BlackHole::SpacecraftLightAge(const glm::dvec3& camera, double seconds) const {
     return seconds - ObservedFlight(camera, seconds).time;
 }
 
+glm::dvec3 BlackHole::ObservedSpacecraftPosition(const glm::dvec3& camera,double seconds) const {
+    return ObservedFlight(camera,seconds).state.position;
+}
+
+BlackHole::VehiclePose BlackHole::CockpitPose(int vehicle,double seconds) const {
+    auto rotation=glm::dmat3(TargetRotation(9,seconds));
+    if(vehicle==1){
+        const auto flight=FlightAt(seconds);
+        const auto seat=flight.state.position+rotation*glm::dvec3(23/Astronomy::metresPerAu,0,0);
+        rotation*=glm::dmat3(glm::rotate(glm::dmat4(1),-glm::half_pi<double>(),glm::dvec3(0,1,0)));
+        return {seat,flight.state.velocity,rotation};
+    }
+    const auto state=RangerAt(seconds,glm::clamp(vehicle-2,0,1));
+    if(rangersDetached && seconds>=rangerSeparationTime)rotation=glm::dmat3(AttitudeAlong(glm::vec3(state.velocity)));
+    return {state.position+rotation*glm::dvec3(0,.35/Astronomy::metresPerAu,-1/Astronomy::metresPerAu),state.velocity,rotation};
+}
+
 glm::dvec3 BlackHole::PlanetPosition(double seconds, int planet) {
-    return glm::dmat3(DiskOrientation())*OrbitalMechanics::PositionAtTimeDouble(bodies[planet].orbit,gravitationalParameter,seconds);
+    return InterstellarWorlds::Orientation()*OrbitalMechanics::PositionAtTimeDouble(bodies[planet].orbit,gravitationalParameter,seconds);
 }
 
 int BlackHole::NearestPlanet(const glm::dvec3& position, double seconds) {
@@ -720,9 +826,9 @@ BlackHole::Target BlackHole::ResolveTarget(int id, double seconds) const {
         return {glm::vec3(0), horizonRadius, "Black hole"};
     if (id >= 1 && id <= 8) {
         const auto& body = bodies[id - 1];
-        const auto position=glm::dmat3(DiskOrientation())*OrbitalMechanics::PositionAtTimeDouble(body.orbit,gravitationalParameter,seconds);
+        const auto position=InterstellarWorlds::Orientation()*OrbitalMechanics::PositionAtTimeDouble(body.orbit,gravitationalParameter,seconds);
         return {position, body.radius, body.surface == Planet
-            ? "Planet " + std::to_string(id) : "Orbiting star " + std::to_string(id - 3)};
+            ? InterstellarWorlds::Get(id-1).name : "Orbiting star " + std::to_string(id - 3)};
     }
     if (id == 9)
         return {SpacecraftPosition(), static_cast<float>(50.0/Astronomy::metresPerAu), "Spacecraft"};
@@ -738,14 +844,14 @@ BlackHole::Target BlackHole::ResolveTarget(int id, double seconds) const {
 }
 
 glm::mat3 BlackHole::TargetRotation(int id,double seconds) const {
-    if (id>=1 && id<=3) return glm::mat3(PlanetRotation(seconds));
+    if (id>=1 && id<=3) return glm::mat3(PlanetRotation(seconds,id-1));
     if (id==9) {
         const auto flight=FlightAt(seconds);
         return glm::mat3(AttitudeAlong(glm::vec3(flight.state.position))
-            *glm::rotate(glm::mat4(1),static_cast<float>(std::remainder(flight.time*.4,glm::two_pi<double>())),glm::vec3(0,0,1)));
+            *glm::rotate(glm::mat4(1),static_cast<float>(std::remainder(flight.properTime*.4,glm::two_pi<double>())),glm::vec3(0,0,1)));
     }
     if (id>=4) return glm::mat3(glm::rotate(glm::mat4(1),
-        static_cast<float>(std::remainder(seconds*.08,glm::two_pi<double>())),glm::vec3(0,1,0)));
+        static_cast<float>(std::remainder(seconds*glm::two_pi<double>()/(25.38*Astronomy::secondsPerDay),glm::two_pi<double>())),glm::vec3(0,1,0)));
     return glm::mat3(1); // Schwarzschild's central object has no intrinsic spin.
 }
 
@@ -770,22 +876,26 @@ int BlackHole::PickTarget(const glm::dvec3& origin, const glm::vec3& direction, 
     return selected;
 }
 
-glm::mat4 BlackHole::PlanetRotation(double seconds) {
-    return glm::rotate(glm::mat4(1.0f),
-        static_cast<float>(std::remainder(seconds/Astronomy::secondsPerDay,1.0)*glm::two_pi<double>()),
-        glm::vec3(0.0f, 1.0f, 0.0f));
+glm::mat4 BlackHole::PlanetRotation(double seconds,int planet) {
+    if(planet==0){
+        const auto position=PlanetPosition(seconds,0);
+        const auto velocity=InterstellarWorlds::Orientation()*glm::dvec3(OrbitalMechanics::VelocityAtTime(bodies[0].orbit,gravitationalParameter,seconds));
+        const auto toward=glm::normalize(-position),up=glm::normalize(glm::cross(position,velocity));
+        return glm::mat4(glm::mat3(glm::dmat3(glm::normalize(glm::cross(up,toward)),up,toward)));
+    }
+    const double day=(planet==1?30.0:28.0)*3600;
+    return glm::rotate(glm::rotate(glm::mat4(1),planet==1?.14f:.4f,glm::vec3(1,0,0)),
+        static_cast<float>(std::remainder(seconds/day,1.0)*glm::two_pi<double>()),glm::vec3(0,1,0));
 }
 
-float BlackHole::PlanetSurfaceRadius(const glm::vec3& worldDirection, double seconds, int planet) const {
-    const auto direction = glm::vec3(glm::transpose(PlanetRotation(seconds)) * glm::vec4(worldDirection, 0.0f));
+double BlackHole::PlanetSurfaceRadius(const glm::vec3& worldDirection, double seconds, int planet) const {
+    const auto direction = glm::vec3(glm::transpose(PlanetRotation(seconds,planet)) * glm::vec4(worldDirection, 0.0f));
     const float phase = static_cast<float>(std::remainder(seconds, glm::two_pi<double>()));
-    const float wave = (std::sin(35.0f * direction.y + 4.0f * std::sin(10.0f * direction.x) + phase)
-        + 0.35f * std::sin(80.0f * direction.y + 8.0f * direction.x - phase)) / 1.35f;
-    return bodies[planet].radius + static_cast<float>(2.0/Astronomy::metresPerAu)*wave;
+    return bodies[planet].radius*(1.0+InterstellarWorlds::Elevation(direction,planet,phase));
 }
 
 void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& cameraPosition, double seconds,
-                      const glm::vec3& observerVelocity, bool trajectories, int selected) const {
+                      const glm::vec3& observerVelocity, bool trajectories, int selected,int interiorVehicle) const {
     glEnable(GL_BLEND);glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
     const glm::mat4 identity(1.0f);
     const glm::vec3 cameraFloat(cameraPosition);
@@ -813,45 +923,41 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
     const int surfaceLocation = glGetUniformLocation(program, "surface");
     const int colorLocation = glGetUniformLocation(program, "bodyColor");
 
-    glBindVertexArray(backgroundStars.vao);
-    glUniform1i(surfaceLocation, 7);
-    glUniform3f(colorLocation, 0.52f, 0.58f, 0.68f);
-    const auto backgroundModel=glm::translate(identity,-cameraFloat);
-    glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(backgroundModel));
-    glPointSize(1.5f);
-    glDrawArrays(GL_POINTS, 0, backgroundStars.vertexCount);
-
-    // Background galaxies are drawn before the lens pass so the black hole's
-    // shadow and disk correctly occlude them instead of showing the PNG on top.
-    glBindVertexArray(0);
-    galaxies.Render(viewProjection, cameraPosition);
+    RenderBackground(viewProjection,cameraPosition);
 
     glUseProgram(program);
     glBindVertexArray(sphere.vao);
     const auto drawSphere = [&](const glm::dvec3& center, float radius, Surface surface, const glm::vec3& color, int seed, float temperature) {
         auto model = glm::translate(identity, glm::vec3(center-cameraPosition));
         if (surface == Planet)
-            model *= PlanetRotation(seconds);
+            model *= PlanetRotation(seconds,seed-1);
         else if (surface == Star)
-            model *= glm::mat4(TargetRotation(4,seconds));
+            model *= glm::mat4(TargetRotation(seed,seconds));
         model = glm::scale(model, glm::vec3(radius));
         glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(model));
         glUniform1i(surfaceLocation, surface);
         glUniform3fv(colorLocation, 1, glm::value_ptr(color));
         if(surface==Star) stellarActivity.BindSurface(program,seed,seconds);
-        const bool patch=surface==Planet && glm::length(cameraPosition-center)<radius*1.15;
+        const int planet=seed-1;
+        glUniform1i(glGetUniformLocation(program,"interstellarPlanet"),glm::clamp(planet,0,2));
+        glUniform1i(glGetUniformLocation(program,"oceanWorld"),planet==0);
+        const bool patch=surface==Planet && glm::length(cameraPosition-center)-PlanetSurfaceRadius(glm::normalize(glm::vec3(cameraPosition-center)),seconds,planet)<20000.0/Astronomy::metresPerAu;
         glUniform1i(glGetUniformLocation(program,"patchEnabled"),patch);
         glUniform1i(glGetUniformLocation(program,"patchDrawing"),false);
         if(patch) {
-            const auto direction=glm::normalize(glm::mat3(glm::transpose(PlanetRotation(seconds)))*glm::vec3(cameraPosition-center));
-            if(!waterPatch.vertexCount || glm::length(direction-waterPatchDirection)>.001f) {
+            const auto rotation=glm::dmat3(PlanetRotation(seconds,planet));
+            const auto direction=glm::normalize(glm::transpose(rotation)*(cameraPosition-center));
+            const double metres=radius*Astronomy::metresPerAu;
+            if(!waterPatch.vertexCount || waterPatchRadiusMetres!=metres) {
                 waterPatchDirection=direction;
-                const auto vertices=PlanetTerrain::SpherePatch(direction);
+                waterPatchRadiusMetres=metres;
+                const auto vertices=PlanetTerrain::SurfaceLodVertices(metres);
                 waterPatch.vertexCount=static_cast<int>(vertices.size());
                 glBindBuffer(GL_ARRAY_BUFFER,waterPatch.buffer);
-                glBufferData(GL_ARRAY_BUFFER,vertices.size()*sizeof(glm::vec3),vertices.data(),GL_DYNAMIC_DRAW);
-            }
-            glUniform3fv(glGetUniformLocation(program,"patchCenter"),1,glm::value_ptr(waterPatchDirection));
+                glBufferData(GL_ARRAY_BUFFER,vertices.size()*sizeof(glm::vec3),vertices.data(),GL_STATIC_DRAW);
+            }else if(glm::length(direction-waterPatchDirection)*metres>2.0)waterPatchDirection=direction;
+            const float elevation=InterstellarWorlds::Elevation(glm::vec3(waterPatchDirection),planet,static_cast<float>(std::remainder(seconds,glm::two_pi<double>())));
+            PlanetTerrain::ConfigureSurfacePatch(program,waterPatchDirection,rotation,center-cameraPosition,metres,elevation);
         }
         glBindVertexArray(sphere.vao);
         glDrawArrays(GL_TRIANGLES, 0, sphere.vertexCount);
@@ -861,6 +967,7 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
             glBindVertexArray(sphere.vao);
         }
         glUniform1i(glGetUniformLocation(program,"patchEnabled"),false);
+        glUniform1i(glGetUniformLocation(program,"patchDrawing"),false);
         if(surface==Star)stellarActivity.Render(viewProjection,model,temperature,seed,seconds);
     };
     int bodyIndex = 0;
@@ -874,17 +981,16 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
         glUniform3fv(glGetUniformLocation(program, "velocityBeta"), 1, glm::value_ptr(beta));
         glUniform1f(glGetUniformLocation(program, "temperature"), body.temperature);
         glUniform1f(glGetUniformLocation(program,"waterWaveHeight"),static_cast<float>(2.0/Astronomy::metresPerAu/body.radius));
-        const auto preciseCenter=glm::dmat3(diskTilt)*OrbitalMechanics::PositionAtTimeDouble(body.orbit,gravitationalParameter,seconds);
+        const auto preciseCenter=InterstellarWorlds::Orientation()*OrbitalMechanics::PositionAtTimeDouble(body.orbit,gravitationalParameter,seconds);
         drawSphere(preciseCenter, body.radius, body.surface, body.color,bodyIndex+1,body.temperature);
         ++bodyIndex;
     }
     glUniform3f(glGetUniformLocation(program, "velocityBeta"), 0, 0, 0);
-    for (int star = 0; star < static_cast<int>(destinations.size()); ++star) {
-        if (glm::length(cameraPosition - glm::dvec3(destinations[star])) < 3.0) {
+    for (int id : catalogue.Nearby(cameraPosition)) {
+            const int star=id-10;
             const auto metadata=StarSystem::DescribeStar(star+10,"");
             glUniform1f(glGetUniformLocation(program, "temperature"),static_cast<float>(metadata.temperature));
             drawSphere(destinations[star],static_cast<float>(metadata.radiusSolar*Astronomy::solarRadiusAu), Star, glm::vec3(1),star+10,static_cast<float>(metadata.temperature));
-        }
     }
     const auto observed = ObservedFlight(cameraPosition, seconds);
     if (!observed.captured) {
@@ -898,10 +1004,11 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
         glBufferData(GL_ARRAY_BUFFER,relativeTrail.size()*sizeof(glm::vec3),relativeTrail.data(),GL_DYNAMIC_DRAW);
         if (trajectories) glDrawArrays(GL_LINE_STRIP, 0, static_cast<int>(trail.size()));
 
+        if(interiorVehicle!=1){
         // Attitude guidance keeps the ring axis radial while the engine thrusts prograde.
         auto craftModel = glm::translate(identity, glm::vec3(observed.state.position-cameraPosition))
             * AttitudeAlong(glm::vec3(observed.state.position));
-        craftModel = glm::rotate(craftModel, static_cast<float>(std::remainder(observed.time * 0.4, glm::two_pi<double>())),
+        craftModel = glm::rotate(craftModel, static_cast<float>(std::remainder(observed.properTime * 0.4, glm::two_pi<double>())),
             glm::vec3(0.0f, 0.0f, 1.0f));
         craftModel=glm::scale(craftModel,glm::vec3(craftScale));
         glUniform1i(surfaceLocation, 5);
@@ -935,6 +1042,21 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
             glDrawArrays(GL_TRIANGLES, 0, sphere.vertexCount);
         }
     }
+    }
+    for(int ranger=0;ranger<2;++ranger){
+        if(interiorVehicle==ranger+2)continue;
+        const auto state=ObservedRanger(cameraPosition,seconds,ranger);
+        auto model=glm::translate(identity,glm::vec3(state.position-cameraPosition));
+        model*=(!rangersDetached || observed.time<rangerSeparationTime)?glm::mat4(TargetRotation(9,observed.time))
+            :AttitudeAlong(glm::vec3(state.velocity));
+        model=glm::scale(model,glm::vec3(1.0f/static_cast<float>(Astronomy::metresPerAu)));
+        glUniform1i(surfaceLocation,5);glUniform3f(colorLocation,.82f,.85f,.86f);
+        glUniformMatrix4fv(modelLocation,1,GL_FALSE,glm::value_ptr(model));
+        glBindVertexArray(rangerMesh.vao);glDrawArrays(GL_TRIANGLES,0,rangerMesh.vertexCount);
+        auto cockpit=glm::translate(model,glm::vec3(0,1.2,-1));cockpit=glm::scale(cockpit,glm::vec3(1.2,.5,1.6));
+        glUniform3f(colorLocation,.04f,.16f,.22f);glUniformMatrix4fv(modelLocation,1,GL_FALSE,glm::value_ptr(cockpit));
+        glBindVertexArray(sphere.vao);glDrawArrays(GL_TRIANGLES,0,sphere.vertexCount);
+    }
     glBindVertexArray(0);
     if (trajectories && guides.vao) {
         if(orbitGuides.empty()) {
@@ -958,11 +1080,16 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
         }
         glBindVertexArray(0);
     }
-    for (int planet = 0; planet < 3; ++planet)
-        atmosphere.Render(viewProjection, glm::vec3(0), glm::vec3(PlanetPosition(seconds, planet)-cameraPosition), bodies[planet].radius,true,-cameraFloat);
+    for (int planet = 0; planet < 3; ++planet){
+        const auto center=PlanetPosition(seconds,planet)-cameraPosition;
+        // Distant atmospheric shells belong in the lensed scene. The local
+        // atmosphere is foreground air and must not be warped as a sky image.
+        if(glm::length(center)>bodies[planet].radius*1.03)
+            atmosphere.Render(viewProjection,glm::vec3(0),glm::vec3(center),bodies[planet].radius,true,-cameraFloat);
+    }
     if (photonView) {
         packetCache.clear();
-        packetCache.reserve((destinations.size() + 20) * 4 + 1);
+        packetCache.reserve(100);
         const auto appendStream = [&](const glm::dvec3& emitter, const glm::vec3& color, bool historical) {
             const double delay = glm::max(0.001, OrbitalMechanics::LightTravelDelay(
                 glm::dvec3(emitter), glm::dvec3(photonDetector), gravitationalParameter, horizonRadius));
@@ -982,8 +1109,7 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
             appendStream(ResolveTarget(id, seconds).position,
                 id <= 3 ? glm::vec3(0.2f, 0.65f, 1.0f) : glm::vec3(1.0f, 0.9f, 0.65f), false);
         appendStream(glm::vec3(spacecraft.position), glm::vec3(0.2f, 0.9f, 1.0f), true);
-        for (const auto& star : destinations)
-            appendStream(star, glm::vec3(1.0f, 0.85f, 0.55f), false);
+        RenderBackground(viewProjection,cameraPosition,true,seconds,photonDetector);
         for (const auto& group : GalaxyBackground::Groups())
             appendStream(group.center, glm::vec3(0.7f, 0.55f, 1.0f), false);
         packetCache.push_back({glm::vec3(photonDetector-cameraPosition), glm::vec3(0.4f, 1.0f, 0.5f)});
@@ -1001,6 +1127,11 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
     RenderLensing(viewProjection,cameraPosition,seconds,observerBeta);
+    for(int planet=0;planet<3;++planet){
+        const auto center=PlanetPosition(seconds,planet)-cameraPosition;
+        if(glm::length(center)<=bodies[planet].radius*1.03)
+            atmosphere.Render(viewProjection,glm::vec3(0),glm::vec3(center),bodies[planet].radius,true,-cameraFloat);
+    }
     if (selected>=0 && guides.vao) {
         const auto target=glm::vec3(ResolveTarget(selected,seconds).position-cameraPosition);
         const auto delta=target;
@@ -1026,6 +1157,25 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
             glBindVertexArray(0); glEnable(GL_DEPTH_TEST);
         }
     }
+}
+
+void BlackHole::RenderBackground(const glm::mat4& vp,const glm::dvec3& camera,bool photons,double seconds,const glm::dvec3& detector) const {
+    glUseProgram(program);
+    const glm::vec3 high(camera),low(camera-glm::dvec3(high)),detectorHigh(detector),detectorLow(detector-glm::dvec3(detectorHigh));
+    glUniformMatrix4fv(glGetUniformLocation(program,"viewProjection"),1,GL_FALSE,glm::value_ptr(vp));
+    glUniform1i(glGetUniformLocation(program,"surface"),7);
+    glUniform3fv(glGetUniformLocation(program,"cameraPosition"),1,glm::value_ptr(high));
+    glUniform3fv(glGetUniformLocation(program,"cameraLow"),1,glm::value_ptr(low));
+    glUniform3fv(glGetUniformLocation(program,"detectorHigh"),1,glm::value_ptr(detectorHigh));
+    glUniform3fv(glGetUniformLocation(program,"detectorLow"),1,glm::value_ptr(detectorLow));
+    glUniform1i(glGetUniformLocation(program,"stellarPackets"),photons);
+    glUniform1f(glGetUniformLocation(program,"stellarSeconds"),static_cast<float>(seconds));
+    glBindVertexArray(backgroundStars.vao);glPointSize(photons?2.f:1.5f);
+    if(photons)glDrawArraysInstanced(GL_POINTS,0,backgroundStars.vertexCount,4);
+    else glDrawArrays(GL_POINTS,0,backgroundStars.vertexCount);
+    glUniform1i(glGetUniformLocation(program,"stellarPackets"),false);
+    glBindVertexArray(0);
+    if(!photons)galaxies.Render(vp,camera);
 }
 
 void BlackHole::BuildSkyCube() {
@@ -1088,7 +1238,11 @@ void BlackHole::RenderLensing(const glm::mat4& vp,const glm::dvec3& camera,doubl
     glUniform3fv(glGetUniformLocation(lensProgram,"observerBeta"),1,glm::value_ptr(beta));
     glUniform3fv(glGetUniformLocation(lensProgram,"diskAxis"),1,glm::value_ptr(axis));
     glUniform1f(glGetUniformLocation(lensProgram,"horizonRadius"),horizonRadius);
-    glUniform2f(glGetUniformLocation(lensProgram,"diskRadii"),innerDiskRadius,outerDiskRadius);
+    const bool spinning=std::abs(spin)>.0001;
+    glUniform1f(glGetUniformLocation(lensProgram,"blackHoleSpin"),static_cast<float>(spin));
+    glUniform1i(glGetUniformLocation(lensProgram,"rayStepBudget"),rayBudget);
+    glUniform1f(glGetUniformLocation(lensProgram,"captureRadius"),static_cast<float>(KerrSpacetime::Horizon(horizonRadius,spin)));
+    glUniform2f(glGetUniformLocation(lensProgram,"diskRadii"),spinning?static_cast<float>(KerrSpacetime::ProgradeIsco(horizonRadius,spin)):innerDiskRadius,outerDiskRadius);
     glUniform1f(glGetUniformLocation(lensProgram,"diskPhase"),static_cast<float>(std::remainder(OrbitalMechanics::MeanMotion(gravitationalParameter,outerDiskRadius)*seconds,glm::two_pi<double>())));
     glUniform1f(glGetUniformLocation(lensProgram,"plasmaTime"),static_cast<float>(seconds/timeScale));
     glUniform1i(glGetUniformLocation(lensProgram,"sourceScene"),0);glUniform1i(glGetUniformLocation(lensProgram,"sourceDepth"),1);glUniform1i(glGetUniformLocation(lensProgram,"sky"),2);
@@ -1099,11 +1253,12 @@ void BlackHole::RenderLensing(const glm::mat4& vp,const glm::dvec3& camera,doubl
 void BlackHole::Release() {
     stellarActivity.Release();
     if(stellarProperties)glDeleteBuffers(1,&stellarProperties);stellarProperties=0;
+    if(stellarResiduals)glDeleteBuffers(1,&stellarResiduals);stellarResiduals=0;
     for(auto texture:{skyCube,sourceColor,sourceDepth})if(texture)glDeleteTextures(1,&texture);
     skyCube=sourceColor=sourceDepth=0;sourceWidth=sourceHeight=0;
     atmosphere.Release();
     galaxies.Release();
-    for (auto* mesh : {&sphere, &backgroundStars, &craftRing, &craftTrail, &photonPackets, &guides, &waterPatch}) {
+    for (auto* mesh : {&sphere, &backgroundStars, &craftRing, &rangerMesh, &craftTrail, &photonPackets, &guides, &waterPatch}) {
         if (mesh->vao)
             glDeleteVertexArrays(1, &mesh->vao);
         if (mesh->buffer)
