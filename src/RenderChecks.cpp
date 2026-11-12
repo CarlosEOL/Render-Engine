@@ -21,7 +21,9 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
     float menuFrame=.016f;
     Update(menuFrame);
     bool success = true;
+    bool reportedFailure=false;
     const auto capture = [&](const char *name,bool keepToast=false) {
+        if(!success && !reportedFailure){std::cerr<<"Previous checks failed before "<<name<<"\n";reportedFailure=true;}
         if(!keepToast)speedToastUntil = 0;
         float dt = .016f;
         Update(dt);
@@ -100,6 +102,26 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
     starSystem.SelectPlanet(2);
     starSystem.GoToSelected(simulationTime, cameraFront, cameraUp);
     capture("solar-earth");
+    const auto moon=std::find_if(starSystem.Planets().begin(),starSystem.Planets().end(),[](const auto& p){return p.name=="Moon";});
+    if(moon==starSystem.Planets().end())return false;
+    const int moonIndex=static_cast<int>(moon-starSystem.Planets().begin());
+    const auto moonCenter=starSystem.Position(moonIndex,simulationTime);
+    starSystem.SelectPlanet(moonIndex);
+    starSystem.camera=moonCenter+glm::normalize(-moonCenter)*(3*moon->radiusEarth*Astronomy::earthRadiusAu);
+    cameraFront=glm::normalize(glm::vec3(moonCenter-starSystem.camera));cameraUp={0,1,0};fieldOfView=45;
+    visionProfile=0;lensFlareStrength=0;exposureEv=0;
+    const auto lunar=capture("moon-neutral-regolith");
+    int moonWidth,moonHeight,moonLogicalW,moonLogicalH;
+    glfwGetFramebufferSize(window,&moonWidth,&moonHeight);glfwGetWindowSize(window,&moonLogicalW,&moonLogicalH);
+    moonWidth-=scenePanel.Width()*moonWidth/moonLogicalW;
+    size_t moonBright=0,moonNeutral=0;
+    for(int y=moonHeight*2/5;y<moonHeight*3/5;++y)for(int x=moonWidth*2/5;x<moonWidth*3/5;++x){
+        const size_t p=(static_cast<size_t>(y)*moonWidth+x)*3;
+        const int r=lunar[p],g=lunar[p+1],b=lunar[p+2];
+        if(std::max({r,g,b})>30){++moonBright;if(std::abs(r-g)<4 && std::abs(g-b)<8)++moonNeutral;}
+    }
+    std::cout<<"Lunar neutral pixels: "<<moonNeutral<<" / "<<moonBright<<"\n";
+    if(moonBright<100 || moonNeutral<moonBright*.98){std::cerr<<"Moon received a climate colour palette\n";success=false;}
     trajectories=false;
     starSystem.SelectPlanet(5);starSystem.GoToSelected(simulationTime,cameraFront,cameraUp);
     const auto saturn=starSystem.Position(5,simulationTime);
@@ -195,6 +217,56 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
     ToggleLanding();
     fieldOfView = 80;
     capture("miller-surface");
+    // Foreground air must only affect rays intersecting its own shell, even
+    // when the accretion disk is directly behind the planet. Disable camera
+    // optics here so this tests atmospheric/lensing composition in scene RGB.
+    ToggleLanding();followPlanet=false;followSpacecraft=false;followSelected=false;
+    trajectories=false;selectedTarget=-1;lensFlareStrength=0;visionProfile=0;exposureEv=0;
+    const auto millerCenter=BlackHole::PlanetPosition(simulationTime);
+    const auto millerOutward=glm::normalize(millerCenter);
+    const auto millerUp=glm::normalize(glm::cross(millerOutward,glm::dvec3(0,1,0)));
+    const auto millerSide=glm::normalize(glm::cross(millerOutward,millerUp));
+    fieldOfView=65;
+    for(double radii:{3.0,1.029,1.031}){
+        const auto offset=glm::normalize(millerOutward*(radii>2?.94:.35)+millerSide*(radii>2?.35:.94));
+        cameraPos=millerCenter+offset*(Astronomy::millerRadiusAu*radii);
+        const auto toPlanet=-offset;
+        const auto skyTangent=glm::normalize(-millerOutward-toPlanet*glm::dot(-millerOutward,toPlanet));
+        cameraFront=glm::vec3(radii>2?toPlanet:glm::normalize(toPlanet*.2+skyTangent*.98));
+        cameraUp=glm::vec3(radii>2?millerUp:glm::normalize(offset-glm::dvec3(cameraFront)*glm::dot(offset,glm::dvec3(cameraFront))));
+        const auto label=std::string("miller-atmosphere-")+std::to_string(radii);
+        blackHole.SetAtmospheresEnabled(false);sceneCacheValid=false;
+        capture((label+"-off").c_str());
+        GLint width=0,height=0;glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,optics.SceneTexture());
+        glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_WIDTH,&width);glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_HEIGHT,&height);
+        std::vector<float> noAir(static_cast<size_t>(width)*height*4);
+        glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_FLOAT,noAir.data());
+        blackHole.SetAtmospheresEnabled(true);sceneCacheValid=false;
+        capture((label+"-on").c_str());
+        glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,optics.SceneTexture());std::vector<float> air(noAir.size());
+        glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_FLOAT,air.data());
+        const double aspect=static_cast<double>(width)/height,tangent=std::tan(glm::radians(static_cast<double>(fieldOfView))*.5);
+        const auto right=glm::normalize(glm::cross(glm::dvec3(cameraFront),glm::dvec3(cameraUp)));
+        const auto up=glm::normalize(glm::cross(right,glm::dvec3(cameraFront)));
+        const auto origin=cameraPos-millerCenter;
+        // Four-pixel allowance excludes the linear reconstruction footprint.
+        const double shellRadius=Astronomy::millerRadiusAu*1.025+glm::length(origin)*tangent*8/height;
+        size_t leaked=0,affected=0,nonfinite=0;
+        for(int y=0;y<height;++y)for(int x=0;x<width;++x){
+            const auto direction=glm::normalize(glm::dvec3(cameraFront)+right*((2*(x+.5)/width-1)*tangent*aspect)+up*((2*(y+.5)/height-1)*tangent));
+            const double along=glm::dot(origin,direction);
+            const bool intersects=along<0 && glm::dot(origin,origin)-along*along<shellRadius*shellRadius;
+            const size_t pixel=(static_cast<size_t>(y)*width+x)*4;
+            bool changed=false;
+            for(int c=0;c<3;++c){
+                if(!std::isfinite(air[pixel+c])){success=false;++nonfinite;}
+                if(std::abs(air[pixel+c]-noAir[pixel+c])>.00001f)changed=true;
+            }
+            if(changed){++affected;if(!intersects)++leaked;}
+        }
+        std::cout<<label<<" texture="<<width<<"x"<<height<<" affected="<<affected<<"; air outside shell="<<leaked<<"; nonfinite="<<nonfinite<<"\n";
+        if(leaked>0 || affected<100){std::cerr<<"Miller atmosphere escaped its foreground shell\n";success=false;}
+    }
     StartSolarSystem();
     starSystem.SelectPlanet(-1);
     starSystem.GoToSelected(simulationTime, cameraFront, cameraUp);
@@ -488,27 +560,33 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
     lastSpacecraftPosition=blackHole.SpacecraftPosition();cameraUp={0,1,0};
     cameraFront=glm::normalize(glm::vec3(blackHole.ObservedSpacecraftPosition(cameraPos,simulationTime)-cameraPos));
     const auto nearKerrShip=capture("endurance-close-kerr");
+    glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,blackHole.LensingSourceDepthTexture());
+    GLint shipWidth,shipHeight;
+    glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_WIDTH,&shipWidth);
+    glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_HEIGHT,&shipHeight);
+    std::vector<float> shipDepth(static_cast<size_t>(shipWidth)*shipHeight);
+    glGetTexImage(GL_TEXTURE_2D,0,GL_DEPTH_COMPONENT,GL_FLOAT,shipDepth.data());
+    glBindTexture(GL_TEXTURE_2D,optics.SceneTexture());
+    std::vector<float> shipKerrHdr(shipDepth.size()*4);
+    glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_FLOAT,shipKerrHdr.data());
     KeyCallback(window,1330,0,GLFW_PRESS,0);
     const auto nearStaticShip=capture("endurance-close-schwarzschild");
-    GLint inspectionViewport[4];glGetIntegerv(GL_VIEWPORT,inspectionViewport);
-    int solidShipPixels=0;
-    for(int y=inspectionViewport[3]/2-100;y<inspectionViewport[3]/2+100;++y)
-        for(int x=inspectionViewport[2]/2-100;x<inspectionViewport[2]/2+100;++x){
-            const size_t i=(static_cast<size_t>(y)*inspectionViewport[2]+x)*3;
-            if(i+2>=nearKerrShip.size())continue;
-            const int r=nearKerrShip[i],g=nearKerrShip[i+1],b=nearKerrShip[i+2];
-            if(r>60 && std::abs(r-g)<15 && std::abs(g-b)<15){
-                ++solidShipPixels;
-                for(int c=0;c<3;++c)if(std::abs(int(nearKerrShip[i+c])-int(nearStaticShip[i+c]))>2)success=false;
-            }
-        }
-    std::cout<<"Foreground ship pixels stable across spin: "<<solidShipPixels<<"\n";
-    if(solidShipPixels<100)success=false;
     glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,optics.SceneTexture());
     GLint hdrWidth,hdrHeight;glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_WIDTH,&hdrWidth);
     glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_HEIGHT,&hdrHeight);
     std::vector<float> shipHdr(static_cast<size_t>(hdrWidth)*hdrHeight*4);
     glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_FLOAT,shipHdr.data());glBindTexture(GL_TEXTURE_2D,0);
+    size_t solidShipPixels=0;
+    if(hdrWidth!=shipWidth || hdrHeight!=shipHeight)success=false;
+    else for(size_t pixel=0;pixel<shipDepth.size();++pixel){
+        const double metres=(std::exp2(shipDepth[pixel]*std::log2(1.0+20000.0*1e12))-1.0)/1e12*Astronomy::metresPerAu;
+        if(metres<1000000){
+            ++solidShipPixels;
+            for(int c=0;c<3;++c)if(std::abs(shipKerrHdr[pixel*4+c]-shipHdr[pixel*4+c])>.00001f)success=false;
+        }
+    }
+    std::cout<<"Depth-identified foreground ship pixels stable across spin: "<<solidShipPixels<<"\n";
+    if(solidShipPixels<100)success=false;
     for(float value:shipHdr)if(!std::isfinite(value)){std::cerr<<"Nonfinite ship HDR radiance\n";success=false;break;}
     KeyCallback(window,1332,0,GLFW_PRESS,0);
     simulationTime=180*Astronomy::secondsPerDay;

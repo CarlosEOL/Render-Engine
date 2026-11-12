@@ -132,6 +132,8 @@ Endurance and Ranger interiors:
 
 See [all refinement changes and reasons](docs/REFINEMENT_2026-11-11.md), [the earlier change log](docs/SIMULATION_CHANGES.md) and [DX12 migration status](docs/DX12_MIGRATION.md).
 
+The [November 12 atmosphere and Moon fixes](docs/ATMOSPHERE_AND_MOON_2026-11-12.md) protect Miller's atmospheric rim from foreground lens distortion in orbital views and give the Moon neutral regolith colours while retaining its terrain relief.
+
 ## Change log and reasons
 
 The entries below record earlier implementation stages. Current behavior is described above; later replacements and their reasons are recorded in [the current detailed log](docs/SIMULATION_CHANGES.md).

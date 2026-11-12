@@ -1090,11 +1090,18 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
         }
         glBindVertexArray(0);
     }
-    for (int planet = 0; planet < 3; ++planet){
+    std::array<bool,3> foregroundAtmosphere{};
+    const double foregroundEnd=std::max(1000000.0/Astronomy::metresPerAu,
+        glm::length(cameraPosition)-3.0*horizonRadius);
+    for (int planet = 0; atmospheresEnabled && planet < 3; ++planet){
         const auto center=PlanetPosition(seconds,planet)-cameraPosition;
-        // Distant atmospheric shells belong in the lensed scene. The local
-        // atmosphere is foreground air and must not be warped as a sky image.
-        if(glm::length(center)>bodies[planet].radius*1.03)
+        const double shellRadius=static_cast<double>(bodies[planet].radius)*1.025;
+        const double distance=glm::length(center);
+        // Use the same foreground distance as the lens-depth guard, including
+        // the entire shell. Protect foreground air from orbit, not just while
+        // the camera is inside it. Atmospheres behind the lens remain lensed.
+        foregroundAtmosphere[planet]=distance<=shellRadius || distance+shellRadius<foregroundEnd;
+        if(!foregroundAtmosphere[planet])
             atmosphere.Render(viewProjection,glm::vec3(0),glm::vec3(center),bodies[planet].radius,true,-cameraFloat);
     }
     if (photonView) {
@@ -1137,9 +1144,9 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
     RenderLensing(viewProjection,cameraPosition,seconds,observerBeta);
-    for(int planet=0;planet<3;++planet){
+    for(int planet=0;atmospheresEnabled && planet<3;++planet){
         const auto center=PlanetPosition(seconds,planet)-cameraPosition;
-        if(glm::length(center)<=bodies[planet].radius*1.03)
+        if(foregroundAtmosphere[planet])
             atmosphere.Render(viewProjection,glm::vec3(0),glm::vec3(center),bodies[planet].radius,true,-cameraFloat);
     }
     if (selected>=0 && guides.vao) {

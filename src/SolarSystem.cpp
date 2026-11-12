@@ -212,6 +212,8 @@ void StarSystem::LoadSolarSystem()
         planets.push_back(body);
     };
     moon("Moon", 2, 1737.4, .0123, 384400, .0549, 27.3217, 0);
+    planets.back().palette=Planet::Palette::Lunar;
+    planets.back().color={.47f,.47f,.46f};
     moon("Io", 4, 1821.6, .01495, 421700, .0041, 1.769, .3);
     moon("Europa", 4, 1560.8, .00804, 671100, .0094, 3.551, 1);
     moon("Ganymede", 4, 2634.1, .0248, 1070400, .0013, 7.155, 2);

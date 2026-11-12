@@ -19,6 +19,8 @@ public:
     double Spin() const { return spin; }
     void SetRayBudget(int value) { rayBudget=glm::clamp(value,64,384); }
     int RayBudget() const { return rayBudget; }
+    void SetAtmospheresEnabled(bool enabled) { atmospheresEnabled=enabled; }
+    unsigned int LensingSourceDepthTexture() const { return sourceDepth; }
     void RenderBackground(const glm::mat4& vp,const glm::dvec3& camera,bool photons=false,
         double seconds=0,const glm::dvec3& detector=glm::dvec3(0)) const;
     std::vector<int> NearbyStars(const glm::dvec3& camera) const { return catalogue.Nearby(camera); }
@@ -71,6 +73,7 @@ private:
     unsigned int program = 0;
     double spin=.8;
     int rayBudget=160;
+    bool atmospheresEnabled=true;
     unsigned int lensProgram = 0;
     unsigned int screenVao = 0;
     unsigned int stellarProperties = 0;

@@ -506,6 +506,7 @@ uniform float temperature;
 uniform float phase;
 uniform bool patchEnabled;
 uniform bool saturnShadow;
+uniform int surfacePalette;
 uniform float bodyRadiusKm;
 void main() {
     if (bodyKind == 4) {
@@ -532,6 +533,14 @@ void main() {
         vec3 surface=planetSurface(radial,height,phase);
         normal=patchDrawing?normalize(cross(dFdx(patchDeltaMetres),dFdy(patchDeltaMetres))):normalize(cross(dFdx(surface),dFdy(surface)));
         if (dot(normal,radial)<0) normal=-normal;
+        if(surfacePalette==1){
+            // Lunar albedo is independent of elevation: seeded dark maria and
+            // bright highlands share a neutral regolith palette at every LOD.
+            float maria=smoothstep(-.12,.18,terrainFbm(radial*3.1+vec3(17,53,29)));
+            material=albedo*mix(.46,1.12,maria);
+            material*=.90+.15*(.5+.5*terrainNoise(radial*120.0));
+            water=0.0;
+        }else{
         float moisture=.5+.5*terrainNoise(radial*5.0+vec3(31));
         material=mix(albedo*vec3(1.3,.9,.5),albedo*vec3(.45,1.1,.55),moisture);
         material=mix(vec3(.55,.46,.31),material,smoothstep(seaLevel,seaLevel+.04,height));
@@ -541,6 +550,7 @@ void main() {
         vec3 ocean=mix(vec3(.02,.30,.36),vec3(.003,.015,.05),
             1.0-exp(-15.0*max(seaLevel-height,0.0)));
         material=mix(material,ocean,water);
+        }
         groundDetail(material,normal,patchDeltaMetres,water,length(relativePosition)*149597870700.0,phase);
     } else {
         float bands=.5+.5*sin(70.0*radial.y+7.0*terrainFbm(radial*5.0));
@@ -660,6 +670,7 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
         glUniform1i(glGetUniformLocation(program,"saturnShadow"),solarSystem && body.name=="Saturn");
         glUniform1f(glGetUniformLocation(program,"bodyRadiusKm"),static_cast<float>(radius*Astronomy::metresPerAu/1000));
         glUniform1i(glGetUniformLocation(program, "bodyKind"), body.gas ? 2 : 1);
+        glUniform1i(glGetUniformLocation(program, "surfacePalette"),static_cast<int>(body.palette));
         glUniform1f(glGetUniformLocation(program, "terrainSeed"), static_cast<float>(body.seed));
         glUniform1f(glGetUniformLocation(program, "seaLevel"), body.seaLevel);
         glUniform1f(glGetUniformLocation(program, "terrainRelief"), .003f);
