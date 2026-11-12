@@ -510,9 +510,7 @@ std::string StarSystem::Information(double seconds) const
              << " days\n"
              << "Temperature  " << body.temperature << " K\n";
     }
-    text << "\nQ/E  Roll\nR/F  Up/down\nT  Follow position\nShift+R  Follow rotation\nF2  Orbit paths\nF3  Information\nF4  All star systems\nShift+F4  Current system only\nHome  Overview\nG  Go to selection\nL "
-            " Land / lift off\n"
-         << (landed      ? "\nStanding on surface"
+    text         << (landed      ? "\nStanding on surface"
              : following ? (followingRotation?"\nFollowing translation and rotation":"\nFollowing position")
                          : "\nFree camera");
     if(landed)text<<"\nHigh-detail surface: 100 m around camera\nCoarser terrain beyond 100 m\n";
@@ -571,10 +569,10 @@ uniform int surfacePalette;
 uniform float bodyRadiusKm;
 void main() {
     if (bodyKind == 4) {
-        color=vec4(albedo,1); gl_FragDepth=0; return;
+        color=vec4(albedo,0); gl_FragDepth=0; return;
     }
     gl_FragDepth=log2(1.0+length(relativePosition)*1e12)/log2(1.0+20000.0*1e12);
-    if (bodyKind == 3) { color=vec4(albedo,1); return; }
+    if (bodyKind == 3) { color=vec4(albedo,0); return; }
     vec3 radial=normalize(localPosition);
     if (bodyKind == 0) {
         float mu=dot(normalize(mat3(model)*radial),normalize(-relativePosition));
@@ -630,7 +628,7 @@ void main() {
         }
     }
     float specular=water*pow(max(dot(normal,normalize(light+view)),0.0),100.0);
-    color=vec4(material*(.012+diffuse)+specular,1);
+    color=vec4(material*(.012+diffuse)+specular,0);
 }
 )";
     program = compileShaderProgram(vertex.c_str(), fragment.c_str());
@@ -681,6 +679,7 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
     if (!program || planets.empty())
         return;
     if(!InDetailRange())return;
+    glDisable(GL_BLEND); // Opaque reflected light writes RGB and zero flare eligibility.
     double clearance = glm::length(camera) - star.radiusSolar * Astronomy::solarRadiusAu;
     for (int planet = 0; planet < static_cast<int>(planets.size()); ++planet)
     {
@@ -844,7 +843,7 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
         const auto center = glm::vec3(Position(planet, seconds) - camera);
         atmosphere.Render(vp, glm::vec3(0), center,
                           static_cast<float>(planets[planet].radiusEarth * Astronomy::earthRadiusAu), true,
-                          glm::vec3(-camera));
+                          glm::vec3(-camera),solarSystem && planet==2,seconds,glm::mat3(Rotation(planet,seconds)));
     }
     const auto clip = vp * glm::vec4(glm::vec3(Position(selected, seconds) - camera), 1);
     if (showSelection && clip.w > 0)

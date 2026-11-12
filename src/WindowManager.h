@@ -1,6 +1,7 @@
 #pragma once
 #include "VehicleInterior.h"
 #include "ObjectEditor.h"
+#include "ControlsPanel.h"
 #include "KerrSpacetime.h"
 
 #include <vector>
@@ -79,7 +80,7 @@ private:
     void UpdateObserver(double previousTime, float realSeconds);
     void InitializeOverlay();
     void ReleaseOverlay();
-    void ShowSpeedToast(float speed, bool starSystem);
+    void ShowSpeedToast(double speed, bool starSystem);
     void ShowStatusToast(const std::string& text,bool compact=true);
     void ShowZoomToast(bool force=false);
     void RenderSpeedToast();
@@ -106,6 +107,7 @@ private:
     bool sceneCacheValid = false;
     bool idleFrame = false;
     std::array<double,24> lastSceneSignature = {};
+    ControlsPanel controlsPanel;
     AppMenu mainMenu;
     ScenePanel scenePanel;
     StarSystem starSystem;
@@ -158,7 +160,7 @@ private:
     glm::dvec3 lastSpacecraftPosition = glm::dvec3(0.0);
     bool mouseCaptured = false;
     bool zoomDragging = false;
-    float cameraSpeed = 1.0f;
+    double cameraSpeed = 1.0;
     float fieldOfView = 45.0f;
     double simulationTime = 0.0;
     double localTime = 0.0;

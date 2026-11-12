@@ -372,13 +372,13 @@ Connections: {
     lensFlareStrength=0;exposureEv=0;KeyCallback(window,1200,0,GLFW_PRESS,0);
     KeyCallback(window,1205,0,GLFW_PRESS,0);const auto hdrDiskOff=capture("black-hole-hdr-unassisted");
     KeyCallback(window,1204,0,GLFW_PRESS,0);const auto hdrDiskOn=capture("black-hole-hdr-visible");
-    if(displayBrightness(hdrDiskOn)<=displayBrightness(hdrDiskOff))fail();
+    if(hdrDiskOn!=hdrDiskOff){std::cerr<<"HDR depends on legacy disk lift\n";fail();}
     KeyCallback(window,1201,0,GLFW_PRESS,0);optics.SetAutoExposure(true);
     KeyCallback(window,1205,0,GLFW_PRESS,0);const auto pureDiskOff=capture("black-hole-auto-unassisted");
     KeyCallback(window,1204,0,GLFW_PRESS,0);const auto pureDiskOn=capture("black-hole-auto-visible");
     std::cout<<"Black hole display sums HDR "<<displayBrightness(hdrDiskOff)<<" -> "<<displayBrightness(hdrDiskOn)
         <<"; Auto "<<displayBrightness(pureDiskOff)<<" -> "<<displayBrightness(pureDiskOn)<<"\n";
-    if(displayBrightness(pureDiskOn)<=displayBrightness(pureDiskOff))fail();
+    if(displayBrightness(hdrDiskOn)<=displayBrightness(pureDiskOn)){std::cerr<<"HDR failed to preserve faint background light\n";fail();}
     KeyCallback(window,1200,0,GLFW_PRESS,0);lensFlareStrength=.45f;
     cameraPos={0,0,650};cameraFront={0,0,-1};cameraUp={0,1,0};fieldOfView=4;
     capture("gargantua-visible-from-mann-distance");
@@ -465,8 +465,8 @@ Connections: {
     const auto disabled=capture("solar-prominences-disabled");
     size_t exteriorPlasma=0;
     for(size_t i=0;i<active.size();i+=3)
-        if(disabled[i]<5 && disabled[i+1]<5 && disabled[i+2]<5
-            && (active[i]>20 || active[i+1]>20 || active[i+2]>20))++exteriorPlasma;
+        if(int(active[i])>int(disabled[i])+20 || int(active[i+1])>int(disabled[i+1])+20
+            || int(active[i+2])>int(disabled[i+2])+20)++exteriorPlasma;
     std::cout<<"Exterior plasma pixels: "<<exteriorPlasma<<"\n";
     if(exteriorPlasma<100)fail();
     KeyCallback(window,1321,0,GLFW_PRESS,0);
@@ -955,7 +955,7 @@ Connections: {
         && std::abs(settled[0]-settled[1])<.01f
         && brightening[0]>settled[0] && brightening[0]<brightening[1]
         && (initial[0]-darkening[0])>(brightening[0]-settled[0])
-        && black[0]==8 && unresolved[0]>resolved[0]+5 && probeError==GL_NO_ERROR;
+        && black[0]==8 && std::abs(unresolved[0]-resolved[0])<.01f && probeError==GL_NO_ERROR;
     std::cout<<"Exposure meter EV: "<<initial[0]<<" -> "<<darkening[0]
              <<" -> "<<settled[0]<<"; brightening "<<brightening[0]
              <<"; black "<<black[0]<<"; valid="<<meterValid<<"\n";

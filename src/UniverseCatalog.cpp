@@ -1,10 +1,13 @@
 #include "UniverseCatalog.h"
 #include "Astronomy.h"
+#include "MilkyWayModel.h"
 #include <cmath>
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <random>
 #include <stdexcept>
+#include <algorithm>
+#include <numeric>
 
 namespace {
 std::uint64_t Mix(std::uint64_t x) {
@@ -29,9 +32,9 @@ Universe::Galaxy Universe::GalaxyAt(int index, std::uint64_t seed) {
   const double ly = Astronomy::auPerLightYear;
   if (index == 0)
     return {key,
-            {-26000 * ly, 0, 0},
-            {50000 * ly, 50000 * ly, 50000 * ly},
-            glm::dmat3(1),
+            MilkyWayModel::CenterAu(),
+            glm::dvec3(50*MilkyWayModel::auPerKpc),
+            MilkyWayModel::Orientation(),
             0};
   std::mt19937_64 rng(key);
   const glm::dvec3 sectors[] = {{0, 0, -1}, {1, 0, -1}, {-1, 1, -2}};
@@ -54,11 +57,15 @@ Universe::Galaxy Universe::GalaxyAt(int index, std::uint64_t seed) {
 std::uint64_t Universe::SystemSeed(int id, std::uint64_t seed) {
   return Mix(seed ^ Mix(static_cast<std::uint64_t>(id)));
 }
+int Universe::GalaxyForStar(int index){
+  if(index<0 || index>=StarCount)throw std::invalid_argument("Unknown star catalogue entry");
+  return index<1600 || index>=7000?0:1+(index-1600)/1800;
+}
 Universe::Population Universe::StarPopulation(int index) {
   if(index<0 || index>=StarCount)throw std::invalid_argument("Unknown star catalogue entry");
   if(index<1024)return Population::LocalDisk;
   const auto fraction=Mix(static_cast<std::uint64_t>(index)^0xbadc0ffeeULL)%100;
-  const int galaxy=index<1600?0:1+(index-1600)/1800;
+  const int galaxy=GalaxyForStar(index);
   if(galaxy==3)return fraction<80?Population::Bulge:Population::Halo;
   return fraction<12?Population::Bulge:fraction<17?Population::Halo:
       fraction<62?Population::SpiralArm:Population::ThinDisk;
@@ -67,7 +74,7 @@ Universe::Population Universe::StarPopulation(int index) {
 glm::dvec3 Universe::StarPosition(int index, std::uint64_t seed) {
   if (index < 0 || index >= StarCount)
     throw std::invalid_argument("Unknown star catalogue entry");
-  const int galaxy = index < 1600 ? 0 : 1 + (index - 1600) / 1800;
+  const int galaxy = GalaxyForStar(index);
   const auto group = GalaxyAt(galaxy, seed);
   std::mt19937_64 rng(SystemSeed(index + 10, seed) ^ group.key);
   const double ly = Astronomy::auPerLightYear;
@@ -76,14 +83,40 @@ glm::dvec3 Universe::StarPosition(int index, std::uint64_t seed) {
     // camera.
     const double r = std::cbrt(Unit(rng)) * 75 * ly,
                  a = Unit(rng) * glm::two_pi<double>();
-    const double z = (Unit(rng) * 2 - 1) * std::min(18 * ly, r * .35);
-    const auto p = glm::dvec3(r * std::cos(a), z, r * std::sin(a));
+    const double vertical=Unit(rng)*2-1,horizontal=std::sqrt(1-vertical*vertical);
+    const auto p = glm::dvec3(r*horizontal*std::cos(a),r*vertical,r*horizontal*std::sin(a));
     if (!group.Contains(p))
       throw std::runtime_error("Local star outside its galaxy");
     return p;
   }
   glm::dvec3 q;
   const auto population=StarPopulation(index);
+  if(galaxy==0){
+    // Density-weighted Galactic populations in kpc. Local survey stars above
+    // retain their own solar-neighbourhood sample; the rest trace structure.
+    glm::dvec3 p;
+    do{
+      const double angle=Unit(rng)*glm::two_pi<double>();
+      if(population==Population::Bulge){
+        p={std::pow(Unit(rng),.65)*5*(Unit(rng)<.5?-1:1),
+            (Unit(rng)*2-1)*1.2,(Unit(rng)*2-1)*1.6};
+        const double bar=glm::radians(MilkyWayModel::barAngleDegrees);
+        p={p.x*std::cos(bar)-p.z*std::sin(bar),p.y,p.x*std::sin(bar)+p.z*std::cos(bar)};
+      }else if(population==Population::Halo){
+        const double radius=2+std::pow(Unit(rng),.55)*43,y=Unit(rng)*2-1;
+        p={radius*std::sqrt(1-y*y)*std::cos(angle),radius*y,radius*std::sqrt(1-y*y)*std::sin(angle)};
+      }else{
+        const double radius=-MilkyWayModel::diskScaleKpc*std::log(std::max(1e-15,Unit(rng)*Unit(rng)));
+        const double height=-std::log(std::max(1e-15,1-Unit(rng)))*(population==Population::SpiralArm?.085:.30)*(Unit(rng)<.5?-1:1);
+        p={radius*std::cos(angle),height,radius*std::sin(angle)};
+        if(radius>16)continue;
+        if(population==Population::SpiralArm && Unit(rng)>MilkyWayModel::ArmStrength(p))continue;
+        p.y+=MilkyWayModel::WarpKpc(p);
+      }
+      const auto world=MilkyWayModel::ToWorldAu(p);
+      if(group.Contains(world))return world;
+    }while(true);
+  }
   do {
     if(population==Population::Bulge || population==Population::Halo){
       // Centrally concentrated, bounded spherical/spheroidal populations.
@@ -126,6 +159,30 @@ void Universe::Catalog::Generate(std::uint64_t seed) {
     positions.push_back(p);
     cells[CellAt(p)].push_back(index + 10);
   }
+  std::vector<int> indices(StarCount);std::iota(indices.begin(),indices.end(),0);
+  tree.clear();tree.reserve(StarCount);BuildTree(indices,0,StarCount,0);
+}
+int Universe::Catalog::BuildTree(std::vector<int>& indices,int begin,int end,int depth){
+  if(begin>=end)return -1;
+  const int mid=(begin+end)/2,axis=depth%3;
+  std::nth_element(indices.begin()+begin,indices.begin()+mid,indices.begin()+end,[&](int a,int b){return positions[a][axis]<positions[b][axis];});
+  const int node=static_cast<int>(tree.size());tree.push_back({indices[mid],-1,-1,axis});
+  const int left=BuildTree(indices,begin,mid,depth+1),right=BuildTree(indices,mid+1,end,depth+1);
+  tree[node].left=left;tree[node].right=right;return node;
+}
+void Universe::Catalog::SearchTree(int node,const glm::dvec3& camera,int& nearest,double& squared) const{
+  if(node<0)return;
+  const auto& entry=tree[node];const auto delta=camera-positions[entry.star];
+  const double distance=glm::dot(delta,delta);
+  if(distance<squared){squared=distance;nearest=entry.star+10;}
+  const double axis=delta[entry.axis];
+  SearchTree(axis<0?entry.left:entry.right,camera,nearest,squared);
+  if(axis*axis<squared)SearchTree(axis<0?entry.right:entry.left,camera,nearest,squared);
+}
+int Universe::Catalog::Nearest(const glm::dvec3& camera) const{
+  // The Sun is a separate authored entry at the world origin.
+  int nearest=-2;double squared=glm::dot(camera,camera);
+  if(!tree.empty())SearchTree(0,camera,nearest,squared);return nearest;
 }
 std::vector<int> Universe::Catalog::Nearby(const glm::dvec3 &camera,
                                            double radius) const {

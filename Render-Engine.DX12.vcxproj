@@ -31,6 +31,8 @@
     </Link>
     <PostBuildEvent><Command>if not exist "$(OutDir)assets" mkdir "$(OutDir)assets"
 copy /Y "$(ProjectDir)assets\galaxy*.png" "$(OutDir)assets\" &gt;nul
+if not exist "$(OutDir)assets\stellar" mkdir "$(OutDir)assets\stellar"
+copy /Y "$(ProjectDir)assets\stellar\corona.png" "$(OutDir)assets\stellar\" &gt;nul
 copy /Y "$(ProjectDir)..\External_Lib\build\ShaderTranslator\Release\ShaderTranslator.dll" "$(OutDir)" &gt;nul
 copy /Y "$(ProjectDir)..\External_Lib\lib\assimp-vc143-mtd.dll" "$(OutDir)" &gt;nul</Command></PostBuildEvent>
   </ItemDefinitionGroup>

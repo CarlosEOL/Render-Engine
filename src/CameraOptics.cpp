@@ -165,6 +165,13 @@ void main() {
     vec3 opticalLight=vec3(0);
     // Analytic optical signatures, not measured coating/internal reflection data.
     if(profile>0 && flareStrength>0) {
+        float strongest=0.0;int primary=-1;
+        for(int i=0;i<8;++i){
+            vec4 candidate=texelFetch(flareSources,ivec2(i*2,0),0);
+            // A resolved nearby photosphere wins ties over a distant point.
+            float rank=candidate.z*(1.0+min(candidate.w*40.0,2.0));
+            if(rank>strongest){strongest=rank;primary=i;}
+        }
         for(int source=0;source<8;++source) {
             vec4 emitter=texelFetch(flareSources,ivec2(source*2,0),0);
             if(emitter.z<=0)continue;
@@ -180,6 +187,10 @@ void main() {
             float r=length(p);
             float sourceAngle=r>1e-7?atan(p.y,p.x):0.0;
             float energy=min(2.5,log2(1+emitter.z))*.65*flareStrength;
+            float rank=emitter.z*(1.0+min(emitter.w*40.0,2.0));
+            // Independent optical centers: weaker sources never move the main
+            // star's flare, and their combined ghost energy stays subordinate.
+            if(source!=primary)energy*=.12*pow(clamp(rank/max(strongest,.0001),0.0,1.0),2.0);
             float sourceRadius=emitter.w;
             float coreRadius=.018+sourceRadius*.7;
             float halo=coreRadius*coreRadius/(r*r+coreRadius*coreRadius)*exp(-r/(coreRadius*4.0));
@@ -256,11 +267,7 @@ void main() {
     if (hdrMode) {
         // Apply the shoulder to peak radiance, preserving highlight hue ratios.
         float peak=max(color.r,max(color.g,color.b));
-        float mappedPeak=clamp((peak*(2.51*peak+.03))/(peak*(2.43*peak+.59)+.14),0.0,1.0);
-        float diskDistance=length((uv-blackHoleHint.xy)*vec2(texel.y/texel.x,1));
-        float diskWeight=blackHoleHint.z>0?1.0-smoothstep(blackHoleHint.z,blackHoleHint.z*1.2,diskDistance):0;
-        // Lift resolved dim disk detail; zero radiance remains exactly black.
-        mappedPeak=mix(mappedPeak,pow(mappedPeak,.65),diskWeight);
+        float mappedPeak=peak/(1.0+peak/.85);
         color*=mappedPeak/max(peak,.000001);
     } else
         color = clamp(color, 0.0, 1.0);

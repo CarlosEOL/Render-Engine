@@ -147,6 +147,7 @@ uniform float wavePhase;
 uniform mat4 model;
 uniform bool patchEnabled;
 uniform bool physicalObserver;
+uniform sampler2D stellarCorona;
 
 void main() {
     gl_FragDepth=surface==7?0.999999:clamp(log2(1.0+length(relativePosition)*1e12)/log2(1.0+20000.0*1e12),0.0,.999998);
@@ -180,10 +181,10 @@ void main() {
         if(oceanWorld) {
             float fresnel=.02+.98*pow(1.0-max(dot(normal,viewDirection),0.0),5.0);
             vec3 ocean=mix(vec3(.006,.025,.065),vec3(.045,.10,.15),fresnel);
-            fragColor=vec4(ocean*(.03+.97*light)+specular*.65,1);
+            fragColor=vec4(ocean*(.03+.97*light)+specular*.65,0);
             return;
         }
-        fragColor=vec4(material*(.035+.965*light)+specular,1);
+        fragColor=vec4(material*(.035+.965*light)+specular,0);
     } else if (surface == 3) {
         float shift = physicalObserver?1.0:frequencyRatio(length(worldPosition), length(cameraPosition),
             velocityBeta, normalize(-relativePosition));
@@ -194,17 +195,21 @@ void main() {
         fragColor = vec4(photonColor, 1.0);
     } else if (surface == 7) {
         if(stellarPackets){fragColor=vec4(.35,.65,.85,1);return;}
-        float seed = fract(sin(dot(worldPosition, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+        float seed = fract(sin(dot(localPosition, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
         float distanceSquared = dot(relativePosition,relativePosition);
         vec2 psf=gl_PointCoord*2.0-1.0;
         float pointRadius=dot(psf,psf);
         if(pointRadius>1.0)discard;
         // A display visibility floor keeps the distant navigation catalogue
         // visible; the ceiling prevents subpixel points overwhelming nearby disks.
-        float flux = clamp(max(sourceLuminosity,.001)*1.0e9/max(distanceSquared,1.0),.10,4.0)*exp(-pointRadius*2.0);
+        float flux = clamp(max(sourceLuminosity,.001)*1.0e9/max(distanceSquared,1.0),.10,4.0);
+        float angle=seed*6.2831853,c=cos(angle),s=sin(angle);
+        vec4 corona=texture(stellarCorona,mat2(c,-s,s,c)*psf*.5+.5);
+        float core=exp(-pointRadius*35.0)*4.0;
+        float streamers=dot(corona.rgb,vec3(.2126,.7152,.0722))*corona.a*.12;
         vec3 tint = blackbody(max(sourceTemperature,2500.0));
         tint/=max(max(tint.r,tint.g),max(tint.b,.00001));
-        fragColor = vec4(tint * flux, 1.0);
+        fragColor = vec4(tint * flux*(core+streamers),pointRadius<.08?1.0:0.0);
     } else if (surface == 5) {
         // AU-scale derivatives underflow when crossed/squared on metre-sized
         // craft. Compute the face normal in metres before normalization.
@@ -448,7 +453,8 @@ void main() {
     }
     if(!hit) {
         vec3 incoming=normalize(tangent);
-        radiance=texture(sky,incoming).rgb;
+        vec4 skySample=texture(sky,incoming);
+        radiance=skySample.rgb;opticalEligibility=skySample.a;
         vec4 mapped=viewProjection*vec4(incoming,0);
         if(mapped.w>0) {
             vec2 mappedUv=mapped.xy/mapped.w*.5+.5;
@@ -620,6 +626,7 @@ bool BlackHole::Initialize() {
         return false;
     }
     galaxies.Initialize();
+    if(!milkyWay.Initialize()){Release();return false;}
     glGenTextures(1,&skyCube);
     glGenTextures(1,&sourceColor);
     glGenTextures(1,&sourceDepth);
@@ -862,7 +869,7 @@ BlackHole::Target BlackHole::ResolveTarget(int id, double seconds) const {
     const int star = id - 10;
     if (star >= 0 && star < static_cast<int>(destinations.size())) {
         const auto name = star < 1024 ? "Local star " + std::to_string(star + 1)
-            : star < 1600 ? "Milky Way star " + std::to_string(star-1023)
+            : Universe::GalaxyForStar(star)==0 ? "Milky Way star " + std::to_string(star+1)
             : "Galaxy " + std::to_string((star - 1600) / 1800 + 1)
                 + " star " + std::to_string((star - 1600) % 1800 + 1);
         const auto metadata=StarSystem::DescribeStar(id,name);
@@ -1002,6 +1009,7 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
     glUseProgram(program);
     glBindVertexArray(sphere.vao);
     const auto drawSphere = [&](const glm::dvec3& center, float radius, Surface surface, const glm::vec3& color, int seed, float temperature) {
+        const bool blend=glIsEnabled(GL_BLEND);glDisable(GL_BLEND);
         auto model = glm::translate(identity, glm::vec3(center-cameraPosition));
         if (surface == Planet)
             model *= PlanetRotation(seconds,seed-1);
@@ -1043,6 +1051,7 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
         glUniform1i(glGetUniformLocation(program,"patchEnabled"),false);
         glUniform1i(glGetUniformLocation(program,"patchDrawing"),false);
         if(surface==Star)stellarActivity.Render(viewProjection,model,temperature,seed,seconds);
+        if(blend)glEnable(GL_BLEND);
     };
     int bodyIndex = 0;
     for (const auto& body : bodies) {
@@ -1241,6 +1250,11 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
 }
 
 void BlackHole::RenderBackground(const glm::mat4& vp,const glm::dvec3& camera,bool photons,double seconds,const glm::dvec3& detector) const {
+    if(!photons)milkyWay.Render(vp,camera);
+    const bool blend=glIsEnabled(GL_BLEND);GLint src,dst,srcA,dstA;
+    glGetIntegerv(GL_BLEND_SRC_RGB,&src);glGetIntegerv(GL_BLEND_DST_RGB,&dst);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA,&srcA);glGetIntegerv(GL_BLEND_DST_ALPHA,&dstA);
+    glEnable(GL_BLEND);glBlendFunc(GL_ONE,GL_ONE);
     glUseProgram(program);
     const glm::vec3 high(camera),low(camera-glm::dvec3(high)),detectorHigh(detector),detectorLow(detector-glm::dvec3(detectorHigh));
     glUniformMatrix4fv(glGetUniformLocation(program,"viewProjection"),1,GL_FALSE,glm::value_ptr(vp));
@@ -1251,12 +1265,15 @@ void BlackHole::RenderBackground(const glm::mat4& vp,const glm::dvec3& camera,bo
     glUniform3fv(glGetUniformLocation(program,"detectorLow"),1,glm::value_ptr(detectorLow));
     glUniform1i(glGetUniformLocation(program,"stellarPackets"),photons);
     glUniform1f(glGetUniformLocation(program,"stellarSeconds"),static_cast<float>(seconds));
-    glBindVertexArray(backgroundStars.vao);glPointSize(photons?2.f:1.5f);
+    stellarActivity.BindCorona(program,3);
+    glActiveTexture(GL_TEXTURE0);
+    glBindVertexArray(backgroundStars.vao);glPointSize(photons?2.f:7.f);
     if(photons)glDrawArraysInstanced(GL_POINTS,0,backgroundStars.vertexCount,4);
     else glDrawArrays(GL_POINTS,0,backgroundStars.vertexCount);
     glUniform1i(glGetUniformLocation(program,"stellarPackets"),false);
     glBindVertexArray(0);
     if(!photons)galaxies.Render(vp,camera);
+    glBlendFuncSeparate(src,dst,srcA,dstA);if(!blend)glDisable(GL_BLEND);
 }
 
 void BlackHole::BuildSkyCube() {
@@ -1276,16 +1293,9 @@ void BlackHole::BuildSkyCube() {
     glViewport(0,0,1024,1024);glDisable(GL_DEPTH_TEST);
     for(int face=0;face<6;++face) {
         glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_CUBE_MAP_POSITIVE_X+face,skyCube,0);
-        glClearColor(0,0,0,1);glClear(GL_COLOR_BUFFER_BIT);
+        glClearColor(0,0,0,0);glClear(GL_COLOR_BUFFER_BIT);
         const auto vp=projection*glm::lookAt(glm::vec3(0),directions[face],ups[face]);
-        glUseProgram(program);
-        const glm::mat4 identity(1);
-        glUniformMatrix4fv(glGetUniformLocation(program,"viewProjection"),1,GL_FALSE,glm::value_ptr(vp));
-        glUniformMatrix4fv(glGetUniformLocation(program,"model"),1,GL_FALSE,glm::value_ptr(identity));
-        glUniform3f(glGetUniformLocation(program,"cameraPosition"),0,0,0);
-        glUniform1i(glGetUniformLocation(program,"surface"),7);
-        glBindVertexArray(backgroundStars.vao);glPointSize(2);glDrawArrays(GL_POINTS,0,backgroundStars.vertexCount);
-        galaxies.Render(vp,glm::dvec3(0));
+        RenderBackground(vp,glm::dvec3(0));
     }
     glBindVertexArray(0);glEnable(GL_DEPTH_TEST);glDepthMask(GL_TRUE);
     glBindFramebuffer(GL_FRAMEBUFFER,framebuffer);glDeleteFramebuffers(1,&capture);
@@ -1330,11 +1340,14 @@ void BlackHole::RenderLensing(const glm::mat4& vp,const glm::dvec3& camera,doubl
     glUniform1f(glGetUniformLocation(lensProgram,"diskPhase"),static_cast<float>(std::remainder(OrbitalMechanics::MeanMotion(gravitationalParameter,outerDiskRadius)*seconds,glm::two_pi<double>())));
     glUniform1f(glGetUniformLocation(lensProgram,"plasmaTime"),static_cast<float>(seconds/timeScale));
     glUniform1i(glGetUniformLocation(lensProgram,"sourceScene"),0);glUniform1i(glGetUniformLocation(lensProgram,"sourceDepth"),1);glUniform1i(glGetUniformLocation(lensProgram,"sky"),2);
+    const bool blending=glIsEnabled(GL_BLEND);glDisable(GL_BLEND);
     glDisable(GL_DEPTH_TEST);glBindVertexArray(screenVao);glDrawArrays(GL_TRIANGLES,0,3);
+    if(blending)glEnable(GL_BLEND);
     glBindVertexArray(0);glEnable(GL_DEPTH_TEST);glActiveTexture(GL_TEXTURE0);
 }
 
 void BlackHole::Release() {
+    milkyWay.Release();
     stellarActivity.Release();
     if(stellarProperties)glDeleteBuffers(1,&stellarProperties);stellarProperties=0;
     if(stellarResiduals)glDeleteBuffers(1,&stellarResiduals);stellarResiduals=0;

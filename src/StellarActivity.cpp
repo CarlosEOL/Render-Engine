@@ -1,6 +1,14 @@
 #include "StellarActivity.h"
+#include "AssetManager.h"
+#include "OrbitalMechanics.h"
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 #include "glad/glad.h"
 #include <cmath>
+#include <filesystem>
 #include <glm/gtc/type_ptr.hpp>
 #include <vector>
 
@@ -158,7 +166,81 @@ void main() {
   glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(glm::vec2), nullptr);
   glEnableVertexAttribArray(0);
   glBindVertexArray(0);
+  const char* coronaVertex=R"(#version 330 core
+uniform mat4 viewProjection;
+uniform vec3 center;
+uniform float radius;
+out vec2 uv;
+out vec3 relativePosition;
+void main(){
+ vec2 corners[6]=vec2[6](vec2(-1,-1),vec2(1,-1),vec2(1,1),vec2(-1,-1),vec2(1,1),vec2(-1,1));
+ vec2 p=corners[gl_VertexID];uv=p*.5+.5;
+ vec3 right=normalize(vec3(viewProjection[0][0],viewProjection[1][0],viewProjection[2][0]));
+ vec3 up=normalize(vec3(viewProjection[0][1],viewProjection[1][1],viewProjection[2][1]));
+ relativePosition=center+(right*p.x+up*p.y)*radius*5.12;
+ gl_Position=viewProjection*vec4(relativePosition,1);
+})";
+  const auto coronaFragment=std::string("#version 330 core\nconst float horizonRadius=0.0; const vec3 observerBeta=vec3(0);\n")
+      +OrbitalMechanics::RelativityShaderFunctions()+R"(
+in vec2 uv;in vec3 relativePosition;out vec4 color;
+uniform sampler2D stellarCorona;
+uniform float temperature,seed;uniform bool warmColor;
+void main(){
+ vec2 p=uv*2.0-1.0;
+ float angle=seed*2.39996323,c=cos(angle),s=sin(angle);
+ vec2 q=mat2(c,-s,s,c)*p;
+ float r=length(p)*5.12;
+ if(r<1.005 || r>4.9)discard;
+ vec4 image=texture(stellarCorona,q*.5+.5);
+ float emission=dot(image.rgb,vec3(.2126,.7152,.0722))*image.a;
+ emission*=smoothstep(1.005,1.10,r)*(1.0-smoothstep(3.8,4.9,r));
+ if(emission<.0005)discard;
+ vec3 tint=blackbody(temperature);tint/=max(max(tint.r,tint.g),max(tint.b,.0001));
+ if(warmColor)tint=mix(tint,vec3(1.0,.78,.46),smoothstep(3800.0,5000.0,temperature)*(1.0-smoothstep(6500.0,8500.0,temperature)));
+ // Coronal emission is decorative radiance, never a second lens-flare source.
+ color=vec4(tint*emission*.32,0);
+ gl_FragDepth=log2(1.0+length(relativePosition)*1e12)/log2(1.0+20000.0*1e12);
+})";
+  coronaProgram=compileShaderProgram(coronaVertex,coronaFragment.c_str());
+  glGetProgramiv(coronaProgram,GL_LINK_STATUS,&linked);
+  std::filesystem::path path="assets/stellar/corona.png";
+#ifdef _WIN32
+  wchar_t executable[32768];const auto length=GetModuleFileNameW(nullptr,executable,32768);
+  if(length && length<32768)path=std::filesystem::path(executable).parent_path()/path;
+#endif
+  coronaTexture=AssetManager::LoadTexture(path.string().c_str(),true);
+  if(!linked || !coronaTexture){Release();return false;}
+  glBindTexture(GL_TEXTURE_2D,coronaTexture);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR_MIPMAP_LINEAR);
+  glGenVertexArrays(1,&coronaVao);
   return true;
+}
+
+void StellarActivity::BindCorona(unsigned target,int unit) const{
+  glActiveTexture(GL_TEXTURE0+unit);glBindTexture(GL_TEXTURE_2D,coronaTexture);
+  glUniform1i(glGetUniformLocation(target,"stellarCorona"),unit);
+}
+
+void StellarActivity::RenderCorona(const glm::mat4& vp,const glm::mat4& model,float temperature,int seed) const{
+  if(!coronaProgram || !coronaTexture)return;
+  GLint oldProgram,oldVao,active,texture,src,dst,srcA,dstA;GLboolean mask;
+  glGetIntegerv(GL_CURRENT_PROGRAM,&oldProgram);glGetIntegerv(GL_VERTEX_ARRAY_BINDING,&oldVao);
+  glGetIntegerv(GL_ACTIVE_TEXTURE,&active);glActiveTexture(GL_TEXTURE0);glGetIntegerv(GL_TEXTURE_BINDING_2D,&texture);
+  glGetIntegerv(GL_BLEND_SRC_RGB,&src);glGetIntegerv(GL_BLEND_DST_RGB,&dst);
+  glGetIntegerv(GL_BLEND_SRC_ALPHA,&srcA);glGetIntegerv(GL_BLEND_DST_ALPHA,&dstA);
+  glGetBooleanv(GL_DEPTH_WRITEMASK,&mask);
+  const bool blend=glIsEnabled(GL_BLEND),cull=glIsEnabled(GL_CULL_FACE);
+  glUseProgram(coronaProgram);BindCorona(coronaProgram,0);
+  glUniformMatrix4fv(glGetUniformLocation(coronaProgram,"viewProjection"),1,GL_FALSE,glm::value_ptr(vp));
+  glUniform3fv(glGetUniformLocation(coronaProgram,"center"),1,glm::value_ptr(glm::vec3(model[3])));
+  glUniform1f(glGetUniformLocation(coronaProgram,"radius"),glm::length(glm::vec3(model[0])));
+  glUniform1f(glGetUniformLocation(coronaProgram,"temperature"),temperature);
+  glUniform1i(glGetUniformLocation(coronaProgram,"warmColor"),warmColor);
+  glUniform1f(glGetUniformLocation(coronaProgram,"seed"),static_cast<float>(seed%10000));
+  glEnable(GL_BLEND);glBlendFuncSeparate(GL_ONE,GL_ONE,GL_ONE,GL_ONE);glDepthMask(GL_FALSE);glDisable(GL_CULL_FACE);
+  glBindVertexArray(coronaVao);glDrawArrays(GL_TRIANGLES,0,6);
+  glDepthMask(mask);glBlendFuncSeparate(src,dst,srcA,dstA);if(!blend)glDisable(GL_BLEND);if(cull)glEnable(GL_CULL_FACE);
+  glBindTexture(GL_TEXTURE_2D,texture);glActiveTexture(active);glBindVertexArray(oldVao);glUseProgram(oldProgram);
 }
 
 void StellarActivity::BindTime(unsigned int target, int seed,
@@ -182,7 +264,7 @@ void StellarActivity::BindSurface(unsigned int target, int seed,
 void StellarActivity::Render(const glm::mat4 &vp, const glm::mat4 &model,
                              float temperature, int seed,
                              double seconds) const {
-  if (!enabled || !program)
+  if (!program)
     return;
   const float radius = glm::length(glm::vec3(model[0]));
   const auto center = glm::vec3(model[3]);
@@ -197,6 +279,8 @@ void StellarActivity::Render(const glm::mat4 &vp, const glm::mat4 &model,
   const auto clip = vp * glm::vec4(center, 1);
   if (clip.w < -radius * 1.7f)
     return;
+  if(coronaEnabled)RenderCorona(vp,model,temperature,seed);
+  if(!enabled)return;
   GLint oldProgram, oldVao, srcRgb, dstRgb, srcAlpha, dstAlpha;
   GLboolean depthMask;
   const bool blend = glIsEnabled(GL_BLEND) != 0,
@@ -234,6 +318,8 @@ void StellarActivity::Render(const glm::mat4 &vp, const glm::mat4 &model,
 }
 
 void StellarActivity::Release() {
+  glDeleteProgram(coronaProgram);glDeleteVertexArrays(1,&coronaVao);glDeleteTextures(1,&coronaTexture);
+  coronaProgram=coronaVao=coronaTexture=0;
   glDeleteBuffers(1, &buffer);
   glDeleteVertexArrays(1, &vao);
   glDeleteProgram(program);

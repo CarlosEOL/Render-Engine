@@ -11,6 +11,7 @@
 #include "GalaxyBackground.h"
 #include "Astronomy.h"
 #include "UniverseCatalog.h"
+#include "MilkyWaySky.h"
 
 class BlackHole {
 public:
@@ -24,8 +25,13 @@ public:
     void RenderBackground(const glm::mat4& vp,const glm::dvec3& camera,bool photons=false,
         double seconds=0,const glm::dvec3& detector=glm::dvec3(0)) const;
     std::vector<int> NearbyStars(const glm::dvec3& camera) const { return catalogue.Nearby(camera); }
+    int NearestStar(const glm::dvec3& camera) const {return catalogue.Nearest(camera);}
     void SetStellarActivity(bool enabled) { stellarActivity.SetEnabled(enabled); }
+    void SetStellarCorona(bool enabled) {stellarActivity.SetCoronaEnabled(enabled);}
     void SetWarmStellarColor(bool enabled) { stellarActivity.SetWarmColor(enabled); }
+    void InvalidateSky() const { milkyWay.Invalidate(); }
+    unsigned MilkyWayCacheBuilds() const { return milkyWay.CacheBuilds(); }
+    unsigned MilkyWayTexture() const { return milkyWay.Texture(); }
     void TriggerStellarFlare(double seconds) { stellarActivity.Trigger(seconds); }
     static glm::dvec3 PlanetPosition(double seconds, int planet = 0);
     double PlanetSurfaceRadius(const glm::vec3& worldDirection, double seconds, int planet = 0) const;
@@ -131,6 +137,7 @@ private:
     Atmosphere atmosphere;
     StellarActivity stellarActivity;
     GalaxyBackground galaxies;
+    MilkyWaySky milkyWay;
     struct FlightSample {
         double time;
         OrbitalMechanics::ParticleState state;

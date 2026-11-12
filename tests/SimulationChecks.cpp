@@ -230,7 +230,7 @@ int main()
         if(index>0)Require(first.centerAu!=Universe::GalaxyAt(index,619).centerAu,"World seed did not change galaxy position");
     }
     for(int index=0;index<Universe::StarCount;++index){
-        const int galaxy=index<1600?0:1+(index-1600)/1800;
+        const int galaxy=Universe::GalaxyForStar(index);
         const auto position=catalogue.Positions()[index];
         Require(Universe::GalaxyAt(galaxy).Contains(position),"Star generated outside galaxy boundary");
         Require(position==Universe::StarPosition(index),"Camera-independent star key is not repeatable");

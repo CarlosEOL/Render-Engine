@@ -51,6 +51,7 @@ class StarSystem
     void LoadSolarSystem();
     bool Initialize();
     void SetStellarActivity(bool enabled) { stellarActivity.SetEnabled(enabled); }
+    void SetStellarCorona(bool enabled) {stellarActivity.SetCoronaEnabled(enabled);}
     void SetWarmStellarColor(bool enabled) { stellarActivity.SetWarmColor(enabled); }
     void TriggerStellarFlare(double seconds) { stellarActivity.Trigger(seconds); }
     void Release();
