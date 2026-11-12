@@ -8,6 +8,8 @@ struct Ray {
 };
 double Radius(const glm::dvec3 &position, double horizonReference, double spin);
 double Horizon(double horizonReference, double spin);
+// Innermost spherical photon orbit (prograde equatorial limit).
+double MinimumPhotonOrbit(double horizonReference, double spin);
 double ProgradeIsco(double horizonReference, double spin);
 Ray PastRay(const glm::dvec3 &position, const glm::dvec3 &direction,
             double horizonReference, double spin);

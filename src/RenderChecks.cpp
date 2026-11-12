@@ -14,6 +14,7 @@
 #include "GalacticCore.h"
 #include "CelestialPhenomena.h"
 #include "MilkyWayModel.h"
+#include "../tests/KerrCaptureReference.h"
 #include "ObjectLoader.h"
 #include "glad/glad.h"
 #ifdef RENDER_ENGINE_DX12
@@ -27,7 +28,7 @@
 #include <chrono>
 
 // Optional hidden-window GPU smoke checks; normal application startup never runs this.
-bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,bool galaxyOnly)
+bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,bool galaxyOnly,bool lensingOnly)
 {
     if (!blackHoleReady || !starSystemReady || !quantumReady || !opticsReady)
         return false;
@@ -212,6 +213,52 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,boo
             fail();
         return pixels;
     };
+    const auto checkLensing=[&](){
+        StartGargantua();scenePanel.SetVisible(false);ResizeInterface();
+        selectedTarget=-1;trajectories=false;visionProfile=0;lensFlareStrength=0;
+        fieldOfView=45;blackHoleResolution=1;exposureEv=0;
+        KeyCallback(window,1200,0,GLFW_PRESS,0);
+        for(double testSpin:{.8,.98,-.8})for(int budget:{160,384}){
+            blackHole.SetSpin(testSpin);blackHole.SetRayBudget(budget);sceneCacheValid=false;
+            blackHole.SetLensingDiagnostic(false);
+            capture(("kerr-shadow-"+std::to_string(budget)+"-spin-"+std::to_string(static_cast<int>(std::round(testSpin*100)))).c_str());
+            blackHole.SetLensingDiagnostic(true);sceneCacheValid=false;
+            const auto mask=capture(("kerr-ray-status-"+std::to_string(budget)+"-spin-"+std::to_string(static_cast<int>(std::round(testSpin*100)))).c_str());
+            int w,h;glfwGetFramebufferSize(window,&w,&h);
+            size_t captured=0,unresolved=0,total=0;
+            for(int y=h/2-h/25;y<h/2+h/25;++y)for(int x=w/2-h/25;x<w/2+h/25;++x){
+                const auto p=(static_cast<size_t>(y)*w+x)*3;
+                if(mask[p]>100 && mask[p+1]<30){if(mask[p+2]<30)++captured;else if(mask[p+2]>100)++unresolved;}
+                ++total;
+            }
+            std::cout<<"Ray status spin="<<testSpin<<" budget="<<budget<<"; center captured="<<captured<<" unresolved="<<unresolved<<" total="<<total<<"\n";
+            if(captured<total*.9){std::cerr<<"Center of Kerr shadow was not captured\n";fail();}
+            unsigned compared=0,mismatches=0,unfinished=0;
+            const auto toDisk=glm::transpose(InterstellarWorlds::Orientation());
+            for(int y=h/16;y<h*15/16;y+=std::max(1,h/60))for(int x=w/16;x<w*15/16;x+=std::max(1,w/80)){
+                const auto p=(static_cast<size_t>(y)*w+x)*3;
+                const bool red=mask[p]>100 && mask[p+1]<30 && mask[p+2]<30;
+                const bool blue=mask[p+2]>100 && mask[p]<30 && mask[p+1]<30;
+                const bool purple=mask[p]>100 && mask[p+2]>100 && mask[p+1]<30;
+                if(!red && !blue && !purple)continue;
+                const double u=(2*(x+.5)/w-1)*static_cast<double>(w)/h*std::tan(glm::radians(22.5));
+                const double v=(2*(y+.5)/h-1)*std::tan(glm::radians(22.5));
+                const auto ray=KerrSpacetime::PastRay(toDisk*cameraPos,toDisk*glm::normalize(glm::dvec3(u,v,-1)),BlackHole::HorizonRadius(),blackHole.Spin());
+                const auto reference=KerrCaptureReference::Evaluate(ray,BlackHole::HorizonRadius(),blackHole.Spin());
+                if(std::abs(reference.margin)<.02)continue; // Exclude the critical curve's pixel-scale ambiguity.
+                ++compared;
+                if(purple)++unfinished;else if(red!=reference.captured)++mismatches;
+            }
+            std::cout<<"Carter capture reference: compared="<<compared<<" mismatches="<<mismatches<<" unfinished="<<unfinished<<"\n";
+            if(mismatches || (budget==384 && unfinished)){std::cerr<<"GPU rays disagree with the independent capture potential\n";fail();}
+
+        }
+        blackHole.SetLensingDiagnostic(false);blackHole.SetSpin(0);sceneCacheValid=false;
+        capture("schwarzschild-shadow-reference");
+        blackHole.SetSpin(.8);blackHole.SetRayBudget(160);sceneCacheValid=false;
+        std::cout<<"Lensing checks "<<(success?"PASSED":"FAILED")<<"\n";
+    };
+    if(lensingOnly){checkLensing();return success;}
     const auto checkGalaxy=[&](){
         StartSolarSystem();scenePanel.SetVisible(false);ResizeInterface();
         trajectories=false;visionProfile=0;lensFlareStrength=0;fieldOfView=75;
@@ -1103,6 +1150,7 @@ Connections: {
     cameraFront=glm::normalize(glm::vec3(MilkyWayModel::Orientation()[1]));capture("milky-way-galactic-pole");
     if(blackHole.MilkyWayCacheBuilds()>beforeSky+1){std::cerr<<"Sky rebaked on rotation or magnitude changes\n";fail();}
     SetMagnitudeLimit(7);
+    checkLensing();
     checkGalaxy();
     std::cout<<"Render checks "<<(success?"PASSED":"FAILED")<<": "<<captures<<" scene captures; "<<uiCaptures<<" UI captures; "<<failedLines.size()<<" assertion locations failed\n";
     return success;

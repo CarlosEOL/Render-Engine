@@ -245,7 +245,8 @@ if not exist "$(TargetDir)assets\ui" mkdir "$(TargetDir)assets\ui"
 copy /Y "$(ProjectDir)assets\ui\laboratories.png" "$(TargetDir)assets\ui\laboratories.png"
 if not exist "$(TargetDir)assets\galactic" mkdir "$(TargetDir)assets\galactic"
 copy /Y "$(ProjectDir)assets\galactic\milky-way-nasa.jpg" "$(TargetDir)assets\galactic\milky-way-nasa.jpg"
-copy /Y "$(ProjectDir)assets\galactic\CREDITS.md" "$(TargetDir)assets\galactic\CREDITS.md"</Command>
+copy /Y "$(ProjectDir)assets\galactic\CREDITS.md" "$(TargetDir)assets\galactic\CREDITS.md"
+copy /Y "$(ProjectDir)..\External_Lib\lib\assimp-vc143-mtd.dll" "$(TargetDir)assimp-vc143-mtd.dll"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

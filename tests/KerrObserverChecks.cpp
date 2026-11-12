@@ -11,6 +11,10 @@ int main() {
   try {
     for (double spin : {0.0, .8, .98, -.8}) {
       constexpr double rs = 2;
+      const double photon=KerrSpacetime::MinimumPhotonOrbit(rs,spin);
+      Require(photon>KerrSpacetime::Horizon(rs,spin) && photon<KerrSpacetime::ProgradeIsco(rs,spin),
+              "Photon capture boundary is not between the horizon and disk ISCO");
+      if(spin==0)Require(std::abs(photon-1.5*rs)<1e-12,"Schwarzschild photon orbit is not 3M");
       auto observer =
           KerrSpacetime::MakeStationaryObserver({6, .2, .1}, rs, spin);
       Require(glm::length(KerrSpacetime::ObserverCoordinateVelocity(
