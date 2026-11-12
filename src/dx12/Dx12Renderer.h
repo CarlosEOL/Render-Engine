@@ -31,7 +31,8 @@ static_assert(sizeof(Frame) == 256);
 class Renderer {
 public:
   ~Renderer();
-  void Initialize(HWND window, UINT width, UINT height, bool warp = false);
+  void Initialize(HWND window, UINT width, UINT height, bool warp = false,
+                  bool previewScene = true, bool validation = false);
   void Resize(UINT width, UINT height);
   void Draw(const Frame &frame, bool sceneDirty = true, bool vsync = true);
   void WaitIdle();
@@ -47,6 +48,7 @@ public:
   UINT Height() const { return height; }
 
 private:
+  friend class SceneBridge;
   template <class T> using Com = Microsoft::WRL::ComPtr<T>;
   static constexpr UINT Count = 2;
   struct Slot {
@@ -71,7 +73,8 @@ private:
        rtvStride = 0, srvStride = 0;
   UINT64 nextFence = 1, sceneDraws = 0;
   HANDLE fenceEvent = nullptr;
-  bool debugLayer = false, historyValid = false, sceneValid = false;
+  bool debugLayer = false, historyValid = false, sceneValid = false,
+       previewEnabled = true;
   std::string adapterName;
   Com<ID3D12Device> device;
   Com<ID3D12InfoQueue> info;

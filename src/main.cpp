@@ -3,21 +3,38 @@
 #include <thread>
 
 #include "WindowManager.h"
+#ifdef RENDER_ENGINE_DX12
+#include "dx12/Dx12SceneBridge.h"
+#endif
 
 using namespace std;
 
-int main(int argc,char** argv) {
+int RunEngine(int argc,char** argv) {
     using clock = chrono::steady_clock;
     float deltaTime = 0.0f;
 
     WindowManager window;
     const bool renderChecks=argc>1 && std::string(argv[1])=="--render-check";
+    if(renderChecks){std::cout<<std::unitbuf;std::cerr<<std::unitbuf;}
+#ifdef RENDER_ENGINE_DX12
+    bool warp=false;for(int i=1;i<argc;++i)if(std::string(argv[i])=="--warp")warp=true;
+    NativeDX12::ConfigureSceneBridge(renderChecks,warp);
+#endif
     if(renderChecks)glfwWindowHint(GLFW_VISIBLE,GLFW_FALSE);
     window.MakeNewWindow();
     cout << "Made a new window.\n" << endl;
     if(renderChecks) {
-        const bool success=window.RunRenderChecks(argc>2?argv[2]:"build/render-checks");
-        window.ReleaseGraphics();glfwTerminate();return success?0:1;
+        bool success=window.RunRenderChecks(argc>2?argv[2]:"build/render-checks");
+#ifdef RENDER_ENGINE_DX12
+        const auto errors=NativeDX12::SceneValidationErrors();
+        std::cout<<"DX12 scene validation errors="<<errors<<"\n";
+        success=success && errors==0;
+#endif
+        window.ReleaseGraphics();
+#ifdef RENDER_ENGINE_DX12
+        NativeDX12::ReleaseSceneBridge();
+#endif
+        glfwTerminate();return success?0:1;
     }
 
     // Main application loop
@@ -34,6 +51,16 @@ int main(int argc,char** argv) {
     }
 
     window.ReleaseGraphics();
+#ifdef RENDER_ENGINE_DX12
+    const auto errors=NativeDX12::SceneValidationErrors();
+    NativeDX12::ReleaseSceneBridge();
+    if(errors)return 1;
+#endif
     glfwTerminate();
     return 0;
+}
+
+int main(int argc,char** argv){
+    try{return RunEngine(argc,argv);}
+    catch(const std::exception& error){std::cerr<<"Render-Engine: "<<error.what()<<"\n";return 1;}
 }

@@ -1,6 +1,7 @@
 #pragma once
 #include "VehicleInterior.h"
 #include "ObjectEditor.h"
+#include "KerrSpacetime.h"
 
 #include <vector>
 #include <array>
@@ -137,6 +138,9 @@ private:
     int selectedTarget = -1;
     bool photonView = false;
     OrbitalMechanics::ParticleState observer = {};
+    KerrSpacetime::Observer kerrObserver = {};
+    bool kerrObserverValid=false;
+    double observerSpin=.8,pendingObserverProper=0;
 
     GLFWwindow* window;
     BlackHole blackHole;

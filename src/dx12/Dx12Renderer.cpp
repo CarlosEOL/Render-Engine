@@ -87,12 +87,19 @@ Renderer::~Renderer() {
   if (fenceEvent)
     CloseHandle(fenceEvent);
 }
-void Renderer::Initialize(HWND hwnd, UINT w, UINT h, bool warp) {
+void Renderer::Initialize(HWND hwnd, UINT w, UINT h, bool warp,
+                          bool previewScene, bool validation) {
+  previewEnabled = previewScene;
   window = hwnd;
   width = std::max(1u, w);
   height = std::max(1u, h);
   Com<ID3D12Debug> debug;
-  if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) {
+  bool requestValidation = validation;
+#ifdef _DEBUG
+  requestValidation = true;
+#endif
+  if (requestValidation &&
+      SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) {
     debug->EnableDebugLayer();
     debugLayer = true;
   }
@@ -184,18 +191,21 @@ void Renderer::Initialize(HWND hwnd, UINT w, UINT h, bool warp) {
       device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
   srvStride = device->GetDescriptorHandleIncrementSize(
       D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-  auto uploadHeap = Heap(D3D12_HEAP_TYPE_UPLOAD);
-  auto buffer = Buffer(Count * sizeof(Frame));
-  Check(device->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE,
-                                        &buffer,
-                                        D3D12_RESOURCE_STATE_GENERIC_READ,
-                                        nullptr, IID_PPV_ARGS(&constants)),
-        "Create per-frame constants");
-  D3D12_RANGE empty{0, 0};
-  Check(constants->Map(0, &empty, reinterpret_cast<void **>(&constantData)),
-        "Map constants");
+  if (previewEnabled) {
+    auto uploadHeap = Heap(D3D12_HEAP_TYPE_UPLOAD);
+    auto buffer = Buffer(Count * sizeof(Frame));
+    Check(device->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE,
+                                          &buffer,
+                                          D3D12_RESOURCE_STATE_GENERIC_READ,
+                                          nullptr, IID_PPV_ARGS(&constants)),
+          "Create per-frame constants");
+    D3D12_RANGE empty{0, 0};
+    Check(constants->Map(0, &empty, reinterpret_cast<void **>(&constantData)),
+          "Map constants");
+  }
   CreateTargets();
-  CreatePipelines();
+  if (previewEnabled)
+    CreatePipelines();
   std::cout << "DX12 adapter: " << adapterName << "; debug layer=" << debugLayer
             << "\n";
 }
@@ -220,6 +230,8 @@ void Renderer::CreateTargets() {
           "Get back buffer");
     device->CreateRenderTargetView(buffers[i].Get(), nullptr, Rtv(i));
   }
+  if (!previewEnabled)
+    return;
   auto heap = Heap(D3D12_HEAP_TYPE_DEFAULT);
   auto make = [&](Com<ID3D12Resource> &target, UINT w, UINT h,
                   DXGI_FORMAT format, UINT rtv) {

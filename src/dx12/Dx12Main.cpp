@@ -309,7 +309,8 @@ int main(int argc, char **argv) {
         bounds.right - bounds.left, bounds.bottom - bounds.top, nullptr, menu,
         type.hInstance, &app);
     Require(window != nullptr, "Cannot create DX12 window");
-    app.renderer.Initialize(window, app.pendingWidth, app.pendingHeight, warp);
+    app.renderer.Initialize(window, app.pendingWidth, app.pendingHeight, warp,
+                            true, smoke);
     Require(app.editor.Create(window, [&](double spin) { app.Spin(spin); }),
             "Cannot create object editor");
     app.editor.SetObject("Gargantua", true, .8, Astronomy::gargantuaHorizonAu);

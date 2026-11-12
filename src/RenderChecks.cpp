@@ -5,7 +5,12 @@
 #include <commctrl.h>
 #endif
 #include "WindowManager.h"
+#include "InterstellarWorlds.h"
+#include "ObjectLoader.h"
 #include "glad/glad.h"
+#ifdef RENDER_ENGINE_DX12
+#include "dx12/Dx12SceneBridge.h"
+#endif
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -16,7 +21,11 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
     if (!blackHoleReady || !starSystemReady || !quantumReady || !opticsReady)
         return false;
     std::filesystem::create_directories(directory);
+#ifdef RENDER_ENGINE_DX12
+    NativeDX12::SetSceneSwapInterval(0);
+#else
     glfwSwapInterval(0);
+#endif
     // Exercise the real startup transition, including the menu's OpenGL clear-color state.
     float menuFrame=.016f;
     Update(menuFrame);
@@ -62,6 +71,43 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
             success = false;
         return pixels;
     };
+    // Exercise the legacy model-viewer layout and real import path as well as
+    // the simulation scenes. The FBX deliberately has three vertices/one face
+    // and a translated node, covering the previous face-count/transform bugs.
+    const auto objPath=std::filesystem::path(directory)/"probe.obj";
+    {std::ofstream model(objPath);model<<"v -1 -1 0\nv 1 -1 0\nv 0 1 0\nvn 0 0 1\nf 1//1 2//1 3//1\n";}
+    const auto objFile=objPath.string();const char* droppedObj[]={objFile.c_str()};
+    DropCallback(window,1,droppedObj);showWireframe=false;capture("model-imported-obj");
+    const auto fbxPath=std::filesystem::path(directory)/"probe.fbx";
+    {std::ofstream model(fbxPath);model<<R"(; FBX 7.4.0 project file
+FBXHeaderExtension: {
+ FBXHeaderVersion: 1003
+ FBXVersion: 7400
+}
+Objects: {
+ Geometry: 1, "Geometry::Triangle", "Mesh" {
+  Vertices: *9 { a: -1,-1,0,1,-1,0,0,1,0 }
+  PolygonVertexIndex: *3 { a: 0,1,-3 }
+ }
+ Model: 2, "Model::Triangle", "Mesh" {
+  Version: 232
+  Properties70: {
+   P: "Lcl Translation", "Lcl Translation", "", "A",2,0,0
+  }
+ }
+}
+Connections: {
+ C: "OO",1,2
+ C: "OO",2,0
+}
+)";}
+    std::vector<float> importedFbx;glm::vec3 importedCenter;
+    const auto fbxFile=fbxPath.string();
+    if(!ObjectLoader::LoadFBX(fbxFile,importedFbx,importedCenter) || importedFbx.size()!=18 || std::abs(importedCenter.x-2)>1e-4){
+        std::cerr<<"FBX import lost geometry or node translation\n";success=false;
+    }else{
+        const char* droppedFbx[]={fbxFile.c_str()};DropCallback(window,1,droppedFbx);capture("model-imported-fbx");
+    }
     const auto &examples = QuantumStates::Examples();
     for (int index = 0; index < static_cast<int>(examples.size()); ++index)
     {
@@ -82,6 +128,13 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
             StartQuantum(index);
             quantum.Advance(3);
             capture("quantum-tunneling-3d");
+        }
+        if((e.family==QuantumStates::Family::Box && e.state==2)
+            || (e.family==QuantumStates::Family::Packet && e.state==1)
+            || (e.family==QuantumStates::Family::Spin && e.state==5)
+            || (e.family==QuantumStates::Family::Bell && e.state==1)){
+            StartQuantum(index);quantum.Advance(.75);
+            capture((std::string("quantum-family-")+std::to_string(static_cast<int>(e.family))).c_str());
         }
     }
     StartSolarSystem();
@@ -552,6 +605,44 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
         ToggleLanding();
     }
     StartGargantua();
+    trajectories=false;selectedTarget=-1;visionProfile=0;lensFlareStrength=0;exposureEv=0;fieldOfView=100;
+    const double infallRs=BlackHole::HorizonRadius();observerSpin=blackHole.Spin();
+    kerrObserver=KerrSpacetime::MakeStationaryObserver({infallRs*3,.1,.05},infallRs,observerSpin);
+    kerrObserverValid=true;observerGravity=false;horizonReached=true;
+    const double outerHorizon=KerrSpacetime::Horizon(infallRs,observerSpin);
+    std::vector<unsigned char> beforeHorizon;
+    for(double fraction:{1.02,1.001,.999,.98,.85}){
+        for(int step=0;step<100000 && KerrSpacetime::Radius(kerrObserver.state.position,infallRs,observerSpin)>outerHorizon*fraction;++step)
+            KerrSpacetime::AdvanceObserver(kerrObserver,infallRs,observerSpin,.1,Astronomy::lightSpeedAu);
+        cameraPos=InterstellarWorlds::Orientation()*kerrObserver.state.position;
+        observer.position=cameraPos;
+        observer.velocity=InterstellarWorlds::Orientation()*KerrSpacetime::ObserverCoordinateVelocity(kerrObserver,infallRs,observerSpin)*Astronomy::lightSpeedAu;
+        cameraFront=glm::normalize(glm::vec3(cameraPos));cameraUp=glm::vec3(InterstellarWorlds::Orientation()*glm::dvec3(0,0,1));
+        sceneCacheValid=false;
+        const auto view=capture((std::string("kerr-infall-horizon-")+std::to_string(fraction)).c_str());
+        if(fraction==1.001)beforeHorizon=view;
+        if(fraction==.999){
+            double change=0;for(size_t i=0;i<view.size();++i)change+=std::abs(int(view[i])-int(beforeHorizon[i]));change/=view.size();
+            std::cout<<"Horizon-crossing mean display change: "<<change<<" / 255\n";
+            if(change>12){std::cerr<<"Horizon crossing introduced a display discontinuity\n";success=false;}
+        }
+        glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,optics.SceneTexture());
+        GLint w,h;glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_WIDTH,&w);glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_HEIGHT,&h);
+        std::vector<float> hdr(static_cast<size_t>(w)*h*4);glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_FLOAT,hdr.data());glBindTexture(GL_TEXTURE_2D,0);
+        for(float value:hdr)if(!std::isfinite(value)){std::cerr<<"Nonfinite interior-observer radiance\n";success=false;break;}
+    }
+    kerrObserverValid=false;horizonReached=false;
+    // The actual H control advances a physical observer while world playback
+    // is paused, without manufacturing an infinite outside-time jump.
+    cameraPos=InterstellarWorlds::Orientation()*glm::dvec3(infallRs*3,.1,.05);
+    const int previousRate=timeRateIndex;timeRateIndex=2;const double pausedWorld=simulationTime,oldLocal=localTime;
+    KeyCallback(window,GLFW_KEY_H,0,GLFW_PRESS,0);
+    for(int frame=0;frame<200 && !horizonReached;++frame)UpdateObserver(simulationTime,.05f);
+    if(!horizonReached || simulationTime!=pausedWorld || localTime<=oldLocal || !std::isfinite(cameraClockRate)){
+        std::cerr<<"Physical H camera did not cross the horizon with paused world time\n";success=false;
+    }
+    observerGravity=false;kerrObserverValid=false;horizonReached=false;pendingObserverProper=0;timeRateIndex=previousRate;
+    StartGargantua();
     KeyCallback(window,702,0,GLFW_PRESS,0);
     capture("mann-spacecraft-departure");
     simulationTime=111*Astronomy::secondsPerDay;
@@ -620,6 +711,10 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
     if(!starSystem.IsRotationFollowing())success=false;
     KeyCallback(window,GLFW_KEY_L,0,GLFW_PRESS,GLFW_MOD_SHIFT);
     if(glm::dot(cameraFront,glm::normalize(glm::vec3(starSystem.Position(2,simulationTime)-starSystem.camera)))<.99f)success=false;
+    int originalWidth,originalHeight;glfwGetWindowSize(window,&originalWidth,&originalHeight);
+    glfwSetWindowSize(window,997,733);sceneCacheValid=false;capture("window-resize-odd-small");
+    glfwSetWindowSize(window,1235,811);sceneCacheValid=false;capture("window-resize-odd-medium");
+    glfwSetWindowSize(window,originalWidth,originalHeight);sceneCacheValid=false;capture("window-resize-restored");
     // Synthetic HDR input makes exposure response measurable without relying on
     // scene composition. Readback here is confined to this opt-in test harness.
     ExposureMeter probe;

@@ -60,7 +60,8 @@ public:
     VehiclePose CockpitPose(int vehicle,double seconds) const;
     void SetPhotonView(bool enabled, const glm::dvec3& detector) { photonView = enabled; photonDetector = detector; }
     void Render(const glm::mat4& viewProjection, const glm::dvec3& cameraPosition, double seconds,
-                const glm::vec3& observerVelocity = glm::vec3(0.0f), bool trajectories = true, int selected = -1,int interiorVehicle=0) const;
+                const glm::vec3& observerVelocity = glm::vec3(0.0f), bool trajectories = true, int selected = -1,int interiorVehicle=0,
+                const glm::vec3& physicalObserverBeta=glm::vec3(0),bool physicalObserver=false) const;
     void Release();
 
 private:
@@ -83,7 +84,8 @@ private:
     unsigned int sourceDepth = 0;
     mutable int sourceWidth = 0, sourceHeight = 0;
     void BuildSkyCube();
-    void RenderLensing(const glm::mat4& viewProjection,const glm::dvec3& camera,double seconds,const glm::vec3& beta) const;
+    void RenderLensing(const glm::mat4& viewProjection,const glm::dvec3& camera,double seconds,const glm::vec3& beta,
+                       const glm::vec3& physicalBeta,bool physicalObserver) const;
     Mesh sphere;
     Mesh backgroundStars;
     Mesh craftRing;
