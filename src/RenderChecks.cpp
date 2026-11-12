@@ -3,12 +3,24 @@
 #define NOMINMAX
 #include <windows.h>
 #include <commctrl.h>
+#define GLFW_EXPOSE_NATIVE_WIN32
 #endif
+#include "UiTheme.h"
 #include "WindowManager.h"
+#ifdef _WIN32
+#include <GLFW/glfw3native.h>
+#endif
+#include "InterstellarWorlds.h"
+#include "ObjectLoader.h"
 #include "glad/glad.h"
+#ifdef RENDER_ENGINE_DX12
+#include "dx12/Dx12SceneBridge.h"
+#endif
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <set>
+#include <source_location>
 
 // Optional hidden-window GPU smoke checks; normal application startup never runs this.
 bool WindowManager::RunRenderChecks(const std::string &directory)
@@ -16,14 +28,80 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
     if (!blackHoleReady || !starSystemReady || !quantumReady || !opticsReady)
         return false;
     std::filesystem::create_directories(directory);
+#ifdef RENDER_ENGINE_DX12
+    NativeDX12::SetSceneSwapInterval(0);
+#else
     glfwSwapInterval(0);
+#endif
     // Exercise the real startup transition, including the menu's OpenGL clear-color state.
     float menuFrame=.016f;
     Update(menuFrame);
     bool success = true;
-    bool reportedFailure=false;
+    std::set<unsigned> failedLines;
+    unsigned captures=0,uiCaptures=0;
+    const auto fail=[&](const std::source_location where=std::source_location::current()){
+        success=false;
+        if(failedLines.insert(where.line()).second)
+            std::cerr<<"RENDER CHECK FAILED at "<<where.file_name()<<":"<<where.line()<<"\n";
+    };
+#ifdef _WIN32
+    // Capture our own native controls without showing or moving a desktop
+    // window. This complements the GPU-only scene captures below.
+    const auto captureUi=[&](const char* name){
+        ++uiCaptures;
+        const HWND native=glfwGetWin32Window(window);RECT rect{};GetClientRect(native,&rect);
+        HDC screen=GetDC(native),dc=CreateCompatibleDC(screen);
+        BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
+        info.bmiHeader.biWidth=rect.right;info.bmiHeader.biHeight=-rect.bottom;
+        info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;info.bmiHeader.biCompression=BI_RGB;
+        unsigned char* pixels=nullptr;HBITMAP bitmap=CreateDIBSection(screen,&info,DIB_RGB_COLORS,reinterpret_cast<void**>(&pixels),nullptr,0);
+        ReleaseDC(native,screen);
+        if(!bitmap || !dc){std::cerr<<"UI capture allocation failed\n";fail();if(bitmap)DeleteObject(bitmap);if(dc)DeleteDC(dc);return;}
+        auto previous=SelectObject(dc,bitmap);UiTheme::Fill(dc,rect,UiTheme::Background);
+        if(!mainMenu.Visible()){
+            std::vector<unsigned char> scene(static_cast<size_t>(rect.right)*rect.bottom*3);
+            glReadBuffer(GL_FRONT);glPixelStorei(GL_PACK_ALIGNMENT,1);
+            glReadPixels(0,0,rect.right,rect.bottom,GL_RGB,GL_UNSIGNED_BYTE,scene.data());
+            for(int y=0;y<rect.bottom;++y)for(int x=0;x<rect.right;++x){
+                const auto p=pixels+(static_cast<size_t>(y)*rect.right+x)*4;
+                const auto source=scene.data()+(static_cast<size_t>(rect.bottom-1-y)*rect.right+x)*3;
+                p[0]=source[2];p[1]=source[1];p[2]=source[0];p[3]=255;
+            }
+        }
+        std::vector<HWND> children;
+        EnumChildWindows(native,+[](HWND child,LPARAM data)->BOOL{
+            if(GetWindowLongPtrW(child,GWL_STYLE)&WS_VISIBLE)reinterpret_cast<std::vector<HWND>*>(data)->push_back(child);
+            return TRUE;
+        },reinterpret_cast<LPARAM>(&children));
+        std::stable_sort(children.begin(),children.end(),[](HWND a,HWND b){return (GetDlgCtrlID(a)==3000 || GetDlgCtrlID(a)==2099) && GetDlgCtrlID(b)!=3000 && GetDlgCtrlID(b)!=2099;});
+        for(auto child:children){
+            RECT bounds;GetWindowRect(child,&bounds);MapWindowPoints(nullptr,native,reinterpret_cast<POINT*>(&bounds),2);
+            if(bounds.left<0 || bounds.top<0 || bounds.right>rect.right || bounds.bottom>rect.bottom){std::cerr<<name<<" control clipped: "<<GetDlgCtrlID(child)<<"\n";fail();}
+            const int saved=SaveDC(dc);SetViewportOrgEx(dc,bounds.left,bounds.top,nullptr);
+            IntersectClipRect(dc,0,0,bounds.right-bounds.left,bounds.bottom-bounds.top);
+            SendMessageW(child,WM_PRINT,reinterpret_cast<WPARAM>(dc),PRF_CLIENT|PRF_ERASEBKGND|PRF_CHILDREN);
+            RestoreDC(dc,saved);
+        }
+        GdiFlush();std::ofstream file(std::filesystem::path(directory)/(std::string(name)+".ppm"),std::ios::binary);
+        file<<"P6\n"<<rect.right<<' '<<rect.bottom<<"\n255\n";
+        for(int y=0;y<rect.bottom;++y)for(int x=0;x<rect.right;++x){const auto p=pixels+(static_cast<size_t>(y)*rect.right+x)*4;const char rgb[]={char(p[2]),char(p[1]),char(p[0])};file.write(rgb,3);}
+        if(!file){std::cerr<<"UI capture save failed\n";fail();}
+        SelectObject(dc,previous);DeleteObject(bitmap);DeleteDC(dc);
+        std::cout<<"UI capture: "<<name<<"; controls="<<children.size()<<"\n";
+    };
+    mainMenu.Show(AppMenu::Page::Home);captureUi("ui-main-menu");
+    mainMenu.Show(AppMenu::Page::Planetorium);captureUi("ui-destinations");
+    HandleInterfaceCommand(3011,BN_CLICKED);captureUi("ui-quantum-library");
+    int uiWidth,uiHeight;glfwGetWindowSize(window,&uiWidth,&uiHeight);
+    glfwSetWindowSize(window,997,733);
+    mainMenu.Show(AppMenu::Page::Planetorium);captureUi("ui-destinations-compact");
+    HandleInterfaceCommand(3011,BN_CLICKED);captureUi("ui-quantum-library-compact");
+    glfwSetWindowSize(window,uiWidth,uiHeight);
+    mainMenu.Show(AppMenu::Page::Home);
+#endif
     const auto capture = [&](const char *name,bool keepToast=false) {
-        if(!success && !reportedFailure){std::cerr<<"Previous checks failed before "<<name<<"\n";reportedFailure=true;}
+        ++captures;
+        std::cout<<"[Capture] "<<name<<"\n";
         if(!keepToast)speedToastUntil = 0;
         float dt = .016f;
         Update(dt);
@@ -38,7 +116,7 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
         if (error != GL_NO_ERROR)
         {
             std::cerr << name << " GL error " << error << "\n";
-            success = false;
+            fail();
         }
         int width, height, logicalWidth, logicalHeight;
         glfwGetFramebufferSize(window, &width, &height);
@@ -48,20 +126,67 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
         glReadBuffer(GL_FRONT);
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
         glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+        const auto readError=glGetError();
+        if(readError!=GL_NO_ERROR){std::cerr<<name<<" readback error "<<readError<<"\n";fail();}
         std::ofstream image(std::filesystem::path(directory) / (std::string(name) + ".ppm"), std::ios::binary);
         image << "P6\n" << width << " " << height << "\n255\n";
         for (int y = height - 1; y >= 0; --y)
             image.write(reinterpret_cast<const char *>(pixels.data() + static_cast<size_t>(y) * width * 3),
                         static_cast<std::streamsize>(width) * 3);
+        image.flush();
+        if(!image){std::cerr<<"Could not save capture "<<name<<"\n";fail();}
         size_t lit = 0;
         for (size_t i = 0; i < pixels.size(); i += 3)
             if (pixels[i] > 20 || pixels[i + 1] > 20 || pixels[i + 2] > 20)
                 ++lit;
         std::cout << name << ": " << width << "x" << height << ", lit=" << lit << ", GL=" << error << "\n";
         if (lit < 10)
-            success = false;
+            fail();
         return pixels;
     };
+    // Check many seeds before GPU captures. A range error must become a
+    // named failure, not an interactive CRT assertion hidden behind the app.
+    try {
+        for(int id=10;id<1034;++id){StarSystem survey;survey.Generate(id,"Render-check survey");}
+        std::cout<<"Generator preflight: 1024 systems passed\n";
+    }catch(const std::exception& error){std::cerr<<"Generator preflight: "<<error.what()<<"\n";fail();return false;}
+    // Exercise the legacy model-viewer layout and real import path as well as
+    // the simulation scenes. The FBX deliberately has three vertices/one face
+    // and a translated node, covering the previous face-count/transform bugs.
+    const auto objPath=std::filesystem::path(directory)/"probe.obj";
+    {std::ofstream model(objPath);model<<"v -1 -1 0\nv 1 -1 0\nv 0 1 0\nvn 0 0 1\nf 1//1 2//1 3//1\n";}
+    const auto objFile=objPath.string();const char* droppedObj[]={objFile.c_str()};
+    DropCallback(window,1,droppedObj);showWireframe=false;capture("model-imported-obj");
+    const auto fbxPath=std::filesystem::path(directory)/"probe.fbx";
+    {std::ofstream model(fbxPath);model<<R"(; FBX 7.4.0 project file
+FBXHeaderExtension: {
+ FBXHeaderVersion: 1003
+ FBXVersion: 7400
+}
+Objects: {
+ Geometry: 1, "Geometry::Triangle", "Mesh" {
+  Vertices: *9 { a: -1,-1,0,1,-1,0,0,1,0 }
+  PolygonVertexIndex: *3 { a: 0,1,-3 }
+ }
+ Model: 2, "Model::Triangle", "Mesh" {
+  Version: 232
+  Properties70: {
+   P: "Lcl Translation", "Lcl Translation", "", "A",2,0,0
+  }
+ }
+}
+Connections: {
+ C: "OO",1,2
+ C: "OO",2,0
+}
+)";}
+    std::vector<float> importedFbx;glm::vec3 importedCenter;
+    const auto fbxFile=fbxPath.string();
+    if(!ObjectLoader::LoadFBX(fbxFile,importedFbx,importedCenter) || importedFbx.size()!=18 || std::abs(importedCenter.x-2)>1e-4){
+        std::cerr<<"FBX import lost geometry or node translation\n";fail();
+    }else{
+        const char* droppedFbx[]={fbxFile.c_str()};DropCallback(window,1,droppedFbx);capture("model-imported-fbx");
+    }
     const auto &examples = QuantumStates::Examples();
     for (int index = 0; index < static_cast<int>(examples.size()); ++index)
     {
@@ -83,22 +208,53 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
             quantum.Advance(3);
             capture("quantum-tunneling-3d");
         }
+        if((e.family==QuantumStates::Family::Box && e.state==2)
+            || (e.family==QuantumStates::Family::Packet && e.state==1)
+            || (e.family==QuantumStates::Family::Spin && e.state==5)
+            || (e.family==QuantumStates::Family::Bell && e.state==1)){
+            StartQuantum(index);quantum.Advance(.75);
+            capture((std::string("quantum-family-")+std::to_string(static_cast<int>(e.family))).c_str());
+        }
     }
     StartSolarSystem();
     KeyCallback(window, GLFW_KEY_F4, 0, GLFW_PRESS, 0);
     if (scenePanel.IsCurrentSystemBrowser())
-        success = false;
+        fail();
     SelectCatalogue(20);
     KeyCallback(window, GLFW_KEY_F4, 0, GLFW_PRESS, GLFW_MOD_SHIFT);
     if (!scenePanel.IsCurrentSystemBrowser() || pendingSystemTarget != activeSystemTarget)
-        success = false;
+        fail();
     KeyCallback(window, GLFW_KEY_F4, 0, GLFW_PRESS, GLFW_MOD_SHIFT);
     KeyCallback(window, GLFW_KEY_F3, 0, GLFW_PRESS, 0);
     if (scenePanel.Width() != 0)
-        success = false;
+        fail();
     KeyCallback(window, GLFW_KEY_F3, 0, GLFW_PRESS, 0);
     KeyCallback(window, GLFW_KEY_F4, 0, GLFW_PRESS, GLFW_MOD_SHIFT);
     capture("solar-overview");
+#ifdef _WIN32
+    captureUi("ui-star-browser-and-clock");
+    const bool wasPlaying=simulationPlaying;HandleInterfaceCommand(2107,BN_CLICKED);
+    if(simulationPlaying==wasPlaying)fail();HandleInterfaceCommand(2107,BN_CLICKED);
+#endif
+    // A visible background star can be selected from inside another system.
+    // This goes through the same screen-coordinate routine as a mouse click.
+    visionProfile=0;fieldOfView=45;
+    const int clickedStar=47;
+    cameraFront=glm::normalize(glm::vec3(blackHole.ResolveTarget(clickedStar,simulationTime).position-
+        systemOriginAu-starSystem.camera));cameraUp={0,1,0};
+    int clickW,clickH;glfwGetWindowSize(window,&clickW,&clickH);
+    const auto clickCamera=starSystem.camera;const auto clickDirection=cameraFront;
+    SelectAtScreen((clickW-scenePanel.Width())*.5,clickH*.5);
+    if(pendingSystemTarget!=clickedStar || starSystem.camera!=clickCamera || cameraFront!=clickDirection){
+        std::cerr<<"On-screen star selection failed or moved camera\n";fail();
+    }
+    capture("visible-star-selected-from-solar");
+    KeyCallback(window,GLFW_KEY_G,0,GLFW_PRESS,0);
+    if(activeSystemTarget!=clickedStar || starSystem.Host().systemSeed!=Universe::SystemSeed(clickedStar))fail();
+    const auto clickedPlanets=starSystem.Planets();capture("visible-star-visited-system");
+    StartSolarSystem();SelectCatalogue(clickedStar);KeyCallback(window,GLFW_KEY_G,0,GLFW_PRESS,0);
+    if(starSystem.Planets().size()!=clickedPlanets.size() || starSystem.Planets()[0].seed!=clickedPlanets[0].seed)fail();
+    StartSolarSystem();
     starSystem.SelectPlanet(2);
     starSystem.GoToSelected(simulationTime, cameraFront, cameraUp);
     capture("solar-earth");
@@ -121,7 +277,7 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
         if(std::max({r,g,b})>30){++moonBright;if(std::abs(r-g)<4 && std::abs(g-b)<8)++moonNeutral;}
     }
     std::cout<<"Lunar neutral pixels: "<<moonNeutral<<" / "<<moonBright<<"\n";
-    if(moonBright<100 || moonNeutral<moonBright*.98){std::cerr<<"Moon received a climate colour palette\n";success=false;}
+    if(moonBright<100 || moonNeutral<moonBright*.98){std::cerr<<"Moon received a climate colour palette\n";fail();}
     trajectories=false;
     starSystem.SelectPlanet(5);starSystem.GoToSelected(simulationTime,cameraFront,cameraUp);
     const auto saturn=starSystem.Position(5,simulationTime);
@@ -150,64 +306,64 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
     StartGargantua();
     const auto beforeSelectionPosition=cameraPos;const auto beforeSelectionFront=cameraFront;
     SelectCatalogue(100);
-    if(cameraPos!=beforeSelectionPosition || cameraFront!=beforeSelectionFront){std::cerr<<"Single selection moved camera\n";success=false;}
+    if(cameraPos!=beforeSelectionPosition || cameraFront!=beforeSelectionFront){std::cerr<<"Single selection moved camera\n";fail();}
     SelectCatalogue(0);
     const auto original = capture("gargantua-lensing");
     const auto cached = capture("gargantua-cached");
     if (!idleFrame || original != cached)
     {
         std::cerr << "Cached frame mismatch\n";
-        success = false;
+        fail();
     }
     KeyCallback(window,1330,0,GLFW_PRESS,0);
     const auto nonSpinning=capture("gargantua-spin-zero");
     KeyCallback(window,1332,0,GLFW_PRESS,0);
     const auto spinning=capture("gargantua-kerr-spin-08");
-    if(nonSpinning==spinning){std::cerr<<"Kerr spin did not alter light propagation\n";success=false;}
+    if(nonSpinning==spinning){std::cerr<<"Kerr spin did not alter light propagation\n";fail();}
     const auto cameraBeforeEditor=cameraPos;const auto timeBeforeEditor=simulationTime;
     KeyCallback(window,GLFW_KEY_F5,0,GLFW_PRESS,0);
-    if(!objectEditor.Visible() || !objectEditor.Editable())success=false;
+    if(!objectEditor.Visible() || !objectEditor.Editable())fail();
 #ifdef _WIN32
     const auto editor=static_cast<HWND>(objectEditor.NativeHandle());
     if(!editor)return false;
     SetDlgItemTextA(editor,ObjectEditor::SpinValue,"0.650000");
     SendMessageW(editor,WM_COMMAND,MAKEWPARAM(ObjectEditor::Apply,BN_CLICKED),0);
-    if(blackHole.Spin()!=.65 || sceneCacheValid)success=false;
+    if(blackHole.Spin()!=.65 || sceneCacheValid)fail();
     const auto editedSpin=capture("object-editor-spin-065");
-    if(editedSpin==spinning)success=false;
+    if(editedSpin==spinning)fail();
     for(const char* invalid:{"1.0","nan","infinity","0.4junk",""}){
         SetDlgItemTextA(editor,ObjectEditor::SpinValue,invalid);
         SendMessageW(editor,WM_COMMAND,MAKEWPARAM(ObjectEditor::Apply,BN_CLICKED),0);
-        if(blackHole.Spin()!=.65)success=false;
+        if(blackHole.Spin()!=.65)fail();
     }
     SendDlgItemMessageW(editor,ObjectEditor::SpinSlider,TBM_SETPOS,TRUE,-5000);
     SendMessageW(editor,WM_HSCROLL,TB_THUMBTRACK,reinterpret_cast<LPARAM>(GetDlgItem(editor,ObjectEditor::SpinSlider)));
-    if(blackHole.Spin()!=-.5)success=false;
+    if(blackHole.Spin()!=-.5)fail();
     capture("object-editor-reverse-spin");
     KeyCallback(window,1331,0,GLFW_PRESS,0);
     char editorValue[40];GetDlgItemTextA(editor,ObjectEditor::SpinValue,editorValue,40);
-    if(std::string(editorValue)!="0.500000")success=false;
+    if(std::string(editorValue)!="0.500000")fail();
     SelectCatalogue(10);
-    if(objectEditor.Editable() || IsWindowEnabled(GetDlgItem(editor,ObjectEditor::SpinSlider)))success=false;
+    if(objectEditor.Editable() || IsWindowEnabled(GetDlgItem(editor,ObjectEditor::SpinSlider)))fail();
     SendMessageW(editor,WM_COMMAND,MAKEWPARAM(ObjectEditor::Reset,BN_CLICKED),0);
-    if(blackHole.Spin()!=.5)success=false;
+    if(blackHole.Spin()!=.5)fail();
     SelectCatalogue(0);
     SendMessageW(editor,WM_COMMAND,MAKEWPARAM(ObjectEditor::Reset,BN_CLICKED),0);
-    if(blackHole.Spin()!=.8)success=false;
+    if(blackHole.Spin()!=.8)fail();
 #endif
     KeyCallback(window,GLFW_KEY_F5,0,GLFW_PRESS,0);
-    if(objectEditor.Visible() || cameraPos!=cameraBeforeEditor || simulationTime!=timeBeforeEditor)success=false;
+    if(objectEditor.Visible() || cameraPos!=cameraBeforeEditor || simulationTime!=timeBeforeEditor)fail();
     const auto displayBrightness=[](const auto& pixels){double sum=0;for(auto value:pixels)sum+=value;return sum;};
     lensFlareStrength=0;exposureEv=0;KeyCallback(window,1200,0,GLFW_PRESS,0);
     KeyCallback(window,1205,0,GLFW_PRESS,0);const auto hdrDiskOff=capture("black-hole-hdr-unassisted");
     KeyCallback(window,1204,0,GLFW_PRESS,0);const auto hdrDiskOn=capture("black-hole-hdr-visible");
-    if(displayBrightness(hdrDiskOn)<=displayBrightness(hdrDiskOff))success=false;
+    if(displayBrightness(hdrDiskOn)<=displayBrightness(hdrDiskOff))fail();
     KeyCallback(window,1201,0,GLFW_PRESS,0);optics.SetAutoExposure(true);
     KeyCallback(window,1205,0,GLFW_PRESS,0);const auto pureDiskOff=capture("black-hole-auto-unassisted");
     KeyCallback(window,1204,0,GLFW_PRESS,0);const auto pureDiskOn=capture("black-hole-auto-visible");
     std::cout<<"Black hole display sums HDR "<<displayBrightness(hdrDiskOff)<<" -> "<<displayBrightness(hdrDiskOn)
         <<"; Auto "<<displayBrightness(pureDiskOff)<<" -> "<<displayBrightness(pureDiskOn)<<"\n";
-    if(displayBrightness(pureDiskOn)<=displayBrightness(pureDiskOff))success=false;
+    if(displayBrightness(pureDiskOn)<=displayBrightness(pureDiskOff))fail();
     KeyCallback(window,1200,0,GLFW_PRESS,0);lensFlareStrength=.45f;
     cameraPos={0,0,650};cameraFront={0,0,-1};cameraUp={0,1,0};fieldOfView=4;
     capture("gargantua-visible-from-mann-distance");
@@ -259,13 +415,13 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
             const size_t pixel=(static_cast<size_t>(y)*width+x)*4;
             bool changed=false;
             for(int c=0;c<3;++c){
-                if(!std::isfinite(air[pixel+c])){success=false;++nonfinite;}
+                if(!std::isfinite(air[pixel+c])){fail();++nonfinite;}
                 if(std::abs(air[pixel+c]-noAir[pixel+c])>.00001f)changed=true;
             }
             if(changed){++affected;if(!intersects)++leaked;}
         }
         std::cout<<label<<" texture="<<width<<"x"<<height<<" affected="<<affected<<"; air outside shell="<<leaked<<"; nonfinite="<<nonfinite<<"\n";
-        if(leaked>0 || affected<100){std::cerr<<"Miller atmosphere escaped its foreground shell\n";success=false;}
+        if(leaked>0 || affected<100){std::cerr<<"Miller atmosphere escaped its foreground shell\n";fail();}
     }
     StartSolarSystem();
     starSystem.SelectPlanet(-1);
@@ -288,7 +444,7 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
     const auto paused=capture("solar-prominences-paused");
     if(active!=paused || !idleFrame) {
         std::cerr<<"Stellar activity changed while paused\n";
-        success=false;
+        fail();
     }
     KeyCallback(window,1320,0,GLFW_PRESS,0);
     const auto disabled=capture("solar-prominences-disabled");
@@ -297,10 +453,10 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
         if(disabled[i]<5 && disabled[i+1]<5 && disabled[i+2]<5
             && (active[i]>20 || active[i+1]>20 || active[i+2]>20))++exteriorPlasma;
     std::cout<<"Exterior plasma pixels: "<<exteriorPlasma<<"\n";
-    if(exteriorPlasma<100)success=false;
+    if(exteriorPlasma<100)fail();
     KeyCallback(window,1321,0,GLFW_PRESS,0);
     simulationTime+=180;
-    if(active==capture("solar-prominences-evolved"))success=false;
+    if(active==capture("solar-prominences-evolved"))fail();
     StartGargantua();
     const auto companion=blackHole.ResolveTarget(4,simulationTime);
     cameraPos=companion.position+glm::dvec3(0,0,companion.radius*3.5);
@@ -320,7 +476,7 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
     const auto natural=capture("solar-natural-color");
     KeyCallback(window,1324,0,GLFW_PRESS,0);
     const auto warm=capture("solar-warm-color");
-    if(natural==warm)success=false;
+    if(natural==warm)fail();
     // Keep angular size, view direction and exposure fixed across lens comparisons.
     starSystem.camera={0,0,.25};
     cameraFront=glm::normalize(glm::vec3(.18,.06,-1));
@@ -340,8 +496,8 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
             if(difference[i]>8)++changed;
         }
         std::cout<<"Lens "<<lens<<" flare channels changed: "<<changed<<"\n";
-        if(changed<100 || darkened>0)success=false;
-        for(const auto& other:profileDifferences)if(difference==other)success=false;
+        if(changed<100 || darkened>0)fail();
+        for(const auto& other:profileDifferences)if(difference==other)fail();
         profileDifferences.push_back(std::move(difference));
     }
     // A fully occulted Sun must not leave a synthetic flare on top of the foreground planet.
@@ -358,7 +514,7 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
     glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_FLOAT,occultedSources.data());glActiveTexture(GL_TEXTURE0);
     for(int source=0;source<8;++source)
         if(occultedSources[source*8+2]>0 && glm::length(glm::vec2(occultedSources[source*8]-.5f,occultedSources[source*8+1]-.5f))<.005f){
-            std::cerr<<"Occluded Sun produced lens flare\n";success=false;
+            std::cerr<<"Occluded Sun produced lens flare\n";fail();
         }
     // Reference-like framing: bright source above the optical center.
     starSystem.camera={0,0,.8};
@@ -368,14 +524,14 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
     const auto referenceOff=capture("reference-glare-off");
     optics.SetReferenceGlare(true);
     const auto referenceOn=capture("reference-glare-on");
-    if(referenceOff==referenceOn)success=false;
+    if(referenceOff==referenceOn)fail();
     // Camera adaptation continues independently of paused scene dynamics.
     KeyCallback(window,1201,0,GLFW_PRESS,0);
     KeyCallback(window,1202,0,GLFW_PRESS,0);
     exposureEv=0;
     const auto autoStar=capture("pure-auto-star");
     exposureEv=2;
-    if(autoStar==capture("pure-auto-positive-bias"))success=false;
+    if(autoStar==capture("pure-auto-positive-bias"))fail();
     exposureEv=0;
     cameraFront={0,0,1};
     capture("pure-auto-dark-first");
@@ -386,9 +542,9 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
     const auto brightFirst=capture("pure-auto-bright-first");
     for(int frame=0;frame<30;++frame)Update(adaptationStep);
     const auto brightAdapted=capture("pure-auto-bright-adapted");
-    if(!idleFrame || brightFirst==brightAdapted)success=false;
+    if(!idleFrame || brightFirst==brightAdapted)fail();
     KeyCallback(window,1203,0,GLFW_PRESS,0);
-    if(autoStar==capture("pure-manual-star"))success=false;
+    if(autoStar==capture("pure-manual-star"))fail();
     // Glare controls and lens profiles must not affect measured exposure.
     KeyCallback(window,1201,0,GLFW_PRESS,0);
     exposureEv=0;
@@ -406,13 +562,13 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
     const auto glareFrame=capture("exposure-independent-glare-on");
     const auto glareOnState=meterState();
     for(size_t i=0;i<cleanFrame.size();++i)
-        if(int(glareFrame[i])+1<int(cleanFrame[i])){success=false;std::cerr<<"Glare darkened the scene\n";break;}
+        if(int(glareFrame[i])+1<int(cleanFrame[i])){fail();std::cerr<<"Glare darkened the scene\n";break;}
     optics.SetAutoExposure(true);visionProfile=3;
     capture("exposure-independent-nikon");
     const auto nikonState=meterState();
     if(glareOffState[0]!=glareOnState[0] || glareOffState[1]!=glareOnState[1]
         || glareOffState[0]!=nikonState[0]){
-        std::cerr<<"Optical glare affected metered exposure\n";success=false;
+        std::cerr<<"Optical glare affected metered exposure\n";fail();
     }
     float minPanEv=glareOffState[1],maxPanEv=glareOffState[1];
     for(int side:{-1,1}){
@@ -424,7 +580,7 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
     }
     std::cout<<"Glare-independent EV: "<<glareOffState[0]<<", "<<glareOnState[0]
              <<", "<<nikonState[0]<<"; pan span="<<maxPanEv-minPanEv<<"\n";
-    if(maxPanEv-minPanEv>.2f)success=false;
+    if(maxPanEv-minPanEv>.2f)fail();
     KeyCallback(window,1200,0,GLFW_PRESS,0);
     // A resolved, erupting star must contribute one centered optical source.
     StartSolarSystem();starSystem.SelectPlanet(-1);
@@ -450,11 +606,11 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
                 const float hostRadius=.5f/(3.5f*std::tan(glm::radians(22.5f)));
                 GLint sourceViewport[4];glGetIntegerv(GL_VIEWPORT,sourceViewport);
                 const float aspect=static_cast<float>(sourceViewport[2])/sourceViewport[3];
-                if(glm::length(offset*glm::vec2(aspect,1))<hostRadius*1.9f+.004f)success=false;
+                if(glm::length(offset*glm::vec2(aspect,1))<hostRadius*1.9f+.004f)fail();
             }
         }
         std::cout<<"Stellar activity "<<activity<<" optical sources="<<count<<"; host centers="<<hostCenters<<"\n";
-        if(hostCenters!=1)success=false;
+        if(hostCenters!=1)fail();
     }
     KeyCallback(window,1321,0,GLFW_PRESS,0);
     // Isolated eligibility test: identical bright pixels with alpha zero are
@@ -477,7 +633,7 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
         const auto sources=readSources();int count=0;
         for(int source=0;source<8;++source)if(sources[source*8+2]>0)++count;
         std::cout<<"Optical eligibility "<<eligible<<" source count="<<count<<"\n";
-        if((eligible==0 && count!=0) || (eligible==1 && count==0) || glGetError()!=GL_NO_ERROR)success=false;
+        if((eligible==0 && count!=0) || (eligible==1 && count==0) || glGetError()!=GL_NO_ERROR)fail();
     }
     GLint readBuffer;glGetIntegerv(GL_READ_BUFFER,&readBuffer);
     int brightnessSignals[2]={};
@@ -493,7 +649,7 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
     }
     glReadBuffer(readBuffer);
     std::cout<<"Glare brightness response: "<<brightnessSignals[0]<<" -> "<<brightnessSignals[1]<<"\n";
-    if(brightnessSignals[1]<=brightnessSignals[0])success=false;
+    if(brightnessSignals[1]<=brightnessSignals[0])fail();
     glUseProgram(0);sourceProbe.Release();maskAtmosphere.Release();glActiveTexture(GL_TEXTURE0);
     glViewport(oldViewport[0],oldViewport[1],oldViewport[2],oldViewport[3]);
     glClearColor(oldClear[0],oldClear[1],oldClear[2],oldClear[3]);
@@ -512,10 +668,10 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
     starSystem.SelectPlanet(-1);starSystem.camera=stellarCamera;
     cameraFront={0,0,-1};cameraUp={0,1,0};
     const auto starAfter=capture("cool-star-emissive-after-landing");
-    if(starBefore!=starAfter){std::cerr<<"Planet state contaminated stellar rendering\n";success=false;}
+    if(starBefore!=starAfter){std::cerr<<"Planet state contaminated stellar rendering\n";fail();}
     size_t brightStellarPixels=0;
     for(size_t i=0;i<starAfter.size();i+=3)if(starAfter[i]>160)++brightStellarPixels;
-    if(brightStellarPixels<1000){std::cerr<<"Cool star lacks emissive radiance\n";success=false;}
+    if(brightStellarPixels<1000){std::cerr<<"Cool star lacks emissive radiance\n";fail();}
     StartSolarSystem();
     const auto galaxyTarget=blackHole.ResolveTarget(1610,simulationTime);
     const glm::dvec3 arrivalOffset(0,0,galaxyTarget.radius*5.0);
@@ -523,7 +679,7 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
     cameraFront={0,0,-1};cameraUp={0,1,0};
     const auto arrivalTime=simulationTime;
     const auto firstGalaxyImage=capture("camera-proximity-galaxy-star");
-    if(activeSystemTarget!=1610 || starSystem.Host().id!=1610)success=false;
+    if(activeSystemTarget!=1610 || starSystem.Host().id!=1610)fail();
     const auto firstPlanetSeed=starSystem.Planets()[0].seed;
     starSystem.camera={0,0,starSystem.DetailRadiusAu()*100};
     const auto beforeFarSolves=starSystem.PositionEvaluations();
@@ -532,14 +688,14 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
     simulationPlaying=false;
     const auto farSolves=starSystem.PositionEvaluations()-beforeFarSolves;
     std::cout<<"Inactive-system orbital evaluations="<<farSolves<<"\n";
-    if(farSolves!=0)success=false;
+    if(farSolves!=0)fail();
     SelectCatalogue(-2);EnterSelectedSystem(false);
     simulationTime=arrivalTime;
     starSystem.camera=galaxyTarget.position+arrivalOffset;
     cameraFront={0,0,-1};cameraUp={0,1,0};
     const auto revisitedGalaxyImage=capture("camera-proximity-same-star-revisit");
-    if(activeSystemTarget!=1610 || starSystem.Planets()[0].seed!=firstPlanetSeed)success=false;
-    if(firstGalaxyImage!=revisitedGalaxyImage){std::cerr<<"Galaxy revisit changed the same seeded view\n";success=false;}
+    if(activeSystemTarget!=1610 || starSystem.Planets()[0].seed!=firstPlanetSeed)fail();
+    if(firstGalaxyImage!=revisitedGalaxyImage){std::cerr<<"Galaxy revisit changed the same seeded view\n";fail();}
     StartGargantua();
     for(int planet=1;planet<=2;++planet){
         const auto target=blackHole.ResolveTarget(planet+1,simulationTime);
@@ -551,6 +707,44 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
         capture(planet==1?"mann-ice-surface-lod":"edmunds-rock-surface-lod");
         ToggleLanding();
     }
+    StartGargantua();
+    trajectories=false;selectedTarget=-1;visionProfile=0;lensFlareStrength=0;exposureEv=0;fieldOfView=100;
+    const double infallRs=BlackHole::HorizonRadius();observerSpin=blackHole.Spin();
+    kerrObserver=KerrSpacetime::MakeStationaryObserver({infallRs*3,.1,.05},infallRs,observerSpin);
+    kerrObserverValid=true;observerGravity=false;horizonReached=true;
+    const double outerHorizon=KerrSpacetime::Horizon(infallRs,observerSpin);
+    std::vector<unsigned char> beforeHorizon;
+    for(double fraction:{1.02,1.001,.999,.98,.85}){
+        for(int step=0;step<100000 && KerrSpacetime::Radius(kerrObserver.state.position,infallRs,observerSpin)>outerHorizon*fraction;++step)
+            KerrSpacetime::AdvanceObserver(kerrObserver,infallRs,observerSpin,.1,Astronomy::lightSpeedAu);
+        cameraPos=InterstellarWorlds::Orientation()*kerrObserver.state.position;
+        observer.position=cameraPos;
+        observer.velocity=InterstellarWorlds::Orientation()*KerrSpacetime::ObserverCoordinateVelocity(kerrObserver,infallRs,observerSpin)*Astronomy::lightSpeedAu;
+        cameraFront=glm::normalize(glm::vec3(cameraPos));cameraUp=glm::vec3(InterstellarWorlds::Orientation()*glm::dvec3(0,0,1));
+        sceneCacheValid=false;
+        const auto view=capture((std::string("kerr-infall-horizon-")+std::to_string(fraction)).c_str());
+        if(fraction==1.001)beforeHorizon=view;
+        if(fraction==.999){
+            double change=0;for(size_t i=0;i<view.size();++i)change+=std::abs(int(view[i])-int(beforeHorizon[i]));change/=view.size();
+            std::cout<<"Horizon-crossing mean display change: "<<change<<" / 255\n";
+            if(change>12){std::cerr<<"Horizon crossing introduced a display discontinuity\n";fail();}
+        }
+        glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,optics.SceneTexture());
+        GLint w,h;glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_WIDTH,&w);glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_HEIGHT,&h);
+        std::vector<float> hdr(static_cast<size_t>(w)*h*4);glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_FLOAT,hdr.data());glBindTexture(GL_TEXTURE_2D,0);
+        for(float value:hdr)if(!std::isfinite(value)){std::cerr<<"Nonfinite interior-observer radiance\n";fail();break;}
+    }
+    kerrObserverValid=false;horizonReached=false;
+    // The actual H control advances a physical observer while world playback
+    // is paused, without manufacturing an infinite outside-time jump.
+    cameraPos=InterstellarWorlds::Orientation()*glm::dvec3(infallRs*3,.1,.05);
+    const int previousRate=timeRateIndex;timeRateIndex=2;const double pausedWorld=simulationTime,oldLocal=localTime;
+    KeyCallback(window,GLFW_KEY_H,0,GLFW_PRESS,0);
+    for(int frame=0;frame<200 && !horizonReached;++frame)UpdateObserver(simulationTime,.05f);
+    if(!horizonReached || simulationTime!=pausedWorld || localTime<=oldLocal || !std::isfinite(cameraClockRate)){
+        std::cerr<<"Physical H camera did not cross the horizon with paused world time\n";fail();
+    }
+    observerGravity=false;kerrObserverValid=false;horizonReached=false;pendingObserverProper=0;timeRateIndex=previousRate;
     StartGargantua();
     KeyCallback(window,702,0,GLFW_PRESS,0);
     capture("mann-spacecraft-departure");
@@ -577,49 +771,127 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
     std::vector<float> shipHdr(static_cast<size_t>(hdrWidth)*hdrHeight*4);
     glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_FLOAT,shipHdr.data());glBindTexture(GL_TEXTURE_2D,0);
     size_t solidShipPixels=0;
-    if(hdrWidth!=shipWidth || hdrHeight!=shipHeight)success=false;
+    if(hdrWidth!=shipWidth || hdrHeight!=shipHeight)fail();
     else for(size_t pixel=0;pixel<shipDepth.size();++pixel){
         const double metres=(std::exp2(shipDepth[pixel]*std::log2(1.0+20000.0*1e12))-1.0)/1e12*Astronomy::metresPerAu;
         if(metres<1000000){
             ++solidShipPixels;
-            for(int c=0;c<3;++c)if(std::abs(shipKerrHdr[pixel*4+c]-shipHdr[pixel*4+c])>.00001f)success=false;
+            for(int c=0;c<3;++c)if(std::abs(shipKerrHdr[pixel*4+c]-shipHdr[pixel*4+c])>.00001f)fail();
         }
     }
     std::cout<<"Depth-identified foreground ship pixels stable across spin: "<<solidShipPixels<<"\n";
-    if(solidShipPixels<100)success=false;
-    for(float value:shipHdr)if(!std::isfinite(value)){std::cerr<<"Nonfinite ship HDR radiance\n";success=false;break;}
+    if(solidShipPixels<100)fail();
+    for(float value:shipHdr)if(!std::isfinite(value)){std::cerr<<"Nonfinite ship HDR radiance\n";fail();break;}
     KeyCallback(window,1332,0,GLFW_PRESS,0);
     simulationTime=180*Astronomy::secondsPerDay;
     capture("gargantua-spacecraft-escape");
-    if(blackHole.SpacecraftEnergy()<=0 || !blackHole.RangersDetached())success=false;
+    if(blackHole.SpacecraftEnergy()<=0 || !blackHole.RangersDetached())fail();
     SetVehicleView(1);capture("endurance-interior");
     const auto cabinUp=cameraUp;
     KeyCallback(window,GLFW_KEY_R,0,GLFW_PRESS,GLFW_MOD_SHIFT);
     KeyCallback(window,GLFW_KEY_F,0,GLFW_PRESS,GLFW_MOD_SHIFT);
-    if(followSelected || followSpacecraft || cameraUp!=cabinUp)success=false;
+    if(followSelected || followSpacecraft || cameraUp!=cabinUp)fail();
     KeyCallback(window,GLFW_KEY_L,0,GLFW_PRESS,GLFW_MOD_SHIFT);
     capture("endurance-interior-looking-at-planet");
-    if(glm::dot(cameraUp,glm::vec3(lastCabinRotation[1]))<.99999f)success=false;
+    if(glm::dot(cameraUp,glm::vec3(lastCabinRotation[1]))<.99999f)fail();
     SetVehicleView(2);capture("ranger-1-detached-interior");
     SetVehicleView(3);capture("ranger-2-detached-interior");
     SetVehicleView(0);
     StartSolarSystem();starSystem.SelectPlanet(2);
     KeyCallback(window,GLFW_KEY_F,0,GLFW_PRESS,GLFW_MOD_SHIFT);
-    if(!starSystem.IsFollowing())success=false;
+    if(!starSystem.IsFollowing())fail();
     capture("compact-position-follow-notification",true);
     fieldOfView=22.5;
     const auto beforeZoom=capture("zoom-readout-base");
     ShowZoomToast(true);
-    if(speedToastUntil-glfwGetTime()>1.01 || speedToastUntil-glfwGetTime()<.8)success=false;
+    if(speedToastUntil-glfwGetTime()>1.01 || speedToastUntil-glfwGetTime()<.8)fail();
     const auto duringZoom=capture("compact-zoom-readout",true);
     speedToastUntil=glfwGetTime()-1;
     const auto expiredZoom=capture("zoom-readout-expired",true);
-    if(beforeZoom==duringZoom || beforeZoom!=expiredZoom){std::cerr<<"Zoom toast did not appear/disappear independently\n";success=false;}
+    if(beforeZoom==duringZoom || beforeZoom!=expiredZoom){std::cerr<<"Zoom toast did not appear/disappear independently\n";fail();}
     fieldOfView=45;
     KeyCallback(window,GLFW_KEY_R,0,GLFW_PRESS,GLFW_MOD_SHIFT);
-    if(!starSystem.IsRotationFollowing())success=false;
+    if(!starSystem.IsRotationFollowing())fail();
     KeyCallback(window,GLFW_KEY_L,0,GLFW_PRESS,GLFW_MOD_SHIFT);
-    if(glm::dot(cameraFront,glm::normalize(glm::vec3(starSystem.Position(2,simulationTime)-starSystem.camera)))<.99f)success=false;
+    if(glm::dot(cameraFront,glm::normalize(glm::vec3(starSystem.Position(2,simulationTime)-starSystem.camera)))<.99f)fail();
+    int originalWidth,originalHeight;glfwGetWindowSize(window,&originalWidth,&originalHeight);
+    glfwSetWindowSize(window,997,733);sceneCacheValid=false;capture("window-resize-odd-small");
+    glfwSetWindowSize(window,1235,811);sceneCacheValid=false;capture("window-resize-odd-medium");
+    glfwSetWindowSize(window,originalWidth,originalHeight);sceneCacheValid=false;capture("window-resize-restored");
+#ifdef RENDER_ENGINE_DX12
+    // Exercise actual NGX evaluations, convergence caching, invalidation and
+    // resource retirement. Unsupported hardware keeps the native path.
+    StartGargantua();trajectories=false;
+    NativeDX12::SetDlssMode(NativeDX12::DlssMode::Quality);
+    const auto dlssBefore=NativeDX12::DlssEvaluationCount();
+    capture("dlss-quality-first-frame");
+    if(NativeDX12::DlssEvaluationCount()>dlssBefore){
+        for(int frame=0;frame<32;++frame){float dt=.016f;Update(dt);}
+        const auto settledCount=NativeDX12::DlssEvaluationCount();
+        capture("dlss-quality-converged");
+        if(!idleFrame || NativeDX12::DlssEvaluationCount()!=settledCount)fail();
+        const auto verifyOpticalMask=[&](const CameraOptics& camera,bool requireExcluded){
+        GLint inputW,inputH,outputW,outputH;
+        const auto readOpticalMask=[&](unsigned texture,GLint& w,GLint& h){
+            glBindTexture(GL_TEXTURE_2D,texture);
+            glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_WIDTH,&w);
+            glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_HEIGHT,&h);
+            std::vector<float> image(static_cast<size_t>(w)*h*4);
+            glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_FLOAT,image.data());return image;
+        };
+        const auto maskInput=readOpticalMask(camera.SceneInputTexture(),inputW,inputH);
+        const auto maskOutput=readOpticalMask(camera.SceneTexture(),outputW,outputH);
+        size_t protectedMask=0,eligibleMask=0,maskErrors=0;
+        for(int y=0;y<outputH;++y)for(int x=0;x<outputW;++x){
+            const int sx=std::clamp(static_cast<int>((x+.5)*inputW/outputW),1,inputW-2);
+            const int sy=std::clamp(static_cast<int>((y+.5)*inputH/outputH),1,inputH-2);
+            float low=1,high=0;
+            for(int dy=-1;dy<=1;++dy)for(int dx=-1;dx<=1;++dx){
+                const auto alpha=maskInput[(static_cast<size_t>(sy+dy)*inputW+sx+dx)*4+3];low=std::min(low,alpha);high=std::max(high,alpha);
+            }
+            const auto alpha=maskOutput[(static_cast<size_t>(y)*outputW+x)*4+3];
+            if(high<.01f){++protectedMask;if(alpha>.01f)++maskErrors;}
+            if(low>.99f){++eligibleMask;if(alpha<.99f)++maskErrors;}
+        }
+        std::cout<<"DLSS optical eligibility: excluded="<<protectedMask<<" eligible="<<eligibleMask<<" errors="<<maskErrors<<"\n";
+        if((requireExcluded && protectedMask<100) || eligibleMask<100 || maskErrors)fail();
+        };
+        verifyOpticalMask(optics,false);
+        auto resets=NativeDX12::DlssResetCount();cameraFront=glm::normalize(cameraFront+glm::vec3(.01,0,0));
+        capture("dlss-camera-history-reset");
+        if(NativeDX12::DlssResetCount()<=resets)fail();
+        resets=NativeDX12::DlssResetCount();simulationPlaying=true;
+        capture("dlss-playing-history-reset");simulationPlaying=false;
+        if(NativeDX12::DlssResetCount()<=resets)fail();
+        for(int mode=2;mode<=4;++mode){
+            NativeDX12::SetDlssMode(static_cast<NativeDX12::DlssMode>(mode));sceneCacheValid=false;
+            capture((std::string("dlss-mode-")+std::to_string(mode)).c_str());
+        }
+        glfwSetWindowSize(window,1001,735);sceneCacheValid=false;capture("dlss-resize-odd");
+        glfwSetWindowSize(window,originalWidth,originalHeight);sceneCacheValid=false;
+        CameraOptics dlssMaskProbe;
+        if(!dlssMaskProbe.Initialize())return false;
+        NativeDX12::SetDlssMode(NativeDX12::DlssMode::Quality);
+        for(int eligible=0;eligible<=1;++eligible){
+            const auto maskSize=NativeDX12::PrepareSceneReconstruction(256,256,false);
+            glViewport(0,0,maskSize.x,maskSize.y);dlssMaskProbe.BeginFrame();
+            glClearColor(0,0,0,1);glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+            glEnable(GL_SCISSOR_TEST);glScissor(maskSize.x/3,maskSize.y/3,maskSize.x/3,maskSize.y/3);
+            glClearColor(12,3,1,static_cast<float>(eligible));glClear(GL_COLOR_BUFFER_BIT);
+            glDisable(GL_SCISSOR_TEST);glViewport(0,0,256,256);
+            dlssMaskProbe.Render(2,45,0,true,1,false,.016f);
+            verifyOpticalMask(dlssMaskProbe,eligible==0);
+            const auto sources=readSources();int count=0;
+            for(int source=0;source<8;++source)if(sources[source*8+2]>0)++count;
+            std::cout<<"DLSS optical source count, eligibility "<<eligible<<": "<<count<<"\n";
+            if((eligible==0 && count!=0) || (eligible==1 && count==0))fail();
+        }
+        dlssMaskProbe.Release();glUseProgram(0);glActiveTexture(GL_TEXTURE0);
+        std::cout<<"DLSS actual evaluations="<<NativeDX12::DlssEvaluationCount()<<"; history resets="<<NativeDX12::DlssResetCount()<<"\n";
+    }else std::cout<<"DLSS fallback: "<<NativeDX12::DlssStatus()<<"\n";
+    NativeDX12::SetDlssMode(NativeDX12::DlssMode::Off);sceneCacheValid=false;
+    capture("dlss-disabled-native-fallback");
+#endif
     // Synthetic HDR input makes exposure response measurable without relying on
     // scene composition. Readback here is confined to this opt-in test harness.
     ExposureMeter probe;
@@ -672,7 +944,8 @@ bool WindowManager::RunRenderChecks(const std::string &directory)
     std::cout<<"Exposure meter EV: "<<initial[0]<<" -> "<<darkening[0]
              <<" -> "<<settled[0]<<"; brightening "<<brightening[0]
              <<"; black "<<black[0]<<"; valid="<<meterValid<<"\n";
-    success=success && meterValid;
+    if(!meterValid)fail();
     probe.Release();glDeleteTextures(1,&meterInput);
+    std::cout<<"Render checks "<<(success?"PASSED":"FAILED")<<": "<<captures<<" scene captures; "<<uiCaptures<<" UI captures; "<<failedLines.size()<<" assertion locations failed\n";
     return success;
 }

@@ -1,12 +1,17 @@
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #include <commctrl.h>
 #pragma comment(lib, "comctl32.lib")
 #endif
 #include "KerrSpacetime.h"
 #include "ObjectEditor.h"
+#include "UiTheme.h"
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
@@ -103,8 +108,8 @@ struct ObjectEditorWin32 {
       return 0;
     case WM_CTLCOLORSTATIC:
     case WM_CTLCOLOREDIT:
-      SetTextColor(reinterpret_cast<HDC>(wParam), RGB(224, 232, 242));
-      SetBkColor(reinterpret_cast<HDC>(wParam), RGB(19, 24, 33));
+      SetTextColor(reinterpret_cast<HDC>(wParam), UiTheme::Text);
+      SetBkColor(reinterpret_cast<HDC>(wParam), UiTheme::Panel);
       return reinterpret_cast<LRESULT>(editor->brush);
     case WM_ERASEBKGND: {
       RECT r;
@@ -158,7 +163,8 @@ bool ObjectEditor::Create(void *nativeOwner,
 void ObjectEditor::BuildControls() {
 #ifdef _WIN32
   const auto native = static_cast<HWND>(window);
-  brush = CreateSolidBrush(RGB(19, 24, 33));
+  UiTheme::DarkTitle(native);
+  brush = CreateSolidBrush(UiTheme::Panel);
   font = CreateFontW(-MulDiv(10, GetDpiForWindow(native), 72), 0, 0, 0,
                      FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
@@ -172,6 +178,7 @@ void ObjectEditor::BuildControls() {
     SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
     SetWindowSubclass(child, ObjectEditorWin32::ControlProcedure, 1,
                       reinterpret_cast<DWORD_PTR>(this));
+    if(std::wstring(type)==L"BUTTON")UiTheme::Button(child);
   };
   add(L"STATIC", L"Selected object", ObjectName, SS_LEFT);
   add(L"STATIC", L"Dimensionless spin (a/M): -0.98 to +0.98", 4111, SS_LEFT);

@@ -1,4 +1,7 @@
 #include "CameraOptics.h"
+#ifdef RENDER_ENGINE_DX12
+#include "dx12/Dx12SceneBridge.h"
+#endif
 #include "LensCalibration.h"
 #include "glad/glad.h"
 #include <cmath>
@@ -456,6 +459,11 @@ void CameraOptics::Render(int profile, float fieldOfView, float exposureEv, bool
     glBindTexture(GL_TEXTURE_2D, sceneTexture);
     if (!reuseScene)
     {
+#ifdef RENDER_ENGINE_DX12
+        const bool reconstructed=NativeDX12::ResolveSceneReconstruction(sceneColor,sceneDepth,sceneTexture,realSeconds);
+        glBindTexture(GL_TEXTURE_2D,sceneTexture);
+        if(!reconstructed)
+#endif
         glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, width, height);
         glGenerateMipmap(GL_TEXTURE_2D);
     }

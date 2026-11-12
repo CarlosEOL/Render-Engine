@@ -5,6 +5,7 @@
 #define GLFW_EXPOSE_NATIVE_WIN32
 #endif
 #include "glad/glad.h"
+#include "UiTheme.h"
 #include "WindowManager.h"
 #include "InterstellarWorlds.h"
 #include "ObjectLoader.h"
@@ -12,6 +13,9 @@
 #include "CameraMotion.h"
 #ifdef _WIN32
 #include <GLFW/glfw3native.h>
+#endif
+#ifdef RENDER_ENGINE_DX12
+#include "dx12/Dx12SceneBridge.h"
 #endif
 
 #include <algorithm>
@@ -33,6 +37,20 @@ glm::vec3 WindowManager::cameraUp    = glm::vec3(0.0f, 1.0f, 0.0f);
 std::vector<float> WindowManager::currentModelVertices;
 
 namespace {
+    void SetApplicationTitle(GLFWwindow* window,const std::string& title) {
+#ifdef RENDER_ENGINE_DX12
+        const auto identified=title+" | DX12";glfwSetWindowTitle(window,identified.c_str());
+#else
+        glfwSetWindowTitle(window,title.c_str());
+#endif
+    }
+    void PresentFrame(GLFWwindow* window) {
+#ifdef RENDER_ENGINE_DX12
+        NativeDX12::PresentScene();
+#else
+        glfwSwapBuffers(window);
+#endif
+    }
     bool firstMouse = true;
     float yaw   = -90.0f;
     float pitch = 0.0f;
@@ -263,6 +281,13 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
     manager.sceneCacheValid=false;
     if (key == GLFW_KEY_F10 || key == 3030) { manager.OpenMainMenu(); return; }
     if (manager.mainMenu.Visible()) return;
+#ifdef RENDER_ENGINE_DX12
+    if(key>=1350 && key<=1354){
+        NativeDX12::SetDlssMode(static_cast<NativeDX12::DlssMode>(key-1350));
+        manager.ShowStatusToast(key==1350?"DLSS off":NativeDX12::DlssStatus());
+        return;
+    }
+#endif
     if(key==1202 || key==1203){manager.optics.SetAutoExposure(key==1202);manager.UpdateTitle();return;}
     if(key==1204 || key==1205){manager.optics.SetBlackHoleVisibility(key==1204);return;}
     if(key==1223 || key==1224){manager.optics.SetReferenceGlare(key==1223);return;}
@@ -463,6 +488,7 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
         manager.observerGravity = !manager.observerGravity;
         manager.horizonReached = false;
         manager.observer = {glm::dvec3(cameraPos), glm::dvec3(0.0)};
+        manager.kerrObserverValid=false;manager.pendingObserverProper=0;
         cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
     } else if (key == GLFW_KEY_F6 && manager.blackHoleReady) {
         manager.showBlackHole = !manager.inStarSystem;
@@ -632,48 +658,37 @@ void WindowManager::UpdateObserver(double previousTime, float realSeconds) {
     }
     if (!observerGravity)
         return;
-    observer.position = glm::dvec3(cameraPos);
-    // The fall is driven by the observer's proper time, not the playback clock,
-    // so pressing H always plunges the camera even while the simulation is paused.
-    double remainingProper = glm::max(0.0, static_cast<double>(realSeconds))*timeRates[timeRateIndex];
-    const double horizon = BlackHole::HorizonRadius();
-    const double boundary = horizon * 1.015;
-    const double innerLimit = horizon * 0.08;
-    while (remainingProper > 0.0 && observerGravity) {
-        const double radius = glm::length(observer.position);
-        if (radius <= innerLimit) {
-            observer.position = glm::normalize(observer.position) * innerLimit;
-            observerGravity = false;
-            horizonReached = true;
-            UpdateTitle();
-            break;
-        }
-        if (radius <= boundary)
-            horizonReached = true;
-        const double dynamicalTime=std::sqrt(radius*radius*radius/BlackHole::GravityParameter());
-        const double properStep = glm::min(remainingProper, glm::max(.001,.005*dynamicalTime));
-        double interval = properStep;
-        if (radius > horizon) {
-            const double clockRate = glm::max(OrbitalMechanics::ObserverClockRate(radius,
-                glm::length(observer.velocity), BlackHole::GravityParameter(), horizon), 0.02);
-            interval = glm::min(properStep / clockRate, .01*dynamicalTime);
-        } else {
-            // Do not let one step jump across the singularity and out the far side.
-            const double speed = glm::max(glm::length(observer.velocity), 1e-12);
-            interval = glm::min(properStep, glm::min(.01*dynamicalTime,0.1 * radius / speed));
-        }
-        OrbitalMechanics::AdvanceParticle(observer, BlackHole::GravityParameter(), 0.0, interval);
-        localTime += radius > horizon ? properStep : interval;
-        remainingProper -= properStep;
-        if (glm::length(observer.position) <= innerLimit) {
-            observer.position = glm::normalize(observer.position) * innerLimit;
-            observerGravity = false;
-            horizonReached = true;
-            UpdateTitle();
-            break;
-        }
+    const auto fromDisk=InterstellarWorlds::Orientation(),toDisk=glm::transpose(fromDisk);
+    const double rs=BlackHole::HorizonRadius(),spin=blackHole.Spin();
+    if(!kerrObserverValid || observerSpin!=spin){
+        if(kerrObserverValid){
+            const auto beta=KerrSpacetime::ObserverBeta(kerrObserver,rs,observerSpin);
+            kerrObserver=KerrSpacetime::MakeObserver(toDisk*cameraPos,rs,spin,beta);
+        }else kerrObserver=KerrSpacetime::MakeStationaryObserver(toDisk*cameraPos,rs,spin);
+        kerrObserverValid=true;observerSpin=spin;
     }
-    cameraPos = observer.position;
+    pendingObserverProper+=std::max(0.0,static_cast<double>(realSeconds))*timeRates[timeRateIndex];
+    const double oldCoordinate=kerrObserver.coordinateSeconds;
+    const double horizon=KerrSpacetime::Horizon(rs,spin);
+    const double innerLimit=std::max(rs*.03,rs*.5*(1-std::sqrt(1-spin*spin))*1.05);
+    for(int step=0;step<512 && pendingObserverProper>0;++step){
+        const double radius=KerrSpacetime::Radius(kerrObserver.state.position,rs,spin);
+        if(radius<=horizon)horizonReached=true;
+        if(radius<=innerLimit){
+            observerGravity=false;pendingObserverProper=0;
+            simulationPlaying=false;
+            ShowStatusToast("Modeled interior limit reached",true);break;
+        }
+        const double interval=std::min(pendingObserverProper,std::max(.001,.002*radius/Astronomy::lightSpeedAu));
+        KerrSpacetime::AdvanceObserver(kerrObserver,rs,spin,interval,Astronomy::lightSpeedAu);
+        pendingObserverProper-=interval;localTime+=interval;
+    }
+    cameraPos=fromDisk*kerrObserver.state.position;
+    if(KerrSpacetime::Radius(kerrObserver.state.position,rs,spin)<=horizon)horizonReached=true;
+    observer.position=cameraPos;
+    observer.velocity=fromDisk*KerrSpacetime::ObserverCoordinateVelocity(kerrObserver,rs,spin)*Astronomy::lightSpeedAu;
+    cameraClockRate=1/KerrSpacetime::ObserverTimeComponent(kerrObserver,rs,spin);
+    if(simulationPlaying)simulationTime=previousTime+kerrObserver.coordinateSeconds-oldCoordinate;
 }
 
 void WindowManager::SyncCameraAngles() {
@@ -708,7 +723,7 @@ void WindowManager::OpenMainMenu() {
     DrawMenuBar(glfwGetWin32Window(window));
 #endif
     mainMenu.Show(AppMenu::Page::Home);
-    glfwSetWindowTitle(window,"Render-Engine | Main menu");
+    SetApplicationTitle(window,"Render-Engine | Main menu");
 }
 
 void WindowManager::PrepareCurrentBrowser() {
@@ -883,6 +898,15 @@ void WindowManager::RefreshObjectEditor(){
 void WindowManager::RefreshPanel() {
     RefreshObjectEditor();
     if (mainMenu.Visible()) return;
+    std::ostringstream playback;
+    if(quantumMode)playback<<"STATE t = "<<std::fixed<<std::setprecision(3)<<quantum.Time()<<"\r\n"<<(simulationPlaying?"PLAYING":"PAUSED")<<"  |  "<<quantumRates[quantumRateIndex]<<"x";
+    else{
+        const auto local=static_cast<std::uint64_t>(std::max(0.0,localTime)),world=static_cast<std::uint64_t>(std::max(0.0,simulationTime));
+        const auto clock=[&](std::uint64_t t){playback<<std::setfill('0')<<std::setw(2)<<t/3600<<':'<<std::setw(2)<<t/60%60<<':'<<std::setw(2)<<t%60;};
+        playback<<"LOCAL ";clock(local);playback<<"   WORLD ";clock(world);
+        playback<<"\r\n"<<(simulationPlaying?"PLAYING":"PAUSED")<<"  |  "<<timeRates[timeRateIndex]<<"x time";
+    }
+    scenePanel.SetPlayback(simulationPlaying,playback.str());
     if (quantumMode) scenePanel.SetInformation(quantum.Information());
     else if (pendingSystemTarget!=0) {
         const auto& system=inStarSystem && activeSystemTarget==pendingSystemTarget?starSystem:previewSystem;
@@ -896,6 +920,8 @@ void WindowManager::RefreshPanel() {
         rayModel<<"Ray model: "<<(std::abs(blackHole.Spin())>.0001?"GPU Kerr":"GPU Schwarzschild")
             <<"\nDimensionless spin: "<<blackHole.Spin()<<"\nMaximum ray steps: "<<blackHole.RayBudget()<<"\n";
         info+=rayModel.str();
+        if(kerrObserverValid && (observerGravity || horizonReached))
+            info+="Free fall uses rotating black-hole gravity.\nThe outer horizon is crossed continuously.\nThe inner-horizon region is outside this model.\n";
         if(selectedTarget>=1 && selectedTarget<=3){
             const auto& planet=InterstellarWorlds::Get(selectedTarget-1);
             std::ostringstream details;
@@ -955,6 +981,8 @@ void WindowManager::HandleInterfaceCommand(int id,int notification) {
             RefreshPanel();
         }
         if (notification==LBN_DBLCLK) HandleInterfaceCommand(2104,0);
+    } else if(id==2107){
+        KeyCallback(window,GLFW_KEY_SPACE,0,GLFW_PRESS,0);RefreshPanel();UpdateTitle();
     } else if (id==2104) {
         KeyCallback(window,GLFW_KEY_G,0,GLFW_PRESS,0);
         SetFocus(glfwGetWin32Window(window));
@@ -969,7 +997,7 @@ void WindowManager::UpdateTitle() {
         title<<"Quantum Simulation | "<<QuantumStates::Examples()[quantum.Selected()].name
             <<(simulationPlaying?" | Playing":" | Paused")<<" | t="<<std::fixed<<std::setprecision(3)
             <<quantum.Time()<<" | "<<quantumRates[quantumRateIndex]<<"x | Space play/pause | R restart | F10 menu";
-        glfwSetWindowTitle(window,title.str().c_str()); return;
+        SetApplicationTitle(window,title.str()); return;
     }
     std::ostringstream title;
     const auto seconds = static_cast<std::uint64_t>(localTime);
@@ -983,7 +1011,7 @@ void WindowManager::UpdateTitle() {
           << (followSelected ? (followSelectedRotation?" | Following rotation":" | Following position") : "")
           << (landed ? " | Surface free-cam" : "")
           << (observerGravity ? " | Falling free-cam" : "")
-          << (horizonReached ? (glm::length(cameraPos) < BlackHole::HorizonRadius()
+          << (horizonReached ? (KerrSpacetime::Radius(glm::transpose(InterstellarWorlds::Orientation())*cameraPos,BlackHole::HorizonRadius(),blackHole.Spin()) < KerrSpacetime::Horizon(BlackHole::HorizonRadius(),blackHole.Spin())
               ? " | Inside event horizon" : " | Horizon crossed") : "")
           << (photonView ? " | Photon samples: fly aside to inspect" : "")
           << (showBlackHole && selectedTarget >= 0 ? " | Selected " + blackHole.ResolveTarget(selectedTarget, simulationTime).name + " [G]" : "")
@@ -998,7 +1026,7 @@ void WindowManager::UpdateTitle() {
           << (showBlackHole ? " | Light age " + std::to_string(
               blackHole.SpacecraftLightAge(cameraPos, simulationTime)) + " s" : "")
           << " | Wheel speed | Shift+RMB zoom | MMB reset | Esc cursor";
-    glfwSetWindowTitle(window, title.str().c_str());
+    SetApplicationTitle(window, title.str());
 }
 
 void WindowManager::AlignCameraUp(const glm::vec3& up) {
@@ -1059,8 +1087,14 @@ void WindowManager::MouseButtonCallback(GLFWwindow* window, int button, int acti
         if ((!manager.showBlackHole && !manager.inStarSystem) || manager.mouseCaptured)
             return;
         double x, y;
-        int width, height;
         glfwGetCursorPos(window, &x, &y);
+        manager.SelectAtScreen(x,y);
+    }
+}
+
+void WindowManager::SelectAtScreen(double x,double y) {
+    auto& manager=*this;
+        int width, height;
         glfwGetWindowSize(window, &width, &height);
         width-=manager.scenePanel.Width();
         if (width <= 0 || height <= 0)
@@ -1074,7 +1108,16 @@ void WindowManager::MouseButtonCallback(GLFWwindow* window, int button, int acti
             static_cast<float>(width) / height, manager.fieldOfView);
         const auto point = glm::inverse(projection * view) * glm::vec4(screen, 1.0f, 1.0f);
         const auto direction = glm::normalize(glm::vec3(point));
-        if (manager.inStarSystem) manager.starSystem.Pick(direction,manager.simulationTime);
+        const double tolerance=12.0*std::tan(glm::radians(manager.fieldOfView*.5))/height;
+        if (manager.inStarSystem) {
+            if(manager.starSystem.Pick(direction,manager.simulationTime,tolerance)){
+                manager.pendingSystemTarget=manager.activeSystemTarget;
+            }else{
+                const int star=manager.blackHole.PickCatalogueStar(manager.systemOriginAu+manager.starSystem.camera,
+                    direction,tolerance,manager.activeSystemTarget);
+                if(star>=10)manager.SelectCatalogue(star);
+            }
+        }
         else {
             manager.selectedTarget = manager.blackHole.PickTarget(cameraPos, direction, manager.simulationTime);
             if (manager.selectedTarget>=0) {
@@ -1085,7 +1128,6 @@ void WindowManager::MouseButtonCallback(GLFWwindow* window, int button, int acti
         }
         manager.RefreshPanel();
         manager.UpdateTitle();
-    }
 }
 
 void WindowManager::MouseCallback(GLFWwindow* window, double xpos, double ypos) {
@@ -1537,8 +1579,8 @@ void WindowManager::ShowSpeedToast(float speed, bool starSystem) {
     ShowStatusToast(text.str(),false);
 }
 
-void WindowManager::ShowStatusToast(const std::string& text,bool small){
-    speedToastUntil = glfwGetTime() + (small?1.4:1.0);
+void WindowManager::ShowStatusToast(const std::string& text,bool compact){
+    speedToastUntil = glfwGetTime() + (compact?1.4:1.0);
 #ifdef _WIN32
     if (!overlayProgram || !overlayTexture)
         return;
@@ -1547,7 +1589,7 @@ void WindowManager::ShowStatusToast(const std::string& text,bool small){
         dpi = static_cast<int>(GetDpiForWindow(glfwGetWin32Window(window)));
     int width = 0, height = 0;
     std::vector<unsigned char> pixels;
-    if (!BuildToastTexture(text, dpi, width, height, pixels,small?15:30))
+    if (!BuildToastTexture(text, dpi, width, height, pixels,compact?15:30))
         return;
     glBindTexture(GL_TEXTURE_2D, overlayTexture);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
@@ -1557,7 +1599,7 @@ void WindowManager::ShowStatusToast(const std::string& text,bool small){
     overlayHeight = height;
 #else
     (void)text;
-    (void)small;
+    (void)compact;
 #endif
 }
 
@@ -1620,7 +1662,7 @@ void WindowManager::Update(float& dT) {
         glBindFramebuffer(GL_FRAMEBUFFER,0);
         glClearColor(.005f,.01f,.02f,1);
         glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
-        glfwSwapBuffers(window); return;
+        PresentFrame(window); return;
     }
     if (quantumMode) {
         ProcessCamera(window,dT);
@@ -1633,7 +1675,7 @@ void WindowManager::Update(float& dT) {
         glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
         glPolygonMode(GL_FRONT_AND_BACK,GL_FILL);
         quantum.Render(sceneWidth,fullHeight,fieldOfView,cameraPos,cameraFront,cameraUp);
-        glfwSwapBuffers(window); return;
+        PresentFrame(window); return;
     }
     const double previousTime = simulationTime;
     if (simulationPlaying) {
@@ -1698,6 +1740,9 @@ void WindowManager::Update(float& dT) {
             }
             cameraClockRate=blackHole.ObserverClockRate(cameraPos,simulationTime,velocity);
         }else cameraClockRate=1;
+        if(showBlackHole && kerrObserverValid && horizonReached && observerSpin==blackHole.Spin()
+            && glm::length(cameraPos-InterstellarWorlds::Orientation()*kerrObserver.state.position)<1e-9)
+            cameraClockRate=1/KerrSpacetime::ObserverTimeComponent(kerrObserver,BlackHole::HorizonRadius(),observerSpin);
         if(simulationTime>previousTime)localTime+=(simulationTime-previousTime)*cameraClockRate;
     }
 
@@ -1749,16 +1794,23 @@ void WindowManager::Update(float& dT) {
         static_cast<double>(showBlackHole),static_cast<double>(inStarSystem),static_cast<double>(activeSystemTarget),
         static_cast<double>(selectedTarget),static_cast<double>(starSystem.Selected()),static_cast<double>(trajectories),
         static_cast<double>(photonView),static_cast<double>(observerGravity),static_cast<double>(horizonReached),blackHoleResolution,static_cast<double>(interiorVehicle)};
-    idleFrame=sceneCacheValid && !simulationPlaying && (showBlackHole || inStarSystem) && signature==lastSceneSignature;
+    idleFrame=sceneCacheValid && !simulationPlaying && !observerGravity && (showBlackHole || inStarSystem) && signature==lastSceneSignature;
+#ifdef RENDER_ENGINE_DX12
+    const auto reconstructionSize=NativeDX12::PrepareSceneReconstruction(sceneWidth,fullHeight,idleFrame);
+    if(NativeDX12::ReconstructionNeedsFrame())idleFrame=false;
+#endif
     if(idleFrame) {
         glBindFramebuffer(GL_FRAMEBUFFER,0);glViewport(0,0,sceneWidth,fullHeight);
         optics.Render(visionProfile,fieldOfView,exposureEv,hdrMode,lensFlareStrength,true,dT);
-        RenderSpeedToast();glfwSwapBuffers(window);return;
+        RenderSpeedToast();PresentFrame(window);return;
     }
     lastSceneSignature=signature;
 
     if(showBlackHole && !inStarSystem)
         glViewport(0,0,glm::max(1,static_cast<int>(sceneWidth*blackHoleResolution)),glm::max(1,static_cast<int>(fullHeight*blackHoleResolution)));
+#ifdef RENDER_ENGINE_DX12
+    if(NativeDX12::ReconstructionNeedsFrame())glViewport(0,0,reconstructionSize.x,reconstructionSize.y);
+#endif
     optics.BeginFrame();
     glClearColor(0.0f,0.0f,0.0f,1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -1771,12 +1823,18 @@ void WindowManager::Update(float& dT) {
             blackHole.RenderBackground(skyProjection*skyView,systemOriginAu+starSystem.camera);
             if(photonView)blackHole.RenderBackground(skyProjection*skyView,systemOriginAu+starSystem.camera,true,simulationTime,systemOriginAu+starSystem.camera);
         }
-        starSystem.Render(fieldOfView,aspectRatio,cameraFront,cameraUp,simulationTime,trajectories,photonView);
+        starSystem.Render(fieldOfView,aspectRatio,cameraFront,cameraUp,simulationTime,trajectories,photonView,pendingSystemTarget==activeSystemTarget);
+        if(pendingSystemTarget>=10 && pendingSystemTarget!=activeSystemTarget)
+            blackHole.RenderCatalogueSelection(projection*glm::lookAt(glm::vec3(0),cameraFront,cameraUp),
+                systemOriginAu+starSystem.camera,pendingSystemTarget,simulationTime);
     } else if (showBlackHole && blackHoleReady) {
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        const bool physicalObserver=kerrObserverValid && observerSpin==blackHole.Spin() && (observerGravity || horizonReached) && !interiorVehicle
+            && glm::length(cameraPos-InterstellarWorlds::Orientation()*kerrObserver.state.position)<1e-9;
+        const auto physicalBeta=physicalObserver?InterstellarWorlds::Orientation()*KerrSpacetime::ObserverBeta(kerrObserver,BlackHole::HorizonRadius(),observerSpin):glm::dvec3(0);
         if(glm::length(cameraPos)<20000 || interiorVehicle)blackHole.Render(projection * view, cameraPos, simulationTime,
             interiorVehicle?glm::vec3(blackHole.CockpitPose(interiorVehicle,simulationTime).velocity)
-                :observerGravity || horizonReached ? glm::vec3(observer.velocity) : glm::vec3(0.0f),trajectories,selectedTarget,interiorVehicle);
+                :observerGravity || horizonReached ? glm::vec3(observer.velocity) : glm::vec3(0.0f),trajectories,selectedTarget,interiorVehicle,glm::vec3(physicalBeta),physicalObserver);
         else blackHole.RenderBackground(projection*view,cameraPos);
         if(interiorVehicle)vehicleInterior.Render(projection*view,glm::mat3(lastCabinRotation),interiorVehicle>=2,
             static_cast<float>(blackHole.SpacecraftFuelSeconds()/InterstellarWorlds::FuelSeconds));
@@ -1821,7 +1879,7 @@ void WindowManager::Update(float& dT) {
     sceneCacheValid=true;
     RenderSpeedToast();
     glPolygonMode(GL_FRONT_AND_BACK, showWireframe ? GL_LINE : GL_FILL);
-    glfwSwapBuffers(window);
+    PresentFrame(window);
 
     // Print camera transformations
     timeSinceLastLog += dT;
@@ -1841,9 +1899,13 @@ void WindowManager::Update(float& dT) {
 void WindowManager::InitializeGLFW()
 {
     glfwInit();
+#ifdef RENDER_ENGINE_DX12
+    glfwWindowHint(GLFW_CLIENT_API,GLFW_NO_API);
+#else
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+#endif
 }
 
 void WindowManager::MakeNewWindow() {
@@ -1852,11 +1914,15 @@ void WindowManager::MakeNewWindow() {
         std::cerr << "Failed to create GLFW window\n";
         glfwTerminate();
     }
+#ifdef RENDER_ENGINE_DX12
+    NativeDX12::InitializeSceneBridge(glfwGetWin32Window(window));
+#else
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
     if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress))) {
         cerr << "Failed to initialize GLAD\n";
     }
+#endif
 
     glEnable(GL_DEPTH_TEST);
 
@@ -1989,6 +2055,12 @@ void WindowManager::MakeNewWindow() {
         AppendMenuW(exposureMenu, MF_STRING, 1100 + level, exposureNames[level]);
     AppendMenuW(viewMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(exposureMenu), L"Exposure / HDR");
     const HMENU performance=CreatePopupMenu();
+#ifdef RENDER_ENGINE_DX12
+    const HMENU reconstruction=CreatePopupMenu();
+    const wchar_t* dlssModes[]={L"Off - native rendering (default)",L"DLSS Quality",L"DLSS Balanced",L"DLSS Performance",L"DLAA - native resolution"};
+    for(int i=0;i<5;++i)AppendMenuW(reconstruction,MF_STRING,1350+i,dlssModes[i]);
+    AppendMenuW(performance,MF_POPUP,reinterpret_cast<UINT_PTR>(reconstruction),L"NVIDIA DLSS (experimental)");
+#endif
     AppendMenuW(performance,MF_STRING,1303,L"Cooler mode: 30 FPS / 50% resolution");
     AppendMenuW(performance,MF_SEPARATOR,0,nullptr);
     AppendMenuW(performance,MF_STRING,1300,L"30 FPS - default");
@@ -2027,6 +2099,7 @@ void WindowManager::MakeNewWindow() {
                 return 0;
             }
             if (message==WM_SIZE && manager) manager->ResizeInterface();
+            if(message==WM_DRAWITEM && UiTheme::DrawList(reinterpret_cast<DRAWITEMSTRUCT*>(lParam)))return TRUE;
             if ((message==WM_CTLCOLORSTATIC || message==WM_CTLCOLOREDIT || message==WM_CTLCOLORLISTBOX) && manager) {
                 const int id=GetDlgCtrlID(reinterpret_cast<HWND>(lParam));
                 return reinterpret_cast<LRESULT>(id>=3000?manager->mainMenu.ControlColor(reinterpret_cast<void*>(wParam)):

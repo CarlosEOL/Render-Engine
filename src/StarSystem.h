@@ -57,11 +57,11 @@ class StarSystem
     void Update(double seconds, glm::vec3 &front, glm::vec3 &up);
     void Move(GLFWwindow *window, float realSeconds, glm::vec3 &front, glm::vec3 &up);
     void Render(float fieldOfView, float aspect, const glm::vec3 &front, const glm::vec3 &up, double seconds,
-                bool trajectories, bool photonView);
+                bool trajectories, bool photonView, bool showSelection = true);
     void GoToSelected(double seconds, glm::vec3 &front, glm::vec3 &up);
     void ToggleLanding(double seconds, glm::vec3 &front, glm::vec3 &up);
     void Overview(glm::vec3 &front, glm::vec3 &up);
-    void Pick(const glm::vec3 &direction, double seconds);
+    bool Pick(const glm::vec3 &direction, double seconds, double tolerance = .012);
     void ToggleFollow(double seconds);
     void ToggleRotationFollow(double seconds);
     bool IsRotationFollowing() const { return followingRotation; }

@@ -21,8 +21,8 @@ float saturnRingDepth(float km){
     if(km>=122340.0 && km<136780.0)tau=.65;
     if(abs(km-133584.0)<162.0 || abs(km-136505.0)<21.0)tau=.0005;
     float fine=.78+.13*sin(km*.041)+.06*sin(km*.117)+.03*sin(km*.79);
-    float filter=1.0-smoothstep(1.0,12.0,fwidth(km));
-    tau*=mix(.85,fine,filter)*(.9+.1*sin(km*.003));
+    float detailFilter=1.0-smoothstep(1.0,12.0,fwidth(km));
+    tau*=mix(.85,fine,detailFilter)*(.9+.1*sin(km*.003));
     float fWidth=max(25.0,fwidth(km));
     tau+=.08*exp(-pow((km-140220.0)/fWidth,2.0))*25.0/fWidth;
     return tau;

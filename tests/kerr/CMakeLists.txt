@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.22)
+project(KerrObserverChecks LANGUAGES CXX)
+add_executable(KerrObserverChecks ../KerrObserverChecks.cpp ../../src/KerrSpacetime.cpp)
+target_compile_features(KerrObserverChecks PRIVATE cxx_std_20)
+target_include_directories(KerrObserverChecks PRIVATE ../../src ../../../External_Lib/include)

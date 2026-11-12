@@ -29,6 +29,7 @@ class AppMenu
     Page page = Page::Home;
     bool visible = true;
     void *parent = nullptr;
+    void *menu = nullptr;
     void *font = nullptr;
     void *titleFont = nullptr;
     void *brush = nullptr;

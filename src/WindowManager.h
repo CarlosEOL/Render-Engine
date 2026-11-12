@@ -1,6 +1,7 @@
 #pragma once
 #include "VehicleInterior.h"
 #include "ObjectEditor.h"
+#include "KerrSpacetime.h"
 
 #include <vector>
 #include <array>
@@ -70,6 +71,7 @@ private:
     static void ScrollCallback(GLFWwindow* window, double xOffset, double yOffset);
     static void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
     static void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
+    void SelectAtScreen(double x, double y);
     void SetMouseCaptured(bool captured);
     void UpdateTitle();
     void ResetView();
@@ -78,7 +80,7 @@ private:
     void InitializeOverlay();
     void ReleaseOverlay();
     void ShowSpeedToast(float speed, bool starSystem);
-    void ShowStatusToast(const std::string& text,bool small=true);
+    void ShowStatusToast(const std::string& text,bool compact=true);
     void ShowZoomToast(bool force=false);
     void RenderSpeedToast();
     void ApplyVisionProfile(int profile);
@@ -137,6 +139,9 @@ private:
     int selectedTarget = -1;
     bool photonView = false;
     OrbitalMechanics::ParticleState observer = {};
+    KerrSpacetime::Observer kerrObserver = {};
+    bool kerrObserverValid=false;
+    double observerSpin=.8,pendingObserverProper=0;
 
     GLFWwindow* window;
     BlackHole blackHole;

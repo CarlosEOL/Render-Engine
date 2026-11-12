@@ -8,6 +8,8 @@
 namespace Universe {
 inline constexpr std::uint64_t WorldSeed = 618;
 inline constexpr int StarCount = 7000;
+enum class Population { LocalDisk, ThinDisk, SpiralArm, Bulge, Halo };
+Population StarPopulation(int index);
 struct Galaxy {
   std::uint64_t key;
   glm::dvec3 centerAu, axesAu;

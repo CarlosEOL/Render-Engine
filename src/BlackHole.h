@@ -38,6 +38,8 @@ public:
     Target ResolveTarget(int id, double seconds) const;
     glm::mat3 TargetRotation(int id, double seconds) const;
     int PickTarget(const glm::dvec3& origin, const glm::vec3& direction, double seconds) const;
+    int PickCatalogueStar(const glm::dvec3& origin,const glm::vec3& direction,double angularTolerance,int exclude=-1) const;
+    void RenderCatalogueSelection(const glm::mat4& vp,const glm::dvec3& camera,int selected,double seconds) const;
     static glm::mat4 PlanetRotation(double seconds,int planet=0);
     static double GravityParameter() { return Astronomy::gargantuaGravityAu; }
     static float HorizonRadius() { return static_cast<float>(Astronomy::gargantuaHorizonAu); }
@@ -60,7 +62,8 @@ public:
     VehiclePose CockpitPose(int vehicle,double seconds) const;
     void SetPhotonView(bool enabled, const glm::dvec3& detector) { photonView = enabled; photonDetector = detector; }
     void Render(const glm::mat4& viewProjection, const glm::dvec3& cameraPosition, double seconds,
-                const glm::vec3& observerVelocity = glm::vec3(0.0f), bool trajectories = true, int selected = -1,int interiorVehicle=0) const;
+                const glm::vec3& observerVelocity = glm::vec3(0.0f), bool trajectories = true, int selected = -1,int interiorVehicle=0,
+                const glm::vec3& physicalObserverBeta=glm::vec3(0),bool physicalObserver=false) const;
     void Release();
 
 private:
@@ -83,7 +86,8 @@ private:
     unsigned int sourceDepth = 0;
     mutable int sourceWidth = 0, sourceHeight = 0;
     void BuildSkyCube();
-    void RenderLensing(const glm::mat4& viewProjection,const glm::dvec3& camera,double seconds,const glm::vec3& beta) const;
+    void RenderLensing(const glm::mat4& viewProjection,const glm::dvec3& camera,double seconds,const glm::vec3& beta,
+                       const glm::vec3& physicalBeta,bool physicalObserver) const;
     Mesh sphere;
     Mesh backgroundStars;
     Mesh craftRing;
