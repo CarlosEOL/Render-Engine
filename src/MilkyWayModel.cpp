@@ -24,6 +24,12 @@ double WarpKpc(const glm::dvec3& p){
     const double r=std::hypot(p.x,p.z);
     return .025*std::pow(std::max(0.0,r-8),1.6)*std::sin(std::atan2(p.z,p.x)-.35);
 }
+double ExteriorWeight(const glm::dvec3& p){
+    const auto fade=[](double low,double high,double x){const double t=std::clamp((x-low)/(high-low),0.0,1.0);return t*t*t*(t*(6*t-15)+10);};
+    const double height=fade(.20,2.60,std::abs(p.y-WarpKpc(p)));
+    const double edge=fade(12.5,20.0,std::hypot(p.x,p.z));
+    return 1-(1-height)*(1-edge);
+}
 double ArmStrength(const glm::dvec3& p){
     const double r=std::max(.05,std::hypot(p.x,p.z)),theta=std::atan2(p.z,p.x),pitch=glm::radians(12.8);
     double arms=0;

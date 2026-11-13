@@ -207,6 +207,28 @@ Actual engine captures (HDR):
 
 Appearance artwork: **Courtesy NASA/JPL-Caltech**, [PIA10748](https://www.jpl.nasa.gov/images/pia10748-our-milky-way-gets-a-makeover-artist-concept/). This is an artist's reconstruction. [Every change, reason, memory tradeoff and validation result](docs/MILKY_WAY_QUALITY_2026-11-12.md).
 
+Travel through the disk now blends continuously into the exterior, including radial departures and the Galactic warp. The broad exterior is a continuous volume, with one forward-only texture-detail projection; this replaces the parallel image layers that could produce mirrored copies. Top, oblique and edge-on views share the same disk thickness and bulge. Translation refreshes crossfade over 0.32 seconds; camera rotation reuses the sky cache. Paused scenes finish the fade before returning to idle.
+
+The intergalactic background now contains **256 seeded distant galaxy appearances**, in addition to the three existing external catalogue hosts. GPU magnitude filtering uses the camera's effective limit; fixed world positions preserve parallax during flight. Finite projected thickness keeps nearby galaxy images visible edge-on. These added background appearances do not add fully populated star catalogues or new finder entries.
+
+| Milky Way — oblique volume | Milky Way — edge-on volume |
+| --- | --- |
+| ![Oblique galactic volume](assets/screenshots/milky-way-oblique-volume.png) | ![Edge-on galactic volume](assets/screenshots/milky-way-side-volume.png) |
+
+[Distant galaxy field — isolated HDR render](assets/screenshots/galaxies-distant-field.png) · [Every geometry/visibility change, its reason and validation](docs/GALAXY_GEOMETRY_AND_VISIBILITY_2026-11-12.md).
+
+## Brighter Gargantua and Sagittarius A* hot flow
+
+Gargantua's authored disk now extends to **8 Schwarzschild reference radii (~15.8 AU)**, with a **6.4 emission multiplier** and a **12,000 K inner temperature**. Its new starting view is close to the disk plane for a broad Interstellar-inspired band and lensed halo. GPU Kerr propagation, redshift and Doppler beaming remain active; HDR preserves highlights and auto exposure meters the brighter scene.
+
+![Larger, brighter Gargantua disk — native DX12 HDR capture](assets/screenshots/gargantua-cinematic-hdr.png)
+
+Sagittarius A* has a separate thick, optically thin blue flow and broad diffuse outflow, inspired by the requested [SpaceEngine article](https://spaceengine.org/news/blog220830/). Its gas temperature, spin, viewing angle and optical appearance are model assumptions. This original GPU volume is an illustrative approximation rather than a GRMHD simulation or a reconstruction of an EHT radio image.
+
+![Sagittarius A* hot flow — native DX12 auto-exposure capture](assets/screenshots/sgr-a-hot-flow-auto.png)
+
+[Every change and its reason, equations, accuracy limits and final validation](docs/MILKY_WAY_TRANSITION_AND_ACCRETION_2026-11-12.md).
+
 
 ## Kerr shadow correction
 

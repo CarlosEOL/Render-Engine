@@ -272,6 +272,9 @@ uniform float diskPhase;
 uniform float plasmaTime;
 uniform float diskEmission,diskTemperature;
 uniform bool quasarJet;
+uniform int accretionModel;
+uniform bool hotFlowDiagnostic;
+uniform float flowTime;
 uniform sampler2D sourceScene;
 uniform sampler2D sourceDepth;
 uniform samplerCube sky;
@@ -379,6 +382,7 @@ void main() {
     vec3 radiance = vec3(0.0);
     float opticalEligibility = 1.0;
     vec3 plasma = vec3(0.0);
+    float flowTransmission=1.0;
     int effectiveBudget=rayStepBudget;
     bool usedNearHoleReserve=false;
     // Retain actual-horizon tracing where a nearby finite emitter may sit
@@ -409,11 +413,12 @@ void main() {
             rayResult=3;break;
         }
 
-        float interval = clamp(radius * (spinning?.06:.055), 0.003, spinning?1.0:.45);
+        float interval = clamp(radius * (spinning?.06:.055), 0.003, spinning?(accretionModel==1?2.0:1.0):.45);
         // AU-sized fixed steps exhausted the budget before a ray from Mann's
         // distance ever reached Gargantua. Resolve the weak-field approach
         // proportionally, retaining fine steps around the disk and photon shell.
-        if(radius>diskRadii.y*2.0)interval=max(interval,radius*(spinning?.18:.10));
+        float weakFieldStart=accretionModel==1 || quasarJet?diskRadii.y*2.0:horizonRadius*(2.0*1.03/.24);
+        if(radius>weakFieldStart)interval=max(interval,radius*(spinning?.18:.10));
         // Geometry controls the step; the emitting slab is integrated per segment.
 
         vec3 nextPosition,nextTangent;
@@ -444,7 +449,7 @@ void main() {
         if(spinning)midRadius=kerrRadius(toDisk*midpoint,.5*horizonRadius*blackHoleSpin);
         float midFraction = (midRadius - diskRadii.x) / (diskRadii.y - diskRadii.x);
         float midPlane = dot(midpoint, diskAxis);
-
+)" + R"(
         // Reference-inspired polar outflow: an artistic quasar preset, not
         // a resolved measurement of TON 618's jet geometry.
         if(quasarJet){
@@ -455,8 +460,40 @@ void main() {
             density*=.6+.4*valueNoise(vec3(radial*28.0,axial*6.0-plasmaTime*.4,0));
             plasma+=blackbody(12500.0/(1.0+axial*.14))*density*segmentLength/horizonRadius*diskEmission*2.0;
         }
-        // Volumetric plasma clouds above and below the thin disk.
-        if (midFraction > 0.0 && midFraction < 1.0) {
+        if(accretionModel==1){
+            // Original RIAF-style illustration, not a GRMHD/measured spectrum.
+            vec3 p=toDisk*midpoint/horizonRadius;
+            float rho=length(p.xy),height=abs(p.z),inner=diskRadii.x/horizonRadius;
+            if(rho<25.0 && height<22.0){
+                float envelope=smoothstep(inner*.85,inner*1.3,rho)*(1.0-smoothstep(17.0,24.0,rho));
+                float thickness=.25+.38*rho;
+                float density=envelope*exp(-.5*p.z*p.z/(thickness*thickness))*pow(max(rho/inner,1.0),-1.1);
+                float cone=.65+height*.45,width=.45+height*.15;
+                float wind=exp(-pow((rho-cone)/width,2.0)-height/9.0)*smoothstep(1.5,3.0,height)*(1.0-smoothstep(16.0,22.0,height));
+                if(density+wind>.0001){
+                    float emissionTime=flowTime-2.0*(travelled+.5*segmentLength)/horizonRadius;
+                    float angle=atan(p.y,p.x)-emissionTime/(pow(max(2.0*rho,3.0),1.5)+blackHoleSpin);
+                    vec3 cloudPoint=vec3(cos(angle),sin(angle),p.z*.45)*(2.0+rho*.7);
+                    float turbulent=fbm(cloudPoint+vec3(0,0,-emissionTime*.012));
+                    density=(density+.13*wind)*mix(.2,2.2,smoothstep(.18,.76,turbulent));
+                    float shift=spinning?kerrDiskShift(max(midRadius,diskRadii.x*1.05),horizonRadius,blackHoleSpin,pt,angularZ,vec3(0),direction):1.0;
+                    float temperature=diskTemperature*pow(max(midRadius/diskRadii.x,1.0),-.7);
+                    // Normalize the hot-plasma tint. Treating billion-K gas
+                    // as an optically thick optical blackbody blows out the sky.
+                    vec3 spectrum=blackbody(min(40000.0,temperature*shift));
+                    spectrum/=max(max(spectrum.r,spectrum.g),max(spectrum.b,.00001));
+                    float innerHeat=exp(-max(0.0,midRadius/diskRadii.x-1.0)*.45);
+                    vec3 tint=mix(spectrum,vec3(1),innerHeat*.35)*vec3(.7,1.0,1.7);
+                    float path=segmentLength/horizonRadius,tau=density*path*.004,passing=exp(-tau);
+                    float integral=tau<.0001?1.0:(1.0-passing)/tau;
+                    float emissivity=density*pow(max(midRadius/diskRadii.x,1.0),-.45)*pow(clamp(shift,.1,4.0),3.0);
+                    plasma+=flowTransmission*tint*emissivity*path*integral*diskEmission*1.8;
+                    flowTransmission*=passing;
+                }
+            }
+        }
+        // Other presets retain their existing thin-disk atmosphere.
+        if (accretionModel==0 && midFraction > 0.0 && midFraction < 1.0) {
             float flare = 0.012 + 0.065 * pow(midFraction, 1.35);
             float vertical = slabAverage(dot(position,diskAxis),dot(nextPosition,diskAxis),flare);
             if (vertical > 0.02) {
@@ -483,7 +520,7 @@ void main() {
 
         float planeBefore = dot(position, diskAxis);
         float planeAfter = dot(nextPosition, diskAxis);
-        if (planeBefore * planeAfter < 0.0) {
+        if (accretionModel==0 && planeBefore * planeAfter < 0.0) {
             float lower=0.0,upper=1.0;
             // Locate the plane event on the curved RK segment, rather than
             // using a chord whose radius jumps when the step count changes.
@@ -562,7 +599,9 @@ void main() {
     // own emissive plasma remains an eligible optical light source.
     // Keep extreme blueshift within finite RGBA16F storage; this is a numeric
     // target limit, not an event-horizon blackout or a change in ray geometry.
-    fragColor = vec4(clamp(radiance + plasma,vec3(0),vec3(60000)), opticalEligibility);
+    if(accretionModel==1 && dot(plasma,vec3(.2126,.7152,.0722))>.0001)opticalEligibility=1.0;
+    fragColor = vec4(clamp(radiance*flowTransmission + plasma,vec3(0),vec3(60000)), opticalEligibility);
+    if(hotFlowDiagnostic && accretionModel==1)fragColor=vec4(vec3(flowTransmission),0);
     if(lensingDiagnostic)fragColor=vec4(rayResult==1?vec3(1,0,0):rayResult==2?vec3(0,1,0):rayResult==3?vec3(0,0,1):vec3(1,0,1),0);
     // Approximate depth allows the rasterized orbiting bodies to cross the lensed disk.
     gl_FragDepth = hit?clamp(log2(1.0+travelled*1e12)/log2(1.0+20000.0*1e12),0.0,.999998):.999999;
@@ -1289,7 +1328,7 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
         for (int point = 0; point < 8; ++point) {
             const float angle = glm::two_pi<float>() * point / 8.0f;
             appendStream(glm::vec3(DiskOrientation() * glm::vec4(
-                outerDiskRadius * std::cos(angle), outerDiskRadius * std::sin(angle), 0, 1)),
+                GargantuaDiskOuterRadius() * std::cos(angle), GargantuaDiskOuterRadius() * std::sin(angle), 0, 1)),
                 glm::vec3(1.0f, 0.7f, 0.2f), false);
         }
         for (int id = 1; id <= 8; ++id)
@@ -1395,7 +1434,7 @@ void BlackHole::RenderBackground(const glm::mat4& vp,const glm::dvec3& camera,bo
     if(photons)glDrawArraysInstanced(GL_POINTS,backgroundStars.vertexCount-1,1,4);else glDrawArrays(GL_POINTS,backgroundStars.vertexCount-1,1);
     glUniform1i(glGetUniformLocation(program,"stellarPackets"),false);
     glBindVertexArray(0);
-    if(!photons)galaxies.Render(vp,camera);
+    if(!photons)galaxies.Render(vp,camera,magnitudeLimit);
     glBlendFuncSeparate(src,dst,srcA,dstA);if(!blend)glDisable(GL_BLEND);
 }
 
@@ -1448,8 +1487,12 @@ void BlackHole::RenderLensing(const glm::mat4& vp,const glm::dvec3& camera,doubl
     glCopyTexSubImage2D(GL_TEXTURE_2D,0,0,0,viewport[0],viewport[1],sourceWidth,sourceHeight);
     glActiveTexture(GL_TEXTURE2);glBindTexture(GL_TEXTURE_CUBE_MAP,skyCube);
     glUseProgram(lensProgram);
-    const auto inverse=glm::inverse(vp),diskInverse=glm::inverse(DiskOrientation());
-    const auto cameraFloat=glm::vec3(camera),axis=glm::vec3(DiskOrientation()*glm::vec4(0,0,1,0));
+    const bool core=GalacticCores::IsCore(coreId);
+    const auto preset=core?GalacticCores::Get(coreId):GalacticCores::Get(GalacticCores::firstId);
+    const bool hotFlow=core && preset.hotFlow;
+    const auto orientation=hotFlow?glm::mat4(GalacticCores::HotFlowFrame()):DiskOrientation();
+    const auto inverse=glm::inverse(vp),diskInverse=glm::inverse(orientation);
+    const auto cameraFloat=glm::vec3(camera),axis=glm::vec3(orientation*glm::vec4(0,0,1,0));
     glUniformMatrix4fv(glGetUniformLocation(lensProgram,"inverseViewProjection"),1,GL_FALSE,glm::value_ptr(inverse));
     glUniformMatrix4fv(glGetUniformLocation(lensProgram,"viewProjection"),1,GL_FALSE,glm::value_ptr(vp));
     glUniformMatrix4fv(glGetUniformLocation(lensProgram,"inverseDiskOrientation"),1,GL_FALSE,glm::value_ptr(diskInverse));
@@ -1459,15 +1502,16 @@ void BlackHole::RenderLensing(const glm::mat4& vp,const glm::dvec3& camera,doubl
     glUniform1i(glGetUniformLocation(lensProgram,"physicalObserver"),physicalObserver);
     glUniform3fv(glGetUniformLocation(lensProgram,"diskAxis"),1,glm::value_ptr(axis));
     glUniform1f(glGetUniformLocation(lensProgram,"horizonRadius"),horizonRadius);
-    const bool core=GalacticCores::IsCore(coreId);
-    const auto preset=core?GalacticCores::Get(coreId):GalacticCores::Get(GalacticCores::firstId);
-    glUniform1f(glGetUniformLocation(lensProgram,"diskEmission"),core?static_cast<float>(preset.emission):3.f);
-    glUniform1f(glGetUniformLocation(lensProgram,"diskTemperature"),core?static_cast<float>(preset.temperature):5200.f);
+    glUniform1f(glGetUniformLocation(lensProgram,"diskEmission"),core?static_cast<float>(preset.emission):diskBrightness);
+    glUniform1f(glGetUniformLocation(lensProgram,"diskTemperature"),core?static_cast<float>(preset.temperature):12000.f);
     glUniform1i(glGetUniformLocation(lensProgram,"quasarJet"),core && preset.quasar);
-    const double lensSpin=core?.8:spin;
+    glUniform1i(glGetUniformLocation(lensProgram,"accretionModel"),hotFlow?1:0);
+    glUniform1i(glGetUniformLocation(lensProgram,"hotFlowDiagnostic"),hotFlowDiagnostic);
+    glUniform1f(glGetUniformLocation(lensProgram,"flowTime"),static_cast<float>(seconds*Astronomy::lightSpeedAu/(.5*horizonRadius)));
+    const double lensSpin=core?preset.spin:spin;
     const bool spinning=std::abs(lensSpin)>.0001;
     glUniform1f(glGetUniformLocation(lensProgram,"blackHoleSpin"),static_cast<float>(lensSpin));
-    glUniform1i(glGetUniformLocation(lensProgram,"rayStepBudget"),rayBudget);
+    glUniform1i(glGetUniformLocation(lensProgram,"rayStepBudget"),hotFlow?std::max(256,rayBudget):rayBudget);
     glUniform1i(glGetUniformLocation(lensProgram,"lensingDiagnostic"),lensingDiagnostic);
     const double horizon=KerrSpacetime::Horizon(horizonRadius,lensSpin);
     glUniform1f(glGetUniformLocation(lensProgram,"captureRadius"),static_cast<float>(horizon));
@@ -1478,8 +1522,8 @@ void BlackHole::RenderLensing(const glm::mat4& vp,const glm::dvec3& camera,doubl
     const double observerMetricRadius=KerrSpacetime::Radius(glm::dmat3(diskInverse)*camera,horizonRadius,lensSpin);
     glUniform1f(glGetUniformLocation(lensProgram,"captureStopRadius"),static_cast<float>(
         spinning && observerMetricRadius>photonStop*1.02?std::max(horizon,photonStop):horizon*.9999));
-    glUniform2f(glGetUniformLocation(lensProgram,"diskRadii"),spinning?static_cast<float>(KerrSpacetime::ProgradeIsco(horizonRadius,lensSpin)):innerDiskRadius,core && preset.quasar?horizonRadius*12.f:outerDiskRadius);
-    glUniform1f(glGetUniformLocation(lensProgram,"diskPhase"),static_cast<float>(std::remainder(OrbitalMechanics::MeanMotion(gravitationalParameter,outerDiskRadius)*seconds,glm::two_pi<double>())));
+    glUniform2f(glGetUniformLocation(lensProgram,"diskRadii"),spinning?static_cast<float>(KerrSpacetime::ProgradeIsco(horizonRadius,lensSpin)):innerDiskRadius,hotFlow?horizonRadius*24.f:core && preset.quasar?horizonRadius*12.f:core?outerDiskRadius:GargantuaDiskOuterRadius());
+    glUniform1f(glGetUniformLocation(lensProgram,"diskPhase"),static_cast<float>(std::remainder(OrbitalMechanics::MeanMotion(gravitationalParameter,core?outerDiskRadius:GargantuaDiskOuterRadius())*seconds,glm::two_pi<double>())));
     glUniform1f(glGetUniformLocation(lensProgram,"plasmaTime"),static_cast<float>(seconds/timeScale));
     glUniform1i(glGetUniformLocation(lensProgram,"sourceScene"),0);glUniform1i(glGetUniformLocation(lensProgram,"sourceDepth"),1);glUniform1i(glGetUniformLocation(lensProgram,"sky"),2);
     const bool blending=glIsEnabled(GL_BLEND);glDisable(GL_BLEND);

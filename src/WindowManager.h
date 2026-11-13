@@ -99,7 +99,7 @@ private:
     void StartGargantua();
     void StartQuantum(int index);
     void SelectCatalogue(int id);
-    void EnterSelectedSystem(bool overview);
+    void EnterSelectedSystem(bool overview,bool continuousFlight=false);
     void RefreshPanel();
     void RefreshObjectEditor();
     void ResizeInterface();

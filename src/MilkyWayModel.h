@@ -21,6 +21,8 @@ glm::dvec3 CenterAu();
 glm::dvec3 ToModelKpc(const glm::dvec3& worldAu);
 glm::dvec3 ToWorldAu(const glm::dvec3& modelKpc);
 double WarpKpc(const glm::dvec3& modelKpc);
+// Continuous interior/exterior LOD, including radial exits and disk warp.
+double ExteriorWeight(const glm::dvec3& modelKpc);
 double ArmStrength(const glm::dvec3& modelKpc);
 // Old stellar disk+halo, young disk, bar+bulge, and absorbing dust.
 glm::dvec4 Densities(const glm::dvec3& modelKpc);

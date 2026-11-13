@@ -20,7 +20,11 @@ public:
     double Spin() const { return spin; }
     void SetRayBudget(int value) { rayBudget=glm::clamp(value,64,384); }
     int RayBudget() const { return rayBudget; }
+    void SetGargantuaDisk(float outerRadii,float emission){if(std::isfinite(outerRadii)&&std::isfinite(emission)){diskOuterRadii=glm::clamp(outerRadii,2.f,24.f);diskBrightness=glm::clamp(emission,0.f,32.f);}}
+    float GargantuaDiskOuterRadius() const {return HorizonRadius()*diskOuterRadii;}
+    float GargantuaDiskBrightness() const {return diskBrightness;}
     void SetLensingDiagnostic(bool value) { lensingDiagnostic=value; }
+    void SetHotFlowDiagnostic(bool value) { hotFlowDiagnostic=value; }
     void SetAtmospheresEnabled(bool enabled) { atmospheresEnabled=enabled; }
     unsigned int LensingSourceDepthTexture() const { return sourceDepth; }
     unsigned int WormholeSky() const {if(!skyRefreshDeferred && (skyCubeDirty || glm::length(skyCubeOrigin)>1.0))BuildSkyCube();return skyCube;}
@@ -39,6 +43,10 @@ public:
     void SetWarmStellarColor(bool enabled) { stellarActivity.SetWarmColor(enabled); }
     void InvalidateSky() const { milkyWay.Invalidate(); }
     unsigned MilkyWayCacheBuilds() const { return milkyWay.CacheBuilds(); }
+    bool SkyNeedsFrame(const glm::dvec3& camera) const {return milkyWay.NeedsFrame(camera);}
+    double MilkyWayCacheTimestamp() const {return milkyWay.CacheTimestamp();}
+    float MilkyWayCacheBlend() const {return milkyWay.BlendFraction();}
+    float MilkyWayLastDrawBlend() const {return milkyWay.LastDrawBlend();}
     unsigned MilkyWayTexture() const { return milkyWay.Texture(); }
     void TriggerStellarFlare(double seconds) { stellarActivity.Trigger(seconds); }
     static glm::dvec3 PlanetPosition(double seconds, int planet = 0);
@@ -92,7 +100,9 @@ private:
     float magnitudeLimit=7;
     std::vector<float> starLuminosities;
     int rayBudget=160;
+    float diskOuterRadii=8.f,diskBrightness=6.4f;
     bool lensingDiagnostic=false;
+    bool hotFlowDiagnostic=false;
     bool atmospheresEnabled=true;
     unsigned int lensProgram = 0;
     unsigned int screenVao = 0;

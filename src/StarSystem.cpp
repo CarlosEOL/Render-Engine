@@ -404,7 +404,14 @@ void StarSystem::GoToSelected(double seconds, glm::vec3 &front, glm::vec3 &up)
 
 void StarSystem::Overview(glm::vec3 &front, glm::vec3 &up)
 {
-    if(IsCore()){const auto radius=GalacticCores::Get(coreId).RadiusAu();camera={0,radius*(coreId==GalacticCores::tonId?6:3),radius*(coreId==GalacticCores::tonId?26:14)};front=glm::normalize(glm::vec3(-camera));up={0,1,0};if(coreId==GalacticCores::tonId)CameraMotion::Roll(front,up,glm::radians(16.f));return;}
+    if(IsCore()){
+        const auto core=GalacticCores::Get(coreId);const auto radius=core.RadiusAu();
+        camera=core.hotFlow?GalacticCores::HotFlowFrame()*glm::dvec3(0,52*radius,24*radius)
+            :glm::dvec3(0,radius*(coreId==GalacticCores::tonId?6:3),radius*(coreId==GalacticCores::tonId?26:14));
+        front=glm::normalize(glm::vec3(-camera));up=core.hotFlow?glm::vec3(GalacticCores::HotFlowFrame()[2]):glm::vec3(0,1,0);
+        if(core.hotFlow)CameraMotion::Roll(front,up,glm::radians(-24.f));
+        if(coreId==GalacticCores::tonId)CameraMotion::Roll(front,up,glm::radians(16.f));return;
+    }
     landed = following = followingRotation = false;
     double outer = 0;
     for (const auto &body : planets)

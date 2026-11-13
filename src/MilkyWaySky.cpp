@@ -19,6 +19,13 @@
 unsigned int compileShaderProgram(const char*,const char*);
 namespace {
 constexpr int cacheWidth=2048,cacheHeight=1024;
+constexpr double cacheFadeSeconds=.32;
+double RefreshDistance(const glm::dvec3& camera){
+    double distance=.01*MilkyWayModel::auPerKpc;
+    for(const auto& nebula:CelestialPhenomena::Nebulae())if(glm::length(camera-nebula.positionAu)<nebula.radiusLy*Astronomy::auPerLightYear*5)
+        distance=std::min(distance,nebula.radiusLy*Astronomy::auPerLightYear*.015);
+    return distance;
+}
 constexpr const char* vertex=R"(#version 330 core
 out vec2 screenPosition;
 void main(){vec2 p=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2));screenPosition=p*2.0-1.0;gl_Position=vec4(screenPosition,0,1);}
@@ -37,9 +44,9 @@ vec3 illustratedLight(vec3 p,float lod){
  if(any(lessThan(uv,vec2(0))) || any(greaterThan(uv,vec2(1))))return vec3(0);
  vec3 image=lod<0.0?texture(galacticIllustration,uv).rgb:textureLod(galacticIllustration,uv,lod).rgb;
  // Convert the display-referred illustration to a linear artistic light field.
- return pow(max(image,vec3(0)),vec3(2.2));
+ float edge=smoothstep(0.0,.02,min(min(uv.x,uv.y),min(1.0-uv.x,1.0-uv.y)));
+ return pow(max(image,vec3(0)),vec3(2.2))*edge;
 }
-float exteriorRayWeight(vec3 ray){return exteriorWeight*smoothstep(.045,.16,abs(ray.y));}
 )";
 }
 bool MilkyWaySky::Initialize(){
@@ -88,7 +95,7 @@ void main(){
  vec3 low=min(near,far),high=max(near,far);
  float begin=max(0.0,max(low.x,max(low.y,low.z))),end=min(high.x,min(high.y,high.z));
  vec3 light=vec3(0),transmission=vec3(1);
- if(end>begin && exteriorRayWeight(direction)<.9999){
+ if(end>begin){
   float step=(end-begin)/96.0;
   for(int i=0;i<96;++i){
    vec3 p=cameraKpc+direction*(begin+(float(i)+.5)*step);
@@ -99,21 +106,29 @@ void main(){
    vec3 emission=(density.x*vec3(.96,.84,.69)+density.y*vec3(.53,.70,1.0)*(.45+noise)
         +density.z*vec3(1.0,.69,.43))*.055;
    if(hasIllustration){
-    float height=abs(p.y-mwWarp(p));
-    float thin=.16+.012*max(0.0,length(p.xz)-8.0);
-    float vertical=.78*exp(-height/thin)/(2.0*thin)+.22*exp(-height/.48)/.96;
     vec3 art=illustratedLight(p,1.5);
     float structure=.65+.7*smoothstep(.25,.8,noise);
     vec3 coarse=illustratedLight(p,4.0);
     float detail=clamp(dot(art,vec3(.2126,.7152,.0722))/max(.004,dot(coarse,vec3(.2126,.7152,.0722))),.25,2.5);
     // A face-on illustration already integrates the whole stellar column.
     // Inside the disk, use local 3D emissivity, avoiding an all-sky blue fog.
-    vec3 interior=(density.x*vec3(.96,.85,.72)*.25
-        +density.y*vec3(.55,.73,1.0)*.40+density.z*vec3(1.0,.76,.46)*.10)*structure*detail;
-    vec3 exterior=art*vertical*.8+density.z*vec3(1.0,.79,.51)*.012;
-    emission=mix(interior,exterior,exteriorWeight);
+    vec3 interior=(density.x*vec3(.96,.85,.72)*.10
+        +density.y*vec3(.55,.73,1.0)*.40+density.z*vec3(1.0,.76,.46)*.003)*structure*detail;
+    // The exterior is one continuous 3D light field, not parallel image
+    // sheets. Footprint filtering suppresses repeated texture detail along
+    // long grazing paths; a single midplane residual resolves distant arms.
+    emission=interior;
+    if(exteriorWeight>0.0){
+     float planarStep=step*length(direction.xz);
+     float lod=max(3.5,log2(max(1.0,planarStep*float(textureSize(galacticIllustration,0).x)/36.0)));
+     vec3 column=illustratedLight(p,lod);
+     float radius=length(p.xz),height=p.y-mwWarp(p);
+     float scale=mix(.18,.63,exp(-radius*radius/8.0));
+     vec3 exterior=column*exp(-abs(height)/scale)/(2.0*scale)*.8;
+     emission=mix(interior,exterior,exteriorWeight);
+    }
    }
-   emission*=step*(1.0-exteriorRayWeight(direction));
+   emission*=step;
    vec3 integral=(vec3(1)-passing)/max(opticalDepth,vec3(.0001));
    // For vanishing extinction, lim((1-exp(-tau))/tau)=1.
    integral=mix(integral,vec3(1),lessThan(opticalDepth,vec3(.0001)));
@@ -132,34 +147,32 @@ in vec2 screenPosition;out vec4 color;
 uniform mat4 inverseViewProjection;
 uniform mat3 worldToGalactic;
 uniform sampler2D milkyWay;
+uniform sampler2D previousMilkyWay;
+uniform float cacheBlend;
 uniform vec3 cameraKpc;
 )")+MilkyWayModel::ShaderFunctions()+appearance+R"(
 void main(){
  vec4 q=inverseViewProjection*vec4(screenPosition,1,1);
  vec3 ray=normalize(worldToGalactic*normalize(q.xyz));
  vec2 uv=vec2(atan(ray.z,ray.x)/6.28318530718+.5,asin(clamp(ray.y,-1.0,1.0))/3.14159265359+.5);
- vec3 light=texture(milkyWay,uv).rgb;
- float weight=hasIllustration?exteriorRayWeight(ray):0.0;
+ vec3 light=mix(texture(previousMilkyWay,uv).rgb,texture(milkyWay,uv).rgb,cacheBlend);
+ float weight=hasIllustration?exteriorWeight*smoothstep(.12,.40,abs(ray.y)):0.0;
  if(weight>0.0){
-  // Full-resolution, world-plane slices keep distant arms and individual
-  // illustrated star clusters sharp instead of magnifying a sky-cache texel.
-  // Near the disk they fade continuously into the integrated 3D light field.
-  vec3 resolved=vec3(0);float normalization=0.0;
-  for(int i=0;i<8;++i){
-   float height=(float(i)-3.5)*.20;
-   float along=(height-cameraKpc.y)/ray.y;
-   if(along<=0.0)continue;
-   vec3 p=cameraKpc+ray*along;
-   float radius=length(p.xz);
-   float thickness=mix(.17,.55,exp(-radius*radius/8.0));
-   float layer=exp(-abs(height)/thickness)/thickness;
-   resolved+=illustratedLight(p,3.5)*layer;
-   normalization+=layer;
+  // Only one forward intersection can contribute resolved texture detail.
+  // In particular, never project the galaxy behind the observer onto the
+  // opposite hemisphere or evaluate unbounded warp far outside the disk.
+  float along=-cameraKpc.y/ray.y;
+  vec3 mid=cameraKpc+ray*along;
+  for(int k=0;k<4;++k){
+   if(length(mid.xz)>18.0)break;
+   along=(mwWarp(mid)-cameraKpc.y)/ray.y;
+   mid=cameraKpc+ray*along;
   }
-  if(normalization>0.0){
-   vec3 mid=cameraKpc-ray*(cameraKpc.y/ray.y);
+  if(along>0.0 && length(mid.xz)<18.0 && abs(mid.y-mwWarp(mid))<.05){
+   // Blend only the high-frequency residual. The broad disk/bulge and its
+   // finite thickness come from the same cached volume at every view angle.
    vec3 fine=illustratedLight(mid,-1.0)-illustratedLight(mid,3.5);
-   light+=weight*max(resolved/normalization+fine,vec3(0))*.8/max(abs(ray.y),.16);
+   light+=fine*.8*weight/max(abs(ray.y),.12);
   }
  }
  color=vec4(max(light,vec3(0)),0);
@@ -175,13 +188,15 @@ void main(){
 #endif
     illustration=AssetManager::LoadTexture(artPath.string().c_str(),false);
     if(illustration){glBindTexture(GL_TEXTURE_2D,illustration);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR_MIPMAP_LINEAR);}
-    glGenVertexArrays(1,&vao);glGenTextures(1,&texture);
-    glBindTexture(GL_TEXTURE_2D,texture);
+    glGenVertexArrays(1,&vao);glGenTextures(1,&texture);glGenTextures(1,&previousTexture);
+    for(auto id:{texture,previousTexture}){
+    glBindTexture(GL_TEXTURE_2D,id);
     glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA16F,cacheWidth,cacheHeight,0,GL_RGBA,GL_FLOAT,nullptr);
     glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+    }
     glGenFramebuffers(1,&framebuffer);glBindFramebuffer(GL_FRAMEBUFFER,framebuffer);
     glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,texture,0);
     const bool complete=glCheckFramebufferStatus(GL_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE;
@@ -191,12 +206,15 @@ void main(){
 }
 void MilkyWaySky::Bake(const glm::dvec3& camera) const {
     GLint target,viewport[4];glGetIntegerv(GL_FRAMEBUFFER_BINDING,&target);glGetIntegerv(GL_VIEWPORT,viewport);
-    glBindFramebuffer(GL_FRAMEBUFFER,framebuffer);glViewport(0,0,cacheWidth,cacheHeight);
+    if(valid)std::swap(texture,previousTexture);
+    blending=valid;
+    glBindFramebuffer(GL_FRAMEBUFFER,framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,texture,0);
+    glViewport(0,0,cacheWidth,cacheHeight);
     glDisable(GL_DEPTH_TEST);glDisable(GL_BLEND);glUseProgram(bakeProgram);
     const auto local=glm::vec3(MilkyWayModel::ToModelKpc(camera));
     glUniform3fv(glGetUniformLocation(bakeProgram,"cameraKpc"),1,glm::value_ptr(local));
-    const float exterior=glm::smoothstep(.4f,1.5f,std::abs(local.y));
-    glUniform1f(glGetUniformLocation(bakeProgram,"exteriorWeight"),illustration?exterior:0.f);
+    glUniform1f(glGetUniformLocation(bakeProgram,"exteriorWeight"),illustration?static_cast<float>(MilkyWayModel::ExteriorWeight(glm::dvec3(local))):0.f);
     glUniform1i(glGetUniformLocation(bakeProgram,"hasIllustration"),illustration?1:0);
     glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,illustration);
     glUniform1i(glGetUniformLocation(bakeProgram,"galacticIllustration"),0);
@@ -212,16 +230,26 @@ void MilkyWaySky::Bake(const glm::dvec3& camera) const {
     glBindFramebuffer(GL_FRAMEBUFFER,target);glViewport(viewport[0],viewport[1],viewport[2],viewport[3]);
     bakedCamera=camera;lastBake=glfwGetTime();valid=true;++builds;
 }
+bool MilkyWaySky::NeedsFrame(const glm::dvec3& camera) const {
+    // Draw the terminal blend=1 frame before paused-frame reuse resumes.
+    // Elapsed time alone would leave the last intermediate image frozen.
+    return !valid || (blending && lastDrawBlend<1.f)
+        || glm::length(camera-bakedCamera)>RefreshDistance(camera);
+}
+float MilkyWaySky::BlendFraction() const {
+    const float t=blending?glm::clamp(static_cast<float>((glfwGetTime()-lastBake)/cacheFadeSeconds),0.f,1.f):1.f;
+    return t*t*t*(t*(6*t-15)+10);
+}
 void MilkyWaySky::Render(const glm::mat4& vp,const glm::dvec3& camera) const {
     if(!displayProgram)return;
     const bool depth=glIsEnabled(GL_DEPTH_TEST)==GL_TRUE,blend=glIsEnabled(GL_BLEND)==GL_TRUE;
     GLboolean depthMask;glGetBooleanv(GL_DEPTH_WRITEMASK,&depthMask);
     GLint srcRgb,dstRgb,srcAlpha,dstAlpha;glGetIntegerv(GL_BLEND_SRC_RGB,&srcRgb);glGetIntegerv(GL_BLEND_DST_RGB,&dstRgb);
     glGetIntegerv(GL_BLEND_SRC_ALPHA,&srcAlpha);glGetIntegerv(GL_BLEND_DST_ALPHA,&dstAlpha);
-    double threshold=.01*MilkyWayModel::auPerKpc;
-    for(const auto& nebula:CelestialPhenomena::Nebulae())if(glm::length(camera-nebula.positionAu)<nebula.radiusLy*Astronomy::auPerLightYear*5)
-        threshold=std::min(threshold,nebula.radiusLy*Astronomy::auPerLightYear*.015);
-    if(!valid || (glm::length(camera-bakedCamera)>threshold && glfwGetTime()-lastBake>.25))Bake(camera);
+    // Finish the visible fade before replacing either texture, even if travel
+    // continues past the next translation threshold during a slow frame.
+    if(!valid || (glm::length(camera-bakedCamera)>RefreshDistance(camera) && glfwGetTime()-lastBake>=cacheFadeSeconds
+        && (!blending || lastDrawBlend>=1.f)))Bake(camera);
     glDisable(GL_DEPTH_TEST);glDepthMask(GL_FALSE);glEnable(GL_BLEND);glBlendFunc(GL_ONE,GL_ONE);
     glUseProgram(displayProgram);const auto inverse=glm::inverse(vp);
     const auto orientation=glm::mat3(glm::transpose(MilkyWayModel::Orientation()));
@@ -229,11 +257,13 @@ void MilkyWaySky::Render(const glm::mat4& vp,const glm::dvec3& camera) const {
     glUniformMatrix3fv(glGetUniformLocation(displayProgram,"worldToGalactic"),1,GL_FALSE,glm::value_ptr(orientation));
     glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,texture);
     glUniform1i(glGetUniformLocation(displayProgram,"milkyWay"),0);
+    glActiveTexture(GL_TEXTURE2);glBindTexture(GL_TEXTURE_2D,blending?previousTexture:texture);
+    glUniform1i(glGetUniformLocation(displayProgram,"previousMilkyWay"),2);
+    lastDrawBlend=BlendFraction();
+    glUniform1f(glGetUniformLocation(displayProgram,"cacheBlend"),lastDrawBlend);
     const auto local=glm::vec3(MilkyWayModel::ToModelKpc(camera));
-    // Match the cached split exactly until the next translation refresh.
-    const auto cached=glm::vec3(MilkyWayModel::ToModelKpc(bakedCamera));
     glUniform3fv(glGetUniformLocation(displayProgram,"cameraKpc"),1,glm::value_ptr(local));
-    glUniform1f(glGetUniformLocation(displayProgram,"exteriorWeight"),illustration?glm::smoothstep(.4f,1.5f,std::abs(cached.y)):0.f);
+    glUniform1f(glGetUniformLocation(displayProgram,"exteriorWeight"),illustration?static_cast<float>(MilkyWayModel::ExteriorWeight(glm::dvec3(local))):0.f);
     glUniform1i(glGetUniformLocation(displayProgram,"hasIllustration"),illustration?1:0);
     glActiveTexture(GL_TEXTURE1);glBindTexture(GL_TEXTURE_2D,illustration);
     glUniform1i(glGetUniformLocation(displayProgram,"galacticIllustration"),1);
@@ -244,7 +274,7 @@ void MilkyWaySky::Render(const glm::mat4& vp,const glm::dvec3& camera) const {
 }
 void MilkyWaySky::Release(){
     if(bakeProgram)glDeleteProgram(bakeProgram);if(displayProgram)glDeleteProgram(displayProgram);
-    if(vao)glDeleteVertexArrays(1,&vao);if(texture)glDeleteTextures(1,&texture);if(framebuffer)glDeleteFramebuffers(1,&framebuffer);
+    if(vao)glDeleteVertexArrays(1,&vao);if(texture)glDeleteTextures(1,&texture);if(previousTexture)glDeleteTextures(1,&previousTexture);if(framebuffer)glDeleteFramebuffers(1,&framebuffer);
     if(illustration)glDeleteTextures(1,&illustration);illustration=0;
-    bakeProgram=displayProgram=vao=texture=framebuffer=0;valid=false;builds=0;
+    bakeProgram=displayProgram=vao=texture=previousTexture=framebuffer=0;valid=false;blending=false;builds=0;
 }

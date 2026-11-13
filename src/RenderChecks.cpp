@@ -28,6 +28,7 @@
 #include <set>
 #include <source_location>
 #include <chrono>
+#include <functional>
 
 // Optional hidden-window GPU smoke checks; normal application startup never runs this.
 bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,bool galaxyOnly,bool lensingOnly,bool wormholeOnly)
@@ -191,13 +192,13 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,boo
         return success;
     }
 #endif
-    const auto capture = [&](const char *name,bool keepToast=false) {
+    const auto capture = [&](const char *name,bool keepToast=false,const std::function<void()>& renderOverride={},bool allowDark=false) {
         ++captures;
         std::cout<<"[Capture] "<<name<<"\n";
         if(!keepToast)speedToastUntil = 0;
         float dt = .016f;
         const auto renderStart=std::chrono::steady_clock::now();
-        Update(dt);
+        if(renderOverride)renderOverride();else Update(dt);
         glFinish();
         if(galaxyOnly)std::cout<<"Galaxy frame including bake/readiness: "<<std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-renderStart).count()<<" ms\n";
         if(selectedTarget==9 && showBlackHole){
@@ -234,12 +235,14 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,boo
             if (pixels[i] > 20 || pixels[i + 1] > 20 || pixels[i + 2] > 20)
                 ++lit;
         std::cout << name << ": " << width << "x" << height << ", lit=" << lit << ", GL=" << error << "\n";
-        if (lit < 10)
+        if (lit < 10 && !allowDark)
             fail();
         return pixels;
     };
     const auto checkLensing=[&](){
         StartGargantua();scenePanel.SetVisible(false);ResizeInterface();
+        // A fixed geodesic-reference camera, independent of cinematic framing.
+        cameraPos={0,0,BlackHole::HorizonRadius()*12.0};cameraFront={0,0,-1};cameraUp={0,1,0};
         selectedTarget=-1;trajectories=false;visionProfile=0;lensFlareStrength=0;
         fieldOfView=45;blackHoleResolution=1;exposureEv=0;
         KeyCallback(window,1200,0,GLFW_PRESS,0);
@@ -268,7 +271,9 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,boo
                 if(!red && !blue && !purple)continue;
                 const double u=(2*(x+.5)/w-1)*static_cast<double>(w)/h*std::tan(glm::radians(22.5));
                 const double v=(2*(y+.5)/h-1)*std::tan(glm::radians(22.5));
-                const auto ray=KerrSpacetime::PastRay(toDisk*cameraPos,toDisk*glm::normalize(glm::dvec3(u,v,-1)),BlackHole::HorizonRadius(),blackHole.Spin());
+                const auto right=glm::normalize(glm::cross(glm::dvec3(cameraFront),glm::dvec3(cameraUp)));
+                const auto up=glm::normalize(glm::cross(right,glm::dvec3(cameraFront)));
+                const auto ray=KerrSpacetime::PastRay(toDisk*cameraPos,toDisk*glm::normalize(glm::dvec3(cameraFront)+right*u+up*v),BlackHole::HorizonRadius(),blackHole.Spin());
                 const auto reference=KerrCaptureReference::Evaluate(ray,BlackHole::HorizonRadius(),blackHole.Spin());
                 if(std::abs(reference.margin)<.02)continue; // Exclude the critical curve's pixel-scale ambiguity.
                 ++compared;
@@ -408,9 +413,153 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,boo
         if(polar>40){std::cerr<<"Interior galaxy became an all-sky fog\n";fail();}
         galaxyView({7,.42,0},{5,0,0},"milky-way-volume-transition-low");
         galaxyView({7,1.48,0},{5,0,0},"milky-way-volume-transition-high");
+        // Isolate galactic light from stars/planets so a backwards projected
+        // image cannot hide inside a merely nonempty scene capture.
+        MilkyWaySky isolatedSky;GalaxyBackground isolatedGalaxies;
+        if(!isolatedSky.Initialize() || !isolatedGalaxies.Initialize()){fail();return;}
+        const auto isolatedView=[&](const char* name,const glm::dvec3& modelCamera,const glm::dvec3& aim,bool backdrop=false,float limit=10.2f,bool allowDark=false){
+            const auto world=MilkyWayModel::ToWorldAu(modelCamera);
+            const auto front=glm::normalize(glm::vec3(MilkyWayModel::Orientation()*(aim-modelCamera)));
+            auto up=glm::vec3(MilkyWayModel::Orientation()[1]);if(std::abs(glm::dot(front,up))>.98f)up=glm::vec3(MilkyWayModel::Orientation()[2]);
+            const auto vp=glm::perspective(glm::radians(65.f),static_cast<float>(viewWidth)/viewHeight,.00001f,20000.f)*glm::lookAt(glm::vec3(0),front,up);
+            isolatedSky.Invalidate();
+            return capture(name,false,[&](){
+                glViewport(0,0,viewWidth,viewHeight);optics.BeginFrame();glClearColor(0,0,0,0);glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+                if(backdrop)isolatedGalaxies.Render(vp,world,limit);else isolatedSky.Render(vp,world);
+                optics.Render(0,65,0,true,0,false,.016f);
+#ifdef RENDER_ENGINE_DX12
+                NativeDX12::PresentScene();
+#else
+                glfwSwapBuffers(window);
+#endif
+            },allowDark);
+        };
+        for(const auto p:std::array<glm::dvec3,3>{{{18.2,.68,0},{0,8,0},{0,-8,0}}}){
+            const auto away=p.x>0?glm::dvec3(1,0,0):glm::dvec3(0,p.y>0?1:-1,0);
+            const auto image=isolatedView(("mw-no-mirror-"+std::to_string(int(p.x>0?0:p.y>0?1:2))).c_str(),p,p+away,false,10.2f,true);
+            if(*std::max_element(image.begin(),image.end())>1){std::cerr<<"Milky Way projected behind the observer\n";fail();}
+        }
+        std::vector<unsigned char> previousAngle;double previousFlux=0;
+        for(int degrees=90;degrees>=0;degrees-=5){
+            const double angle=glm::radians(static_cast<double>(degrees));
+            const auto image=isolatedView(("mw-inclination-"+std::to_string(degrees)).c_str(),{0,32*std::sin(angle),32*std::cos(angle)},{0,0,0});
+            double flux=0;for(auto value:image)flux+=value;
+            if(!previousAngle.empty()){
+                const double ratio=flux/std::max(previousFlux,1.0);
+                std::cout<<"Milky Way inclination "<<degrees<<" integrated display ratio="<<ratio<<"\n";
+                if(ratio<.65 || ratio>1.35){std::cerr<<"Abrupt top/side galactic transition\n";fail();}
+            }
+            previousFlux=flux;previousAngle=image;
+        }
+        const auto distant=isolatedView("galaxies-outside-milky-way",{0,80,0},{0,80,-100},true,12.f);
+        isolatedView("galaxies-default-magnitude",{0,80,0},{0,80,-100},true,7.f);
+        if(distant==isolatedView("galaxies-magnitude-low",{0,80,0},{0,80,-100},true,4.f,true)){std::cerr<<"Galaxy magnitude filtering had no effect\n";fail();}
+        if(distant!=isolatedView("galaxies-outside-paused",{0,80,0},{0,80,-100},true,12.f)){std::cerr<<"Static distant galaxies changed\n";fail();}
+        for(int i=1;i<=3;++i){
+            const auto group=Universe::GalaxyAt(i);
+            for(int edge=0;edge<=1;++edge){
+                const auto position=group.centerAu+group.rotation[edge?0:1]*group.axesAu.x*6.0;
+                const auto image=isolatedView(("nearby-galaxy-"+std::to_string(i)+(edge?"-edge":"-face")).c_str(),MilkyWayModel::ToModelKpc(position),MilkyWayModel::ToModelKpc(group.centerAu),true,12.f);
+                size_t centerLit=0;
+                for(int y=viewHeight/2-20;y<viewHeight/2+20;++y)for(int x=viewWidth/2-20;x<viewWidth/2+20;++x){const auto p=(static_cast<size_t>(y)*viewWidth+x)*3;if(std::max({image[p],image[p+1],image[p+2]})>20)++centerLit;}
+                std::cout<<"Nearby galaxy "<<i<<(edge?" edge":" face")<<" center samples="<<centerLit<<"\n";
+                if(centerLit<30){std::cerr<<"Nearby galaxy disappeared with inclination\n";fail();}
+            }
+        }
+        isolatedSky.Release();isolatedGalaxies.Release();sceneCacheValid=false;
+        const auto difference=[](const std::vector<unsigned char>& a,const std::vector<unsigned char>& b){
+            double sum=0;if(a.size()!=b.size())return 1e9;for(size_t i=0;i<a.size();++i)sum+=std::abs(int(a[i])-int(b[i]));return sum/a.size();
+        };
+        struct Boundary {double value;bool radial;};
+        int pair=0;
+        for(const auto boundary:std::array<Boundary,6>{{{.2,false},{.4,false},{1.5,false},{2.6,false},{12.5,true},{20,true}}}){
+            const auto p=boundary.radial?glm::dvec3(boundary.value,.8,0):glm::dvec3(7,boundary.value,0);
+            const auto delta=boundary.radial?glm::dvec3(.0001,0,0):glm::dvec3(0,.0001,0);
+            const auto before=galaxyView(p-delta,{0,0,0},("mw-lod-boundary-"+std::to_string(pair)+"-before").c_str());
+            const auto after=galaxyView(p+delta,{0,0,0},("mw-lod-boundary-"+std::to_string(pair)+"-after").c_str());
+            const double error=difference(before,after);std::cout<<"Milky Way LOD boundary "<<pair++<<" mean RGB delta="<<error<<"\n";
+            if(error>1.0){std::cerr<<"Discontinuous Milky Way LOD boundary\n";fail();}
+        }
+        galaxyView({8.277,.2,0},{0,0,0},"mw-cache-flight-start");
+        const double startTime=glfwGetTime();
+        glfwSetTime(0); // Hold the refresh pending independently of GPU/readback duration.
+        const auto newWorld=MilkyWayModel::ToWorldAu({8.277,.85,0});
+        starSystem.camera=newWorld-systemOriginAu;
+        const auto pending=capture("mw-cache-flight-pending");
+        const auto count=blackHole.MilkyWayCacheBuilds();
+        glfwSetTime(startTime+5.0);const auto refresh=capture("mw-cache-refresh-start");
+        if(blackHole.MilkyWayCacheBuilds()!=count+1){std::cerr<<"Pending translation refresh was lost\n";fail();}
+        const double refreshTime=blackHole.MilkyWayCacheTimestamp();
+        glfwSetTime(refreshTime+.16);std::cout<<"Cache midpoint blend="<<blackHole.MilkyWayCacheBlend()<<"\n";const auto midpoint=capture("mw-cache-refresh-midpoint");
+        std::cout<<"Actual cache draw blend="<<blackHole.MilkyWayLastDrawBlend()<<"; age="<<glfwGetTime()-blackHole.MilkyWayCacheTimestamp()<<"; bakes="<<blackHole.MilkyWayCacheBuilds()<<"\n";
+        glfwSetTime(refreshTime+.50);const auto settled=capture("mw-cache-refresh-settled");
+        std::cout<<"Galaxy cache crossfade: refresh step="<<difference(pending,refresh)<<"; midpoint delta="<<difference(refresh,midpoint)<<"; remaining="<<difference(midpoint,settled)<<"; total change="<<difference(refresh,settled)<<"\n";
+        if(difference(pending,refresh)>.15 || difference(refresh,settled)<.02 || midpoint==refresh || midpoint==settled){std::cerr<<"Volume cache did not crossfade\n";fail();}
+        float idleDelta=.016f;Update(idleDelta);
+        if(!idleFrame){std::cerr<<"Settled sky prevented paused-frame reuse\n";fail();}
+        const auto settledBuilds=blackHole.MilkyWayCacheBuilds();
+        cameraFront=glm::normalize(cameraFront+cameraUp*.03f);capture("mw-cache-rotation-reuse");
+        if(blackHole.MilkyWayCacheBuilds()!=settledBuilds)fail();
+        starSystem.camera=MilkyWayModel::ToWorldAu({8.277,1.0,0})-systemOriginAu;
+        glfwSetTime(glfwGetTime()+1);capture("mw-cache-continued-flight-start");
+        const auto flightBuilds=blackHole.MilkyWayCacheBuilds();
+        starSystem.camera=MilkyWayModel::ToWorldAu({8.277,1.2,0})-systemOriginAu;
+        glfwSetTime(blackHole.MilkyWayCacheTimestamp()+.6);capture("mw-cache-continued-flight-terminal");
+        if(blackHole.MilkyWayCacheBuilds()!=flightBuilds || blackHole.MilkyWayLastDrawBlend()!=1.f){std::cerr<<"Continued travel replaced an unfinished fade\n";fail();}
+        capture("mw-cache-continued-flight-next-refresh");
+        if(blackHole.MilkyWayCacheBuilds()!=flightBuilds+1){std::cerr<<"Continued travel lost its next refresh\n";fail();}
+        glfwSetTime(blackHole.MilkyWayCacheTimestamp()+.6);capture("mw-cache-continued-flight-settled");
+        Update(idleDelta);if(!idleFrame)fail();
         std::cout<<"Galaxy checks "<<(success?"PASSED":"FAILED")<<": "<<captures<<" scene captures; "<<failedLines.size()<<" assertion locations failed\n";
     };
-    if(galaxyOnly){checkGalaxy();return success;}
+    const auto checkSagittarius=[&](){
+        StartSolarSystem();scenePanel.SetVisible(false);ResizeInterface();SelectCatalogue(GalacticCores::firstId);EnterSelectedSystem(true);
+        simulationPlaying=false;simulationTime=0;trajectories=false;visionProfile=0;fieldOfView=55;lensFlareStrength=0;exposureEv=0;SetMagnitudeLimit(7);
+        KeyCallback(window,1200,0,GLFW_PRESS,0);
+        const auto flow=capture("sgr-a-hot-flow-hdr");
+        size_t blue=0;for(size_t p=0;p<flow.size();p+=3)if(flow[p+2]>flow[p]*1.5 && flow[p+2]>50)++blue;
+        if(blue<1000){std::cerr<<"Sagittarius flow has no resolved blue volume\n";fail();}
+        if(flow!=capture("sgr-a-hot-flow-paused")){std::cerr<<"Paused Sagittarius plasma changed\n";fail();}
+        simulationTime=120;const auto moved=capture("sgr-a-hot-flow-120-seconds");if(moved==flow){std::cerr<<"Sagittarius flow did not advance with simulation time\n";fail();}
+        blackHole.SetHotFlowDiagnostic(true);sceneCacheValid=false;capture("sgr-a-flow-transmission");
+        glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,optics.SceneInputTexture());GLint w,h;
+        glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_WIDTH,&w);glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_HEIGHT,&h);
+        std::vector<float> transmission(static_cast<size_t>(w)*h*4);glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_FLOAT,transmission.data());
+        float minimum=1;size_t measured=0;
+        for(int y=h/3;y<h*2/3;++y)for(int x=w/3;x<w*2/3;++x){const auto p=(static_cast<size_t>(y)*w+x)*4;
+            if(transmission[p]>.5f && std::abs(transmission[p]-transmission[p+1])<.0001f && std::abs(transmission[p]-transmission[p+2])<.0001f){minimum=std::min(minimum,transmission[p]);++measured;}}
+        std::cout<<"Sgr A flow: blue pixels="<<blue<<"; sampled transmission minimum="<<minimum<<"; samples="<<measured<<"\n";
+        if(measured<1000 || minimum<.75f){std::cerr<<"Sagittarius flow became optically thick\n";fail();}
+        blackHole.SetHotFlowDiagnostic(false);blackHole.SetLensingDiagnostic(true);sceneCacheValid=false;
+        const auto status=capture("sgr-a-ray-status");size_t disk=0,unresolved=0;
+        for(size_t p=0;p<status.size();p+=3){if(status[p]<30 && status[p+1]>100 && status[p+2]<30)++disk;if(status[p]>100 && status[p+1]<30 && status[p+2]>100)++unresolved;}
+        if(disk>50 || unresolved>status.size()/3*.03){std::cerr<<"Sagittarius used an opaque disk or exhausted excessive rays\n";fail();}
+        blackHole.SetLensingDiagnostic(false);sceneCacheValid=false;KeyCallback(window,1201,0,GLFW_PRESS,0);optics.SetAutoExposure(true);
+        capture("sgr-a-hot-flow-auto");KeyCallback(window,1200,0,GLFW_PRESS,0);
+        std::cout<<"Sagittarius checks "<<(success?"PASSED":"FAILED")<<"\n";
+    };
+    const auto checkGargantua=[&](){
+        StartGargantua();scenePanel.SetVisible(false);ResizeInterface();simulationPlaying=false;simulationTime=0;
+        selectedTarget=-1;trajectories=false;visionProfile=0;fieldOfView=55;lensFlareStrength=0;exposureEv=0;
+        blackHole.SetSpin(.8);blackHole.SetRayBudget(256);KeyCallback(window,1200,0,GLFW_PRESS,0);
+        const auto emission=[](unsigned texture){
+            glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,texture);GLint w,h;
+            glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_WIDTH,&w);glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_HEIGHT,&h);
+            std::vector<float> pixels(static_cast<size_t>(w)*h*4);glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_FLOAT,pixels.data());
+            double sum=0;size_t area=0;for(size_t p=0;p<pixels.size();p+=4){const float peak=std::max({pixels[p],pixels[p+1],pixels[p+2]});if(pixels[p+3]>.5f && peak>.2f){sum+=peak;++area;}}
+            return std::pair<double,size_t>(sum,area);
+        };
+        blackHole.SetGargantuaDisk(1.03f/.24f,3.f);sceneCacheValid=false;capture("gargantua-disc-previous-baseline");const auto old=emission(optics.SceneInputTexture());
+        blackHole.SetGargantuaDisk(8.f,3.f);sceneCacheValid=false;capture("gargantua-disc-larger");const auto larger=emission(optics.SceneInputTexture());
+        blackHole.SetGargantuaDisk(8.f,6.4f);sceneCacheValid=false;const auto bright=capture("gargantua-cinematic-hdr");const auto brighter=emission(optics.SceneInputTexture());
+        std::cout<<"Gargantua disc: emissive area "<<old.second<<" -> "<<larger.second<<"; linear flux "<<larger.first<<" -> "<<brighter.first<<"\n";
+        if(larger.second<old.second*1.3 || brighter.first<larger.first*1.6){std::cerr<<"Gargantua disc did not become larger and brighter\n";fail();}
+        size_t clipped=0;for(size_t p=0;p<bright.size();p+=3)if(bright[p]>250 && bright[p+1]>250 && bright[p+2]>250)++clipped;
+        if(clipped>bright.size()/3*.01){std::cerr<<"HDR erased the disc's highlight detail\n";fail();}
+        KeyCallback(window,1201,0,GLFW_PRESS,0);optics.SetAutoExposure(true);capture("gargantua-cinematic-auto");
+        KeyCallback(window,1200,0,GLFW_PRESS,0);blackHole.SetRayBudget(160);
+    };
+    if(galaxyOnly){checkGalaxy();checkSagittarius();checkGargantua();return success;}
     // Check many seeds before GPU captures. A range error must become a
     // named failure, not an interactive CRT assertion hidden behind the app.
     try {
@@ -1268,6 +1417,8 @@ Connections: {
     checkWormhole();
     checkLensing();
     checkGalaxy();
+    checkSagittarius();
+    checkGargantua();
     std::cout<<"Render checks "<<(success?"PASSED":"FAILED")<<": "<<captures<<" scene captures; "<<uiCaptures<<" UI captures; "<<failedLines.size()<<" assertion locations failed\n";
     return success;
 }
