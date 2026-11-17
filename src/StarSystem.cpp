@@ -16,6 +16,7 @@
 #include <stdexcept>
 #include "GalacticCore.h"
 #include "WormholePhysics.h"
+#include "InterstellarWorlds.h"
 
 unsigned int compileShaderProgram(const char *, const char *);
 
@@ -407,8 +408,8 @@ void StarSystem::Overview(glm::vec3 &front, glm::vec3 &up)
     if(IsCore()){
         const auto core=GalacticCores::Get(coreId);const auto radius=core.RadiusAu();
         camera=core.hotFlow?GalacticCores::HotFlowFrame()*glm::dvec3(0,52*radius,24*radius)
-            :glm::dvec3(0,radius*(coreId==GalacticCores::tonId?6:3),radius*(coreId==GalacticCores::tonId?26:14));
-        front=glm::normalize(glm::vec3(-camera));up=core.hotFlow?glm::vec3(GalacticCores::HotFlowFrame()[2]):glm::vec3(0,1,0);
+            :core.quasar?InterstellarWorlds::Orientation()*glm::dvec3(0,26*radius,20*radius):glm::dvec3(0,radius*3,radius*14);
+        front=glm::normalize(glm::vec3(-camera));up=core.hotFlow?glm::vec3(GalacticCores::HotFlowFrame()[2]):core.quasar?glm::vec3(InterstellarWorlds::Orientation()[2]):glm::vec3(0,1,0);
         if(core.hotFlow)CameraMotion::Roll(front,up,glm::radians(-24.f));
         if(coreId==GalacticCores::tonId)CameraMotion::Roll(front,up,glm::radians(16.f));return;
     }
@@ -669,7 +670,7 @@ void main() {
         }
     }
     float specular=water*pow(max(dot(normal,normalize(light+view)),0.0),100.0);
-    color=vec4(material*(.012+diffuse)+specular,0);
+    color=vec4(material*(.012+diffuse)+specular,water>.95?.1+.3*specular:0.0);
 }
 )";
     program = compileShaderProgram(vertex.c_str(), fragment.c_str());
@@ -885,7 +886,8 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
         const auto center = glm::vec3(Position(planet, seconds) - camera);
         atmosphere.Render(vp, glm::vec3(0), center,
                           static_cast<float>(planets[planet].radiusEarth * Astronomy::earthRadiusAu), true,
-                          glm::vec3(-camera),earthCloudsEnabled && solarSystem && planet==2,seconds,glm::mat3(Rotation(planet,seconds)));
+                          glm::vec3(-camera),earthCloudsEnabled && solarSystem && planet==2,seconds,glm::mat3(Rotation(planet,seconds)),
+                          oceanReflectionsEnabled && !planets[planet].gas && planets[planet].seaLevel>0);
     }
     for(int body=0;body<static_cast<int>(planets.size());++body)
         if(planets[body].wormhole)wormhole.Render(vp,Position(body,seconds)-camera,

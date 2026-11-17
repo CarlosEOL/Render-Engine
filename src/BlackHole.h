@@ -12,10 +12,21 @@
 #include "Astronomy.h"
 #include "UniverseCatalog.h"
 #include "MilkyWaySky.h"
+#include "GalacticCore.h"
 
 class BlackHole {
 public:
     bool Initialize();
+    glm::vec2 DiskAppearance(int id=0) const {
+        const int index=GalacticCores::IsCore(id)?id-GalacticCores::firstId+1:0;
+        if(diskAppearance[index].x>0)return diskAppearance[index];
+        return {1.f,id==0?12000.f:static_cast<float>(GalacticCores::Get(id).temperature)};
+    }
+    void SetDiskAppearance(int id,float thickness,float temperature){
+        if((id!=0 && !GalacticCores::IsCore(id)) || !std::isfinite(thickness) || !std::isfinite(temperature)
+            || thickness<.25f || thickness>3.f || temperature<1000.f || temperature>(id==GalacticCores::firstId?1e9f:40000.f))return;
+        diskAppearance[GalacticCores::IsCore(id)?id-GalacticCores::firstId+1:0]={thickness,temperature};
+    }
     void SetSpin(double value) { if(std::isfinite(value))spin=glm::clamp(value,-.98,.98); }
     double Spin() const { return spin; }
     void SetRayBudget(int value) { rayBudget=glm::clamp(value,64,384); }
@@ -26,6 +37,8 @@ public:
     void SetLensingDiagnostic(bool value) { lensingDiagnostic=value; }
     void SetHotFlowDiagnostic(bool value) { hotFlowDiagnostic=value; }
     void SetAtmospheresEnabled(bool enabled) { atmospheresEnabled=enabled; }
+    void SetOceanReflectionsEnabled(bool enabled) { oceanReflectionsEnabled=enabled; }
+    void SetGalaxyAutoExposure(bool enabled){if(galaxies.SetAutoExposure(enabled))skyCubeDirty=true;}
     unsigned int LensingSourceDepthTexture() const { return sourceDepth; }
     unsigned int WormholeSky() const {if(!skyRefreshDeferred && (skyCubeDirty || glm::length(skyCubeOrigin)>1.0))BuildSkyCube();return skyCube;}
     bool SetSkyRefreshDeferred(bool value){const bool flush=skyRefreshDeferred && !value && skyCubeDirty;skyRefreshDeferred=value;return flush;}
@@ -42,6 +55,8 @@ public:
     float MagnitudeLimit() const {return magnitudeLimit;}
     void SetWarmStellarColor(bool enabled) { stellarActivity.SetWarmColor(enabled); }
     void InvalidateSky() const { milkyWay.Invalidate(); }
+    void ObserveSkyCamera(const glm::dvec3& camera,double dt,float fov,int height) const {milkyWay.ObserveCamera(camera,dt,fov,height);}
+    void SetAdaptiveSkyQuality(bool enabled) const {milkyWay.SetAdaptiveQuality(enabled);}
     unsigned MilkyWayCacheBuilds() const { return milkyWay.CacheBuilds(); }
     bool SkyNeedsFrame(const glm::dvec3& camera) const {return milkyWay.NeedsFrame(camera);}
     double MilkyWayCacheTimestamp() const {return milkyWay.CacheTimestamp();}
@@ -104,6 +119,8 @@ private:
     bool lensingDiagnostic=false;
     bool hotFlowDiagnostic=false;
     bool atmospheresEnabled=true;
+    std::array<glm::vec2,6> diskAppearance{};
+    bool oceanReflectionsEnabled=true;
     unsigned int lensProgram = 0;
     unsigned int screenVao = 0;
     unsigned int stellarProperties = 0;

@@ -8,6 +8,7 @@
 #include "UiTheme.h"
 #include "FlightUnits.h"
 #include "GalacticCore.h"
+#include "NearbyGalaxies.h"
 #include "CelestialPhenomena.h"
 #include "WindowManager.h"
 #include "CameraZoom.h"
@@ -964,7 +965,16 @@ void WindowManager::GoToNavigation(const NavigationEntry& entry){
         const auto toward=glm::normalize(nebula.positionAu);starSystem.camera=(nebula.positionAu-systemOriginAu)-toward*distance;
         cameraFront=glm::vec3(toward);cameraUp={0,1,0};fieldOfView=55;starSystem.speedAu=distance*.08;blackHole.InvalidateSky();
     }
-    else if(entry.kind==Kind::Galaxy){SelectCatalogue(GalacticCores::firstId+entry.system);EnterSelectedSystem(true);const auto galaxy=Universe::GalaxyAt(entry.system);starSystem.camera=galaxy.rotation*glm::dvec3(0,galaxy.axesAu.x*1.7,galaxy.axesAu.x*1.7);cameraFront=glm::normalize(glm::vec3(-starSystem.camera));cameraUp=glm::vec3(galaxy.rotation[2]);starSystem.speedAu=galaxy.axesAu.x*.2;}
+    else if(entry.kind==Kind::Galaxy){
+        if(NearbyGalaxies::IsCatalogued(entry.system)){
+            const auto& galaxy=NearbyGalaxies::Catalog.at(entry.system-NearbyGalaxies::firstId);
+            StartSolarSystem();const auto offset=-galaxy.Direction()*galaxy.Radius()*3.5;
+            starSystem.camera=galaxy.Center()+offset;cameraFront=glm::normalize(glm::vec3(-offset));cameraUp=glm::vec3(galaxy.Frame()[0]);
+            fieldOfView=55;starSystem.speedAu=galaxy.Radius()*.2;blackHole.InvalidateSky();
+        }else{
+            SelectCatalogue(GalacticCores::firstId+entry.system);EnterSelectedSystem(true);const auto galaxy=Universe::GalaxyAt(entry.system);starSystem.camera=galaxy.rotation*glm::dvec3(0,galaxy.axesAu.x*1.7,galaxy.axesAu.x*1.7);cameraFront=glm::normalize(glm::vec3(-starSystem.camera));cameraUp=glm::vec3(galaxy.rotation[2]);starSystem.speedAu=galaxy.axesAu.x*.2;
+        }
+    }
     else if(entry.kind==Kind::Craft){
         inStarSystem=false;showBlackHole=true;pendingSystemTarget=0;interiorVehicle=0;landed=observerGravity=followSelected=followSpacecraft=followPlanet=false;
         const auto pose=blackHole.CockpitPose(entry.body-8,simulationTime);cameraPos=pose.position+pose.rotation*glm::dvec3(0,30,100)/Astronomy::metresPerAu;cameraFront=glm::normalize(glm::vec3(pose.position-cameraPos));cameraUp=glm::vec3(pose.rotation[1]);cameraSpeed=2/Astronomy::metresPerAu;selectedTarget=9;
@@ -996,6 +1006,14 @@ void WindowManager::RefreshObjectEditor(){
         name=body>=0?system.Planets()[body].name:system.Host().name;
     }else if(selectedTarget>=0)name=selectedTarget==0?"Gargantua":blackHole.ResolveTarget(selectedTarget,simulationTime).name;
     objectEditor.SetObject(name,editable,blackHole.Spin(),BlackHole::HorizonRadius());
+    const int diskId=editable?0:pendingSystemTarget;
+    const bool diskEditable=editable || (!quantumMode && GalacticCores::IsCore(diskId)
+        && (!navigationSelectionValid || navigationSelection.kind==NavigationEntry::Kind::Core));
+    const auto disk=blackHole.DiskAppearance(diskEditable?diskId:0);
+    objectEditor.SetDisk(diskEditable,disk.x,disk.y,[this,diskId](double thickness,double temperature){
+        blackHole.SetDiskAppearance(diskId,static_cast<float>(thickness),static_cast<float>(temperature));
+        sceneCacheValid=false;RefreshPanel();UpdateTitle();
+    });
 }
 
 void WindowManager::RefreshPanel() {
@@ -1016,6 +1034,13 @@ void WindowManager::RefreshPanel() {
         auto info=navigationSelection.name+"\n"+navigationSelection.type+"\nParent: "+navigationSelection.parent;
         if(navigationSelection.kind==NavigationEntry::Kind::Galaxy && navigationSelection.system==0)
             info+="\n\nAppearance: Courtesy NASA/JPL-Caltech\nPIA10748 artist concept, reconstructed as an illustrative 3D light field.\n";
+        if(navigationSelection.kind==NavigationEntry::Kind::Galaxy && NearbyGalaxies::IsCatalogued(navigationSelection.system)){
+            const auto& galaxy=NearbyGalaxies::Catalog[navigationSelection.system-NearbyGalaxies::firstId];
+            std::ostringstream data;data<<"\n\nDistance from Sun: "<<galaxy.distanceLy<<" ly\nApparent V magnitude: "<<galaxy.magnitude
+                <<"\nAngular extent from Sun: "<<galaxy.majorArcmin<<" x "<<galaxy.minorArcmin<<" arcmin\nJ2000 catalogue position\n";
+            if(galaxy.morphology==4)data<<"Detached blue stellar ring and yellow nucleus\nAppearance: NASA and the Hubble Heritage Team (STScI/AURA)\nAcknowledgment: Ray A. Lucas (STScI/AURA)\n120,000 ly outer-ring diameter; distance is approximate.\n";
+            else data<<"Illustrative galaxy structure\n";info+=data.str();
+        }
         scenePanel.SetInformation(info);return;
     }
     if (quantumMode) scenePanel.SetInformation(quantum.Information());
@@ -1892,6 +1917,7 @@ void WindowManager::Update(float& dT) {
         static_cast<double>(showBlackHole),static_cast<double>(inStarSystem),static_cast<double>(activeSystemTarget),
         static_cast<double>(selectedTarget),static_cast<double>(starSystem.Selected()),static_cast<double>(trajectories),
         static_cast<double>(photonView),static_cast<double>(observerGravity),static_cast<double>(horizonReached),blackHoleResolution,static_cast<double>(interiorVehicle)};
+    if(blackHoleReady)blackHole.ObserveSkyCamera(inStarSystem?systemOriginAu+starSystem.camera:cameraPos,dT,fieldOfView,fullHeight);
     idleFrame=sceneCacheValid && !simulationPlaying && !observerGravity && (showBlackHole || inStarSystem) && signature==lastSceneSignature;
     if(blackHoleReady && blackHole.SkyNeedsFrame(inStarSystem?systemOriginAu+starSystem.camera:cameraPos))idleFrame=false;
 #ifdef RENDER_ENGINE_DX12
@@ -1910,6 +1936,7 @@ void WindowManager::Update(float& dT) {
 #ifdef RENDER_ENGINE_DX12
     if(NativeDX12::ReconstructionNeedsFrame())glViewport(0,0,reconstructionSize.x,reconstructionSize.y);
 #endif
+    blackHole.SetGalaxyAutoExposure(!hdrMode && optics.IsAutoExposure());
     optics.BeginFrame();
     glClearColor(0.0f,0.0f,0.0f,0.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);

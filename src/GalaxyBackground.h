@@ -13,14 +13,17 @@ public:
     static constexpr float ReferenceRadius = 12.2f;
     static constexpr float StarDiskRadiusFraction = 11.0f / ReferenceRadius;
     bool Initialize();
+    bool SetAutoExposure(bool enabled){const bool changed=autoExposure!=enabled;autoExposure=enabled;return changed;}
     static constexpr int DistantGalaxyCount = 256;
     void Render(const glm::mat4& viewProjection, const glm::dvec3& cameraPosition,float magnitudeLimit=7.f) const;
     void Release();
 private:
+    bool autoExposure=false;
     unsigned int program = 0;
     unsigned int vao = 0;
     unsigned int buffer = 0;
     int vertexCount = 0;
     unsigned int texture = 0;
     unsigned int variants = 0;
+    unsigned int hoagTexture = 0;
 };

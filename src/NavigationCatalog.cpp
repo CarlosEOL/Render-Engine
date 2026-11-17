@@ -4,6 +4,7 @@
 #include "StellarPhotometry.h"
 #include "InterstellarWorlds.h"
 #include "Astronomy.h"
+#include "NearbyGalaxies.h"
 #include <algorithm>
 #include <cctype>
 #include <iomanip>
@@ -14,6 +15,7 @@ using Kind=NavigationEntry::Kind;
 std::string Normalize(const std::string& text){std::string out;for(unsigned char c:text)if(std::isalnum(c))out+=static_cast<char>(std::tolower(c));return out;}
 std::string Key(int id){return "system:"+std::to_string(id);}
 NavigationEntry Galaxy(int index){NavigationEntry e;e.kind=Kind::Galaxy;e.system=index;e.key="galaxy:"+std::to_string(index);e.parentKey="universe";e.name=index==0?"Milky Way":"Galaxy "+std::to_string(index);e.parent="Universe";e.type=index==0?"Barred spiral galaxy":"Procedural galaxy";e.anchorAu=Universe::GalaxyAt(index).centerAu;e.color={.7,.56,.37};return e;}
+NavigationEntry NearbyGalaxy(int index){const auto& g=NearbyGalaxies::Catalog.at(index);NavigationEntry e;e.kind=Kind::Galaxy;e.system=NearbyGalaxies::firstId+index;e.key="nearby-galaxy:"+std::to_string(index);e.parentKey="universe";e.name=g.name;e.parent="Universe";e.type=g.morphology==4?"Ring galaxy / Hubble observed image":"Catalogued nearby galaxy / illustrative morphology";e.anchorAu=g.Center();e.diameterKm=g.Radius()*2*Astronomy::metresPerAu/1000;e.color={.65,.74,.9};return e;}
 void Load(StarSystem& model,int id,const std::string& name){if(id==-2)model.LoadSolarSystem();else if(GalacticCores::IsCore(id))model.LoadCore(id);else model.Generate(id,name);}
 }
 NavigationEntry NavigationCatalog::UniverseRoot() const{NavigationEntry e;e.kind=Kind::Universe;e.key="universe";e.name="Universe";e.type="Catalogue root";return e;}
@@ -82,6 +84,7 @@ std::vector<NavigationEntry> NavigationCatalog::Find(const std::string& query,do
         }else if(q==prefix){for(int i=0;i<1000;++i)result.push_back(System(Universe::StarId(Universe::LegacyStarCount+i),seconds));}
     }
     for(int i=0;i<4;++i){auto galaxy=Galaxy(i);if(matches(galaxy))result.push_back(galaxy);}
+    for(int i=0;i<static_cast<int>(NearbyGalaxies::Catalog.size());++i){auto galaxy=NearbyGalaxy(i);if(matches(galaxy) || Normalize(NearbyGalaxies::Catalog[i].aliases).find(q)!=std::string::npos)result.push_back(galaxy);}
     for(auto system:systems){
         if(system.system>=4 && system.system<=8)system=System(system.system,seconds);
         if(matches(system))result.push_back(system);
@@ -111,7 +114,7 @@ std::vector<NavigationEntry> NavigationCatalog::Nearby(const glm::dvec3& anchor,
 }
 std::vector<NavigationEntry> NavigationCatalog::Children(const NavigationEntry& parent,double seconds){
     std::vector<NavigationEntry> result;
-    if(parent.kind==Kind::Universe){for(int i=0;i<4;++i)result.push_back(Galaxy(i));result.push_back(System(0));result.push_back(System(GalacticCores::tonId));return result;}
+    if(parent.kind==Kind::Universe){for(int i=0;i<4;++i)result.push_back(Galaxy(i));for(int i=0;i<static_cast<int>(NearbyGalaxies::Catalog.size());++i)result.push_back(NearbyGalaxy(i));result.push_back(System(0));result.push_back(System(GalacticCores::tonId));return result;}
     if(parent.kind==Kind::Galaxy){for(const auto& e:systems)if(e.parentKey==parent.key)result.push_back(e);if(result.size()>500)result.resize(500);return result;}
     if(parent.kind==Kind::Group){
         StarSystem solar;solar.LoadSolarSystem();int i=0;for(const auto& orbit:solar.AsteroidOrbits()){

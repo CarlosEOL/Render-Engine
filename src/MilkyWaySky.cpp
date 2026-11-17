@@ -20,6 +20,7 @@ unsigned int compileShaderProgram(const char*,const char*);
 namespace {
 constexpr int cacheWidth=2048,cacheHeight=1024;
 constexpr double cacheFadeSeconds=.32;
+constexpr double settleSeconds=.25,movingFadeSeconds=.10;
 double RefreshDistance(const glm::dvec3& camera){
     double distance=.01*MilkyWayModel::auPerKpc;
     for(const auto& nebula:CelestialPhenomena::Nebulae())if(glm::length(camera-nebula.positionAu)<nebula.radiusLy*Astronomy::auPerLightYear*5)
@@ -53,6 +54,7 @@ bool MilkyWaySky::Initialize(){
     const std::string bake=std::string(R"(#version 330 core
 in vec2 screenPosition;out vec4 color;
 uniform vec3 cameraKpc;
+uniform int marchSteps,nebulaSteps;
 uniform vec4 nebula0,nebula1,nebula2,nebula3;
 uniform vec3 helixAxis;
 float hash3(vec3 p){p=fract(p*.1031);p+=dot(p,p.yzx+33.33);return fract((p.x+p.y)*p.z);}
@@ -66,8 +68,9 @@ vec3 nebulaLight(vec3 direction,vec4 field,int style){
  if(discriminant<=0.0)return vec3(0);
  float root=sqrt(discriminant),start=max(0.0,-along-root),finish=-along+root;
  if(finish<=start)return vec3(0);
- float step=(finish-start)/40.0,passing=1.0;vec3 emission=vec3(0);
+ float step=(finish-start)/float(nebulaSteps),passing=1.0;vec3 emission=vec3(0);
  for(int i=0;i<40;++i){
+  if(i>=nebulaSteps)break;
   vec3 p=origin+direction*(start+(float(i)+.5)*step);
   float radius=length(p),noise=clouds(p*5.0+float(style)*31.0);
   float shell=exp(-pow((radius-.76)/.075,2.0));
@@ -96,8 +99,9 @@ void main(){
  float begin=max(0.0,max(low.x,max(low.y,low.z))),end=min(high.x,min(high.y,high.z));
  vec3 light=vec3(0),transmission=vec3(1);
  if(end>begin){
-  float step=(end-begin)/96.0;
-  for(int i=0;i<96;++i){
+  float step=(end-begin)/float(marchSteps);
+  for(int i=0;i<192;++i){
+   if(i>=marchSteps)break;
    vec3 p=cameraKpc+direction*(begin+(float(i)+.5)*step);
    vec4 density=mwDensities(p);
    float noise=clouds(p),clumping=mix(.12,4.0,smoothstep(.28,.76,noise));
@@ -149,13 +153,26 @@ uniform mat3 worldToGalactic;
 uniform sampler2D milkyWay;
 uniform sampler2D previousMilkyWay;
 uniform float cacheBlend;
+uniform bool currentPreview,previousPreview;
 uniform vec3 cameraKpc;
 )")+MilkyWayModel::ShaderFunctions()+appearance+R"(
+vec3 cachedLight(sampler2D field,vec2 uv,bool preview){
+ vec3 light=texture(field,uv).rgb;
+ if(preview){
+  // Prefilter the low-resolution preview rather than showing high-frequency
+  // aliasing from a deliberately coarse ray march. Resolved stars are in a
+  // separate pass and retain their normal sharpness.
+  vec2 texel=1.0/vec2(textureSize(field,0));
+  light=light*.25+.1875*(texture(field,uv+vec2(texel.x,0)).rgb+texture(field,uv-vec2(texel.x,0)).rgb
+      +texture(field,uv+vec2(0,texel.y)).rgb+texture(field,uv-vec2(0,texel.y)).rgb);
+ }
+ return light;
+}
 void main(){
  vec4 q=inverseViewProjection*vec4(screenPosition,1,1);
  vec3 ray=normalize(worldToGalactic*normalize(q.xyz));
  vec2 uv=vec2(atan(ray.z,ray.x)/6.28318530718+.5,asin(clamp(ray.y,-1.0,1.0))/3.14159265359+.5);
- vec3 light=mix(texture(previousMilkyWay,uv).rgb,texture(milkyWay,uv).rgb,cacheBlend);
+ vec3 light=mix(cachedLight(previousMilkyWay,uv,previousPreview),cachedLight(milkyWay,uv,currentPreview),cacheBlend);
  float weight=hasIllustration?exteriorWeight*smoothstep(.12,.40,abs(ray.y)):0.0;
  if(weight>0.0){
   // Only one forward intersection can contribute resolved texture detail.
@@ -204,16 +221,24 @@ void main(){
     if(!complete){Release();return false;}
     return true;
 }
-void MilkyWaySky::Bake(const glm::dvec3& camera) const {
+void MilkyWaySky::Bake(const glm::dvec3& camera,bool moving) const {
     GLint target,viewport[4];glGetIntegerv(GL_FRAMEBUFFER_BINDING,&target);glGetIntegerv(GL_VIEWPORT,viewport);
-    if(valid)std::swap(texture,previousTexture);
+    if(valid){std::swap(texture,previousTexture);std::swap(textureWidth,previousWidth);previousMoving=bakedMoving;}
     blending=valid;
+    const int width=moving?1024:cacheWidth;
+    if(textureWidth!=width){
+        glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,texture);
+        glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA16F,width,width/2,0,GL_RGBA,GL_FLOAT,nullptr);
+        textureWidth=width;
+    }
     glBindFramebuffer(GL_FRAMEBUFFER,framebuffer);
     glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,texture,0);
-    glViewport(0,0,cacheWidth,cacheHeight);
+    glViewport(0,0,width,width/2);
     glDisable(GL_DEPTH_TEST);glDisable(GL_BLEND);glUseProgram(bakeProgram);
     const auto local=glm::vec3(MilkyWayModel::ToModelKpc(camera));
     glUniform3fv(glGetUniformLocation(bakeProgram,"cameraKpc"),1,glm::value_ptr(local));
+    glUniform1i(glGetUniformLocation(bakeProgram,"marchSteps"),moving?48:192);
+    glUniform1i(glGetUniformLocation(bakeProgram,"nebulaSteps"),moving?20:40);
     glUniform1f(glGetUniformLocation(bakeProgram,"exteriorWeight"),illustration?static_cast<float>(MilkyWayModel::ExteriorWeight(glm::dvec3(local))):0.f);
     glUniform1i(glGetUniformLocation(bakeProgram,"hasIllustration"),illustration?1:0);
     glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,illustration);
@@ -228,16 +253,35 @@ void MilkyWaySky::Bake(const glm::dvec3& camera) const {
     }
     glBindVertexArray(vao);glDrawArrays(GL_TRIANGLES,0,3);
     glBindFramebuffer(GL_FRAMEBUFFER,target);glViewport(viewport[0],viewport[1],viewport[2],viewport[3]);
-    bakedCamera=camera;lastBake=glfwGetTime();valid=true;++builds;
+    bakedCamera=camera;lastBake=glfwGetTime();valid=true;bakedMoving=moving;
+    fadeSeconds=moving?movingFadeSeconds:cacheFadeSeconds;++builds;
+}
+bool MilkyWaySky::MovingQuality() const {return adaptive && glfwGetTime()-lastMotion<settleSeconds;}
+void MilkyWaySky::ObserveCamera(const glm::dvec3& camera,double seconds,float fieldOfView,int height) const {
+    if(!adaptive)return;
+    if(!motionSampleValid){sampledCamera=camera;motionSampleValid=true;return;}
+    const double displacement=glm::length(camera-sampledCamera);sampledCamera=camera;
+    if(!std::isfinite(displacement) || !std::isfinite(seconds) || seconds<=0)return;
+    const auto p=MilkyWayModel::ToModelKpc(camera);
+    double distance=std::max(.1,glm::length(p)-18.0)*MilkyWayModel::auPerKpc;
+    for(const auto& nebula:CelestialPhenomena::Nebulae()){
+        const double radius=nebula.radiusLy*Astronomy::auPerLightYear;
+        distance=std::min(distance,std::max(radius*.1,glm::length(camera-nebula.positionAu)-radius));
+    }
+    const double pixelsPerRadian=std::max(1,height)/(2*std::tan(glm::radians(glm::clamp(static_cast<double>(fieldOfView),1.0,150.0))*.5));
+    const double pixelsPerSecond=displacement/seconds/distance*pixelsPerRadian;
+    // Hysteresis avoids alternating quality near a speed boundary. Use actual
+    // translation and projected parallax, never the selected flight-speed dial.
+    if(pixelsPerSecond>(MovingQuality()?15.0:30.0))lastMotion=glfwGetTime();
 }
 bool MilkyWaySky::NeedsFrame(const glm::dvec3& camera) const {
     // Draw the terminal blend=1 frame before paused-frame reuse resumes.
     // Elapsed time alone would leave the last intermediate image frozen.
-    return !valid || (blending && lastDrawBlend<1.f)
+    return !valid || (blending && lastDrawBlend<1.f) || MovingQuality()!=bakedMoving
         || glm::length(camera-bakedCamera)>RefreshDistance(camera);
 }
 float MilkyWaySky::BlendFraction() const {
-    const float t=blending?glm::clamp(static_cast<float>((glfwGetTime()-lastBake)/cacheFadeSeconds),0.f,1.f):1.f;
+    const float t=blending?glm::clamp(static_cast<float>((glfwGetTime()-lastBake)/fadeSeconds),0.f,1.f):1.f;
     return t*t*t*(t*(6*t-15)+10);
 }
 void MilkyWaySky::Render(const glm::mat4& vp,const glm::dvec3& camera) const {
@@ -248,8 +292,10 @@ void MilkyWaySky::Render(const glm::mat4& vp,const glm::dvec3& camera) const {
     glGetIntegerv(GL_BLEND_SRC_ALPHA,&srcAlpha);glGetIntegerv(GL_BLEND_DST_ALPHA,&dstAlpha);
     // Finish the visible fade before replacing either texture, even if travel
     // continues past the next translation threshold during a slow frame.
-    if(!valid || (glm::length(camera-bakedCamera)>RefreshDistance(camera) && glfwGetTime()-lastBake>=cacheFadeSeconds
-        && (!blending || lastDrawBlend>=1.f)))Bake(camera);
+    const bool moving=MovingQuality();
+    const bool translated=glm::length(camera-bakedCamera)>RefreshDistance(camera);
+    if(!valid || ((moving!=bakedMoving || (translated && glfwGetTime()-lastBake>=(moving?movingFadeSeconds:cacheFadeSeconds)))
+        && (!blending || lastDrawBlend>=1.f)))Bake(camera,moving);
     glDisable(GL_DEPTH_TEST);glDepthMask(GL_FALSE);glEnable(GL_BLEND);glBlendFunc(GL_ONE,GL_ONE);
     glUseProgram(displayProgram);const auto inverse=glm::inverse(vp);
     const auto orientation=glm::mat3(glm::transpose(MilkyWayModel::Orientation()));
@@ -261,6 +307,8 @@ void MilkyWaySky::Render(const glm::mat4& vp,const glm::dvec3& camera) const {
     glUniform1i(glGetUniformLocation(displayProgram,"previousMilkyWay"),2);
     lastDrawBlend=BlendFraction();
     glUniform1f(glGetUniformLocation(displayProgram,"cacheBlend"),lastDrawBlend);
+    glUniform1i(glGetUniformLocation(displayProgram,"currentPreview"),bakedMoving);
+    glUniform1i(glGetUniformLocation(displayProgram,"previousPreview"),blending?previousMoving:bakedMoving);
     const auto local=glm::vec3(MilkyWayModel::ToModelKpc(camera));
     glUniform3fv(glGetUniformLocation(displayProgram,"cameraKpc"),1,glm::value_ptr(local));
     glUniform1f(glGetUniformLocation(displayProgram,"exteriorWeight"),illustration?static_cast<float>(MilkyWayModel::ExteriorWeight(glm::dvec3(local))):0.f);
@@ -277,4 +325,5 @@ void MilkyWaySky::Release(){
     if(vao)glDeleteVertexArrays(1,&vao);if(texture)glDeleteTextures(1,&texture);if(previousTexture)glDeleteTextures(1,&previousTexture);if(framebuffer)glDeleteFramebuffers(1,&framebuffer);
     if(illustration)glDeleteTextures(1,&illustration);illustration=0;
     bakeProgram=displayProgram=vao=texture=previousTexture=framebuffer=0;valid=false;blending=false;builds=0;
+    textureWidth=previousWidth=cacheWidth;motionSampleValid=false;lastMotion=-1e30;bakedMoving=previousMoving=false;
 }

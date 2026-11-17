@@ -70,11 +70,11 @@ void main(){
         int accumulated=0;float percentile=.5;
         for(int i=0;i<32;++i){
             accumulated+=diskHistogram[i];
-            if(accumulated*4>=diskSamples*3){percentile=exp2(float(i)-15.5);break;}
+            if(accumulated*10>=diskSamples*9){percentile=exp2(float(i)-15.5);break;}
         }
         // Meter the resolved luminous object, allowing its extreme beamed
         // pixels to clip. A single hot pixel must not hide the rest of a disk.
-        target=log2(.65/percentile);
+        target=min(log2(.22/max(average,.0001)),log2(.65/percentile));
     }
     if(stellarHint.z>0){
         float samples[16];int count=0;
@@ -84,10 +84,11 @@ void main(){
             float radius=stellarHint.z*(i%2==0?.48:.66);
             vec2 uv=stellarHint.xy+vec2(cos(angle)/aspect,sin(angle))*radius;
             if(any(lessThan(uv,vec2(0))) || any(greaterThan(uv,vec2(1))))continue;
-            vec3 c=textureLod(scene,uv,0).rgb;
+            vec4 source=textureLod(scene,uv,0);
+            vec3 c=source.rgb;
             float peak=max(c.r,c.b);
             // Ignore green selection graphics and empty samples around the limb.
-            if(peak>.02 && c.g<peak*1.15)samples[count++]=peak;
+            if(peak>.02 && source.a>=.99 && c.g<peak*1.15)samples[count++]=peak;
         }
         if(count>=6){
             // Trim hot active regions and dark spots; camera panning should not
@@ -102,7 +103,7 @@ void main(){
             surface/=float(count-2*trim);
             // A resolved nearby continuum has a stable radiance calibration;
             // subpixel catalogue display PSFs must not override its exposure.
-            target=log2(.60/surface);
+            target=min(log2(.22/max(average,.0001)),log2(.60/surface));
         }
     }
     target=clamp(target,-18.0,8.0);

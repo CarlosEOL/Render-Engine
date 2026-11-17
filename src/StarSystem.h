@@ -57,6 +57,7 @@ class StarSystem
     void SetStellarActivity(bool enabled) { stellarActivity.SetEnabled(enabled); }
     void SetStellarCorona(bool enabled) {stellarActivity.SetCoronaEnabled(enabled);}
     void SetEarthClouds(bool enabled){earthCloudsEnabled=enabled;}
+    void SetOceanReflections(bool enabled){oceanReflectionsEnabled=enabled;}
     void SetWormholeEnabled(bool enabled){wormhole.SetEnabled(enabled);}
     void SetWormholeDiagnostic(bool enabled){wormhole.SetDiagnostic(enabled);}
     void SetWarmStellarColor(bool enabled) { stellarActivity.SetWarmColor(enabled); }
@@ -129,6 +130,7 @@ class StarSystem
     std::vector<OrbitalMechanics::Orbit> asteroids;
     bool solarSystem = false;
     bool earthCloudsEnabled=true;
+    bool oceanReflectionsEnabled=true;
     int coreId=-1;
     double GravityFor(int planet) const;
     glm::dvec3 RelativePosition(int planet, double seconds) const;

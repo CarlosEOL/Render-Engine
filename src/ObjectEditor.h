@@ -8,6 +8,7 @@ public:
   bool Create(void *owner, std::function<void(double)> applySpin);
   void SetObject(const std::string &name, bool editable, double spin,
                  double referenceRadiusAu);
+  void SetDisk(bool enabled,double thickness,double temperature,std::function<void(double,double)> callback);
   void Toggle();
   void Hide();
   bool Visible() const { return visible; }
@@ -24,7 +25,8 @@ public:
     Close = 4107,
     ObjectName = 4108,
     Details = 4109,
-    Status = 4110
+    Status = 4110,
+    Thickness = 4112, Temperature = 4113, ApplyDisk = 4114
   };
 
 private:
@@ -34,6 +36,7 @@ private:
   void SyncControls();
   void ApplyValue(double value);
   void ApplyText();
+  void ApplyDiskText();
   void SetStatus(const wchar_t *text);
   void *window = nullptr;
   void *owner = nullptr;
@@ -43,4 +46,7 @@ private:
   double spin = .8, referenceRadiusAu = 1;
   std::string objectName;
   std::function<void(double)> applySpin;
+  std::function<void(double,double)> applyDisk;
+  bool diskEditable=false;
+  double diskThickness=1,diskTemperature=12000;
 };

@@ -33,7 +33,9 @@ struct ObjectEditorWin32 {
         return 0;
       }
       if (key == VK_RETURN) {
-        if (GetDlgCtrlID(control) == ObjectEditor::SpinValue)
+        if(GetDlgCtrlID(control)==ObjectEditor::Thickness || GetDlgCtrlID(control)==ObjectEditor::Temperature)
+          editor.ApplyDiskText();
+        else if (GetDlgCtrlID(control) == ObjectEditor::SpinValue)
           editor.ApplyText();
         else
           SendMessageW(static_cast<HWND>(editor.window), WM_COMMAND,
@@ -91,6 +93,8 @@ struct ObjectEditorWin32 {
         case ObjectEditor::Apply:
           editor->ApplyText();
           break;
+        case ObjectEditor::ApplyDisk:
+          editor->ApplyDiskText();break;
         case ObjectEditor::Reset:
           editor->ApplyValue(.8);
           break;
@@ -144,7 +148,7 @@ bool ObjectEditor::Create(void *nativeOwner,
     return false;
   const auto parent = static_cast<HWND>(owner);
   const int dpi = GetDpiForWindow(parent);
-  RECT rect = {0, 0, MulDiv(392, dpi, 96), MulDiv(350, dpi, 96)}, parentRect;
+  RECT rect = {0, 0, MulDiv(392, dpi, 96), MulDiv(448, dpi, 96)}, parentRect;
   GetWindowRect(parent, &parentRect);
   constexpr DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
   constexpr DWORD extended = WS_EX_TOOLWINDOW | WS_EX_CONTROLPARENT;
@@ -194,6 +198,11 @@ void ObjectEditor::BuildControls() {
   add(L"BUTTON", L"+0.01", Increase, BS_PUSHBUTTON | WS_TABSTOP);
   add(L"BUTTON", L"Reset to 0.8", Reset, BS_PUSHBUTTON | WS_TABSTOP);
   add(L"STATIC", L"", Details, SS_LEFT);
+  add(L"STATIC",L"Disk thickness (0.25 - 3x)",4115,SS_LEFT);
+  add(L"STATIC",L"Temperature (K)",4116,SS_LEFT);
+  add(L"EDIT",L"1.00",Thickness,WS_BORDER|ES_AUTOHSCROLL|WS_TABSTOP);
+  add(L"EDIT",L"12000",Temperature,WS_BORDER|ES_AUTOHSCROLL|WS_TABSTOP);
+  add(L"BUTTON",L"Apply disk",ApplyDisk,BS_PUSHBUTTON|WS_TABSTOP);
   add(L"STATIC", L"Select Gargantua to edit its spin.", Status, SS_LEFT);
   add(L"BUTTON", L"Close (F5 / Esc)", Close, BS_PUSHBUTTON | WS_TABSTOP);
   Layout();
@@ -219,8 +228,11 @@ void ObjectEditor::Layout() {
   place(Increase, 108, 144, 82, 28);
   place(Reset, 204, 144, 172, 28);
   place(Details, 16, 184, 360, 86);
-  place(Status, 16, 272, 360, 36);
-  place(Close, 230, 312, 146, 28);
+  place(4115,16,274,220,22);place(4116,246,274,130,22);
+  place(Thickness,16,300,220,27);place(Temperature,246,300,130,27);
+  place(ApplyDisk,246,336,130,28);
+  place(Status,16,374,360,36);
+  place(Close,230,410,146,28);
 #endif
 }
 void ObjectEditor::SetObject(const std::string &name, bool canEdit,
@@ -234,8 +246,7 @@ void ObjectEditor::SetObject(const std::string &name, bool canEdit,
   referenceRadiusAu = rs;
   SyncControls();
   SetStatus(editable ? L"Slider edits apply live. Enter applies a typed value."
-                     : L"Spin is editable only for Gargantua. Other objects "
-                       L"are read-only.");
+                     : L"Spin is editable only for Gargantua. Black-hole disk controls are below.");
 }
 void ObjectEditor::SyncControls() {
 #ifdef _WIN32
@@ -243,6 +254,10 @@ void ObjectEditor::SyncControls() {
     return;
   syncing = true;
   const auto native = static_cast<HWND>(window);
+  for(int id:{Thickness,Temperature,ApplyDisk})EnableWindow(GetDlgItem(native,id),diskEditable);
+  std::ostringstream thickness,temperature;thickness<<std::fixed<<std::setprecision(2)<<diskThickness;temperature<<std::fixed<<std::setprecision(0)<<diskTemperature;
+  SetDlgItemTextA(native,Thickness,diskEditable?thickness.str().c_str():"");
+  SetDlgItemTextA(native,Temperature,diskEditable?temperature.str().c_str():"");
   SetDlgItemTextA(native, ObjectName,
                   objectName.empty() ? "No object selected"
                                      : objectName.c_str());
@@ -312,6 +327,29 @@ void ObjectEditor::ApplyText() {
   ApplyValue(value);
 #endif
 }
+void ObjectEditor::SetDisk(bool enabled,double thickness,double temperature,std::function<void(double,double)> callback){
+  const bool changed=diskEditable!=enabled || diskThickness!=thickness || diskTemperature!=temperature;
+  diskEditable=enabled;diskThickness=thickness;diskTemperature=temperature;applyDisk=std::move(callback);
+  if(changed)SyncControls();
+}
+void ObjectEditor::ApplyDiskText(){
+#ifdef _WIN32
+  if(!diskEditable)return;
+  const auto parse=[&](int id,double& value){
+    wchar_t text[128];GetDlgItemTextW(static_cast<HWND>(window),id,text,128);
+    wchar_t* end=nullptr;errno=0;value=std::wcstod(text,&end);
+    if(end==text || errno==ERANGE || !std::isfinite(value))return false;
+    while(*end && std::iswspace(*end))++end;return *end==0;
+  };
+  double thickness,temperature;const double maxTemperature=objectName=="Sagittarius A*"?1e9:40000;
+  if(!parse(Thickness,thickness) || !parse(Temperature,temperature) || thickness<.25 || thickness>3 || temperature<1000 || temperature>maxTemperature){
+    SetStatus(L"Thickness: 0.25 - 3x. Temperature: 1000 - 40000 K (Sgr A*: up to 1e9 K).");return;
+  }
+  diskThickness=thickness;diskTemperature=temperature;SyncControls();
+  SetStatus(L"Disk appearance applied. Structure is illustrative.");
+  if(applyDisk)applyDisk(thickness,temperature);
+#endif
+}
 void ObjectEditor::Toggle() {
   if (visible) {
     Hide();
@@ -348,4 +386,5 @@ void ObjectEditor::Release() {
   window = owner = font = brush = nullptr;
   visible = false;
   applySpin = {};
+  applyDisk = {};
 }

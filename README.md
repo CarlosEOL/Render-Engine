@@ -11,6 +11,16 @@ DX12 includes experimental **Performance > NVIDIA DLSS** Quality, Balanced, Perf
 
 ![Full native DX12 Gargantua scene](assets/screenshots/dx12-full-gargantua.png)
 
+The latest rendering pass adds flowing solar-prominence particles, wave-driven ocean reflections of stars and volumetric clouds, more stable near-surface air, transmitting accretion-disk edges, a distinct turbulent TON 618 volume, and **F5** disk thickness/temperature controls. Valid water reflections replace the old white specular stripe. Automatic exposure prioritizes bright emitters while keeping local planets readable; HDR retains the faint sky. Nearby M31, M33 and the Magellanic Clouds use catalogue positions and angular scales. See [changes, reasons, sources and limits](docs/OPTICS_WATER_AND_QUASARS.md).
+
+![Miller ocean reflecting Gargantua](assets/screenshots/miller-water-reflections.png)
+
+![TON 618 volumetric disk and narrow outflow](assets/screenshots/ton-618-volume.png)
+
+Galaxy spirals now use genuinely translucent gaps between arms and softer outer halos. **Hoag's Object** is available through **F3** with its observed Hubble blue ring and yellow nucleus; search **Hoag**, **Haog**, or **PGC 54559**, then choose **Go to**. [Asset changes, catalogue data and credits](docs/GALAXY_TRANSPARENCY_AND_HOAG.md).
+
+![Hoag's Object — native DX12 engine capture, NASA/Hubble image](assets/screenshots/hoags-object.png)
+
 ## Startup laboratories
 
 The app opens at a main menu. Choose **Planetorium** for either **Solar System - 1:1 scale** or the **Gargantua system**. Choose **Quantum Simulation** for 38 selectable examples: infinite-well states and superpositions, harmonic-oscillator states, coherent and squeezed states, free packets, 3D hydrogen orbitals, spin states, Bell states, and numerical tunneling/scattering experiments.
@@ -96,6 +106,12 @@ The GPU traces Kerr photon paths by default, with dimensionless spin 0.8, frame 
 ### CPU and GPU work
 
 The GPU handles photon integration, disk appearance, redshift, Doppler effects, stellar colors/plasma, terrain detail, atmospheric scattering, ring particles, exposure and rasterization. The CPU updates the active system's cached orbital positions, nearby craft/Ranger states and clocks, camera navigation and draw submission. Distant catalogue stars have no per-frame orbital solver or plasma simulation. Lower magnitude limits reduce star rasterization; cached galaxy/nebula radiative transfer updates after translation, rather than on camera rotation.
+
+Galaxies and nebulae now use **adaptive moving/stationary quality**. Significant camera translation renders a filtered 1024×512 / 48-step preview. After 0.25 seconds without significant motion, a 2048×1024 / 192-step rebuild fades in, then returns to cache reuse. The trigger estimates visible parallax using actual movement, FOV and proximity; setting a high flight speed while remaining still does not lower quality. Stars, planets and UI keep their existing quality. [Every change, its reason, SpaceEngine reference and validation](docs/ADAPTIVE_VOLUME_QUALITY.md).
+
+| Travelling preview | Settled refinement |
+| --- | --- |
+| ![Moving galactic preview](assets/screenshots/milky-way-moving-preview.png) | ![Settled galactic detail](assets/screenshots/milky-way-stationary-refined.png) |
 
 ## Deterministic galaxies and proximity detail
 

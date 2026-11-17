@@ -23,6 +23,7 @@ uniform sampler2D scene;
 uniform sampler2D sceneDepth;
 uniform bool logarithmicDepth;
 uniform mat4 inverseViewProjection;
+uniform mat4 viewProjection;
 uniform vec3 cameraPosition;
 uniform vec3 planetCenter;
 uniform vec3 lightPosition;
@@ -30,6 +31,10 @@ uniform float planetRadius;
 uniform bool earthClouds;
 uniform float cloudTime;
 uniform mat3 cloudFrame;
+uniform bool oceanReflections;
+uniform bool reflectionOnly;
+uniform float waveTime,waterSpecularScale;
+uniform vec3 waterOriginMetres;
 
 float cloudHash(vec3 p){p=fract(p*.1031);p+=dot(p,p.yzx+33.33);return fract((p.x+p.y)*p.z);}
 float cloudNoise(vec3 p){
@@ -53,11 +58,91 @@ float cloudDensity(vec3 p,float coverage){
 }
 
 vec2 sphereInterval(vec3 origin, vec3 direction, float radius) {
-    float along = dot(origin, direction);
-    float discriminant = along * along - dot(origin, origin) + radius * radius;
+    // Solve in planet radii and use the product of roots near the surface.
+    // Subtracting two nearly equal AU distances loses metre-scale intersections.
+    vec3 scaled=origin/radius;
+    float along = dot(scaled, direction);
+    float c=(length(scaled)-1.0)*(length(scaled)+1.0);
+    float discriminant = along * along - c;
     if (discriminant < 0.0) return vec2(1.0, -1.0);
     float root = sqrt(discriminant);
-    return vec2(-along - root, -along + root);
+    float q=-along-(along>=0.0?root:-root);
+    if(abs(q)<1e-12)return vec2(-along)*radius;
+    vec2 interval=vec2(q,c/q)*radius;
+    return vec2(min(interval.x,interval.y),max(interval.x,interval.y));
+}
+
+float depthDistance(float z){return (exp2(z*log2(1.0+20000.0*1e12))-1.0)/1e12;}
+
+vec3 oceanReflection(vec3 background,vec3 origin,vec3 direction,float z){
+    if(!oceanReflections || z>=.99999)return background;
+    float waterMask=texture(scene,screenPosition*.5+.5).a;
+    if(waterMask<.099 || waterMask>.405)return background;
+    float distance=depthDistance(z);
+    vec3 water=origin+direction*distance;
+    // Only the ocean receiver, never the sky or foreground spacecraft.
+    if(abs(length(water)-planetRadius)>planetRadius*.0025)return background;
+    vec3 radial=normalize(water);
+    // Depth reconstruction includes the actual large ocean waves. Add the
+    // same two metre-scale travelling wave terms as the ground material,
+    // with derivative-aware filtering instead of a rigid reflected stripe.
+    vec3 dx=dFdx(water*149597870700.0),dy=dFdy(water*149597870700.0);
+    vec3 coarse=cross(dx,dy);float normalLength=length(coarse);
+    vec3 n=normalLength>1e-8?coarse/normalLength:radial;
+    if(dot(n,radial)<0.0)n=-n;
+    // Logarithmic D24 depth becomes quantized at grazing angles. Reject large
+    // spurious slopes and let the continuous material waves supply fine detail.
+    if(dot(n,radial)<.995)n=radial;else n=normalize(mix(radial,n,.15));
+    vec3 surface=waterOriginMetres+cloudFrame*(direction*distance*149597870700.0);
+    vec3 k1=vec3(.7,.1,.5)*2.0,k2=vec3(-.3,.2,.8)*5.0;
+    float a=dot(surface,k1)+waveTime,b=dot(surface,k2)-waveTime;
+    float filter1=1.0-smoothstep(.7,3.0,fwidth(a)),filter2=1.0-smoothstep(.7,3.0,fwidth(b));
+    vec3 gradient=.025*(k1*cos(a)*filter1+.4*k2*cos(b)*filter2);
+    gradient=transpose(cloudFrame)*gradient;gradient-=radial*dot(gradient,radial);
+    n=normalize(n-gradient);
+    vec3 reflected=reflect(direction,n);
+    if(dot(reflected,normalize(water))<=0.0)return background;
+    // Bounded depth march for finite receivers. The direction projection below
+    // handles the already-lensed stellar sky, whose depth is intentionally infinite.
+    vec2 hitUv=vec2(-1);float confidence=0.0;
+    vec3 start=cameraPosition+direction*distance+n*(1.0/149597870700.0);
+    for(int i=0;i<24;++i){
+        float u=float(i+1)/24.0;
+        vec3 point=start+reflected*(planetRadius*.5*u*u);
+        vec4 clip=viewProjection*vec4(point,1);
+        if(clip.w<=0.0)break;
+        vec2 uv=clip.xy/clip.w*.5+.5;
+        if(min(uv.x,uv.y)<=0.0 || max(uv.x,uv.y)>=1.0)break;
+        float sampleDepth=texture(sceneDepth,uv).r;
+        float rayDistance=length(point-cameraPosition);
+        float gap=rayDistance-depthDistance(sampleDepth);
+        if(sampleDepth<.99999 && gap>=0.0 && gap<max(20.0/149597870700.0,rayDistance*.015)){
+            float receiver=texture(scene,uv).a;
+            if(receiver>=.099 && receiver<=.405)continue; // No reflected copy of the same water/specular stripe.
+            hitUv=uv;confidence=1.0;break;
+        }
+    }
+    if(confidence==0.0){
+        vec4 clip=viewProjection*vec4(reflected,0);
+        if(clip.w<=0.0)return background;
+        hitUv=clip.xy/clip.w*.5+.5;
+        if(min(hitUv.x,hitUv.y)<=0.0 || max(hitUv.x,hitUv.y)>=1.0)return background;
+        // Nearby geometry cannot stand in for an infinite reflected star.
+        if(depthDistance(texture(sceneDepth,hitUv).r)<planetRadius*4.0)return background;
+        confidence=1.0;
+    }
+    float border=min(min(hitUv.x,hitUv.y),min(1.0-hitUv.x,1.0-hitUv.y));
+    confidence*=smoothstep(0.0,.055,border);
+    confidence*=smoothstep(0.0,.025,dot(reflected,radial));
+    vec2 texel=1.0/vec2(textureSize(scene,0));
+    vec3 reflectedLight=texture(scene,hitUv).rgb*.5;
+    reflectedLight+=(texture(scene,hitUv+texel*vec2(1,0)).rgb+texture(scene,hitUv-texel*vec2(1,0)).rgb
+        +texture(scene,hitUv+texel*vec2(0,1)).rgb+texture(scene,hitUv-texel*vec2(0,1)).rgb)*.125;
+    float fresnel=.02+.98*pow(1.0-max(dot(n,-direction),0.0),5.0);
+    float analyticSpecular=clamp((waterMask-.1)/.3,0.0,1.0)*waterSpecularScale;
+    // Replace the material's white analytic stripe only where a valid screen
+    // reflection exists; retain that fallback when the source goes offscreen.
+    return max(background-vec3(analyticSpecular*confidence),vec3(0))+reflectedLight*fresnel*confidence;
 }
 
 void main() {
@@ -70,6 +155,9 @@ void main() {
     float start = max(shell.x, 0.0);
     float finish = shell.y;
     float opaqueDepth = texture(sceneDepth, screenPosition * 0.5 + 0.5).r;
+    if(reflectionOnly){
+        fragColor=vec4(oceanReflection(background,origin,direction,opaqueDepth),source.a);return;
+    }
     if (opaqueDepth < 1.0) {
         float geometryDistance;
         if (logarithmicDepth) {
@@ -88,6 +176,7 @@ void main() {
         return;
     }
     float sourceEligibility=source.a;
+    bool waterReceiver=source.a>=.099 && source.a<=.405 && opaqueDepth<.99999;
     if(earthClouds){
         // A shell approximation and a bounded volume share weather and optical
         // depth. Fade by altitude; never replace the weather map on descent.
@@ -133,10 +222,11 @@ void main() {
         }
         float cloudT=mix(sheetT,volumeT,volumeWeight);
         background=background*cloudT+mix(sheetLight,volumeLight,volumeWeight);
-        sourceEligibility*=cloudT;
+        if(!waterReceiver)sourceEligibility*=cloudT;
     }
     const int samples = 12;
-    float interval = (finish - start) / float(samples);
+    // Quadratic intervals resolve the dense air next to a landed camera without
+    // increasing the sample count or introducing a discontinuous horizon branch.
     // Earth-like Rayleigh and aerosol scale heights, scaled with body radius.
     // Light-path extinction produces a warm low Sun; Mie forward scattering
     // supplies the circumsolar aureole without introducing an optical emitter.
@@ -146,7 +236,10 @@ void main() {
     vec3 transmittance = vec3(1);
     vec3 scattering = vec3(0);
     for (int sampleIndex = 0; sampleIndex < samples; ++sampleIndex) {
-        vec3 samplePosition = origin + direction * (start + (float(sampleIndex) + 0.5) * interval);
+        float u0=float(sampleIndex)/float(samples),u1=float(sampleIndex+1)/float(samples);
+        float begin=mix(start,finish,u0*u0),end=mix(start,finish,u1*u1);
+        float interval=end-begin;
+        vec3 samplePosition = origin + direction * ((begin+end)*.5);
         float altitude = max(length(samplePosition) - planetRadius, 0.0);
         float density = exp(-altitude / (planetRadius * 0.00125));
         float haze = exp(-altitude / (planetRadius * .000188));
@@ -180,6 +273,7 @@ void main() {
         scattering+=transmittance*(1.0-segment)*(single+multiple);
         transmittance *= segment;
     }
+    if(waterReceiver)sourceEligibility=.1+(source.a-.1)*dot(transmittance,vec3(.2126,.7152,.0722));
     fragColor = vec4(background * transmittance + scattering, sourceEligibility);
 }
 )";
@@ -198,7 +292,7 @@ void main() {
 
 void Atmosphere::Render(const glm::mat4& viewProjection, const glm::vec3& camera,
                         const glm::vec3& center, float radius, bool logarithmicDepth,
-                        const glm::vec3& lightPosition,bool earthClouds,double seconds,const glm::mat3& rotation) const {
+                        const glm::vec3& lightPosition,bool earthClouds,double seconds,const glm::mat3& rotation,bool oceanReflections,float waterSpecularScale) const {
     int viewport[4];
     glGetIntegerv(GL_VIEWPORT, viewport);
     if (viewport[2] <= 0 || viewport[3] <= 0)
@@ -238,13 +332,20 @@ void Atmosphere::Render(const glm::mat4& viewProjection, const glm::vec3& camera
     glUseProgram(program);
     const auto inverse = glm::inverse(viewProjection);
     glUniformMatrix4fv(glGetUniformLocation(program, "inverseViewProjection"), 1, GL_FALSE, glm::value_ptr(inverse));
+    glUniformMatrix4fv(glGetUniformLocation(program, "viewProjection"), 1, GL_FALSE, glm::value_ptr(viewProjection));
     glUniform3fv(glGetUniformLocation(program, "cameraPosition"), 1, glm::value_ptr(camera));
     glUniform3fv(glGetUniformLocation(program, "planetCenter"), 1, glm::value_ptr(center));
     glUniform3fv(glGetUniformLocation(program, "lightPosition"), 1, glm::value_ptr(lightPosition));
     glUniform1f(glGetUniformLocation(program, "planetRadius"), radius);
     glUniform1i(glGetUniformLocation(program,"earthClouds"),earthClouds);
+    glUniform1i(glGetUniformLocation(program,"oceanReflections"),oceanReflections);
+    glUniform1i(glGetUniformLocation(program,"reflectionOnly"),false);
     glUniform1f(glGetUniformLocation(program,"cloudTime"),static_cast<float>(std::remainder(seconds,86400.0*100)));
+    glUniform1f(glGetUniformLocation(program,"waveTime"),static_cast<float>(std::remainder(seconds,6.283185307179586)));
+    glUniform1f(glGetUniformLocation(program,"waterSpecularScale"),waterSpecularScale);
     const auto cloudFrame=glm::transpose(rotation);
+    const auto waterOrigin=glm::vec3(glm::mod(glm::dmat3(cloudFrame)*glm::dvec3(camera-center)*149597870700.0,glm::dvec3(4096)));
+    glUniform3fv(glGetUniformLocation(program,"waterOriginMetres"),1,glm::value_ptr(waterOrigin));
     glUniformMatrix3fv(glGetUniformLocation(program,"cloudFrame"),1,GL_FALSE,glm::value_ptr(cloudFrame));
     glUniform1i(glGetUniformLocation(program, "scene"), 0);
     glUniform1i(glGetUniformLocation(program, "sceneDepth"), 1);
@@ -254,6 +355,14 @@ void Atmosphere::Render(const glm::mat4& viewProjection, const glm::vec3& camera
     glDepthMask(GL_FALSE);
     glBindVertexArray(vao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
+    if(oceanReflections && glm::length(center-camera)<radius*1.04f){
+        // Reflect the finished weather/atmosphere, not the uncomposited sky.
+        // This also includes the volume-cloud pass during a surface approach.
+        glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,sceneTexture);
+        glCopyTexSubImage2D(GL_TEXTURE_2D,0,0,0,viewport[0],viewport[1],textureWidth,textureHeight);
+        glUniform1i(glGetUniformLocation(program,"reflectionOnly"),true);
+        glDrawArrays(GL_TRIANGLES,0,3);
+    }
     glBindVertexArray(0);
     glDepthMask(GL_TRUE);
     glEnable(GL_DEPTH_TEST);if(blending)glEnable(GL_BLEND);

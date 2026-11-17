@@ -29,6 +29,7 @@ class CameraOptics
     unsigned int framebuffer = 0;
     unsigned int sceneColor = 0;
     unsigned int sceneDepth = 0;
+    unsigned int depthTexture = 0;
     unsigned int flareProgram = 0, flareFramebuffer = 0, flareTexture = 0;
     bool frameActive = false;
     bool autoExposure = true, referenceGlare = true;

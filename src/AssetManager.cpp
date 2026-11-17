@@ -9,7 +9,10 @@ using namespace std;
 GLuint AssetManager::LoadTexture(const char* filePath, bool srgb) {
     int width, height, nrChannels;
     stbi_set_flip_vertically_on_load(true); // Flip for OpenGL
-    unsigned char* data = stbi_load(filePath, &width, &height, &nrChannels, 0);
+    // RGBA rows are always four-byte aligned, including odd-width RGB survey
+    // JPEGs (Hoag's Object is 1521 pixels wide). Preserve PNG alpha unchanged.
+    unsigned char* data = stbi_load(filePath, &width, &height, &nrChannels, STBI_rgb_alpha);
+    nrChannels = 4;
 
     if (!data) {
         cerr << "Failed to load texture: " << filePath << std::endl;

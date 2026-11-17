@@ -1,10 +1,12 @@
 # Galaxy texture provenance
 
-These are AI-generated illustrative textures, not measured images of named galaxies. The renderer overlays them with synthetic star distributions; they are not survey data.
+The spiral and morphology atlas are AI-generated illustrative textures, not measured images of named galaxies. The renderer overlays them with synthetic star distributions. `galaxy-hoag-hubble.jpg` is a separate observed Hubble image with its credit below.
 
 ## Original spiral
 
 File: `galaxy.png`. Mode: new image generation, transparent background.
+
+Updated November 17 by editing the original with the built-in image tool: add genuine translucent inter-arm gaps and wispy edges while keeping its structure. It remains illustrative. The final edit prompt, alpha measurements and rendering changes are in [the transparency report](../docs/GALAXY_TRANSPARENCY_AND_HOAG.md).
 
 Prompt:
 
@@ -12,9 +14,13 @@ Prompt:
 
 ## Engine screenshots
 
+`miller-water-reflections.png`, `earth-weather-reflections.png`, `solar-prominence-particles.png` and `ton-618-volume.png` are actual native DX12 framebuffer captures from the November 17 render checks. They show wave-driven screen-space reflections, reflected volumetric weather, GPU prominence particles and the illustrative quasar volume. They are not the user's reference images or generated marketing art.
+
 `screenshots/` contains original framebuffer captures, converted losslessly from PPM to PNG with `tests/convert_render_checks.py`. The Earth low-Sun, Miller ocean, Mann ice, Edmunds desert, Saturn rings, Endurance interior and Ranger interior captures come from this repository's OpenGL `--render-check` harness. `dx12-native-kerr.png` comes from the separate native DX12 preview's `--smoke` harness, captured on the RTX 4080 Laptop GPU. These are actual engine images, not AI-generated artwork or movie frames, and show the implementation's current limits. The original OpenGL gallery remains a reference for the ongoing DX12 port.
 
 ## Additional variations
+
+`galaxy-hoag-hubble.jpg` is NASA's unchanged 1521 × 1489 Hubble WFPC2 image of Hoag's Object. Credit: NASA and The Hubble Heritage Team (STScI/AURA); acknowledgment: Ray A. Lucas (STScI/AURA). [Source and download](https://science.nasa.gov/asset/hubble/ring-of-hot-blue-stars-pinwheels-around-yellow-nucleus-of-hoags-object-galaxy/). Its photographic sky is masked only in the shader; it is not generated artwork.
 
 File: `galaxy-variants.png`, 1024 x 1536 RGBA. Mode: new image generation, transparent background. The top cell is a barred spiral; the bottom cell is an elliptical galaxy. OpenGL's vertical image flip is accounted for when choosing the atlas cell. Cells use a 4:3 image aspect correction in world space.
 

@@ -3,6 +3,7 @@
   <PropertyGroup>
     <TargetName>Render-Engine-DX12</TargetName>
     <OutDir>$(MSBuildProjectDirectory)\build\dx12\$(Configuration)\bin\</OutDir>
+    <OutDir Condition="'$(DX12OutputDir)'!=''">$(DX12OutputDir)</OutDir>
     <IntDir>$(MSBuildProjectDirectory)\build\dx12\$(Configuration)\obj\</IntDir>
     <EnableDLSS Condition="'$(EnableDLSS)'==''">true</EnableDLSS>
   </PropertyGroup>
@@ -11,6 +12,7 @@
     <ProjectGuid>{406E86EA-BB6E-471A-9312-166737EAFA94}</ProjectGuid>
     <TargetName>Render-Engine-DX12</TargetName>
     <OutDir>$(MSBuildProjectDirectory)\build\dx12\$(Configuration)\bin\</OutDir>
+    <OutDir Condition="'$(DX12OutputDir)'!=''">$(DX12OutputDir)</OutDir>
     <IntDir>$(MSBuildProjectDirectory)\build\dx12\$(Configuration)\obj\</IntDir>
     <LinkIncremental>false</LinkIncremental>
     <TargetPath>$(OutDir)$(TargetName).exe</TargetPath>
@@ -31,6 +33,7 @@
     </Link>
     <PostBuildEvent><Command>if not exist "$(OutDir)assets" mkdir "$(OutDir)assets"
 copy /Y "$(ProjectDir)assets\galaxy*.png" "$(OutDir)assets\" &gt;nul
+copy /Y "$(ProjectDir)assets\galaxy-hoag-hubble.jpg" "$(OutDir)assets\galaxy-hoag-hubble.jpg" &gt;nul
 if not exist "$(OutDir)assets\stellar" mkdir "$(OutDir)assets\stellar"
 copy /Y "$(ProjectDir)assets\stellar\corona.png" "$(OutDir)assets\stellar\" &gt;nul
 if not exist "$(OutDir)assets\ui" mkdir "$(OutDir)assets\ui"

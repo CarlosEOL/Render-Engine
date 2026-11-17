@@ -101,6 +101,35 @@ uniform float exposureGain;
 uniform bool hdrMode;
 uniform vec3 blackHoleHint;
 uniform vec3 stellarHint;
+uniform sampler2D localDepth;
+
+vec3 gradedScene(vec2 uv,float lod){
+    vec4 source=textureLod(scene,uv,lod);
+    vec3 value=source.rgb;
+    // HDR is a deliberate multi-exposure presentation. Compress the resolved
+    // host photosphere before bloom so the scene's faint stars remain visible.
+    float distance=length((uv-stellarHint.xy)*vec2(texel.y/texel.x,1));
+    if(hdrMode && stellarHint.z>texel.y*2.0 && distance<stellarHint.z*1.25+texel.y*exp2(lod)*2.0){
+        float coverage=clamp(source.a,0.0,1.0);
+        if(lod<.5){
+            coverage=source.a>=.99?1.0:0.0;
+            if(texture(localDepth,uv).r>=.99998)coverage=0.0;
+            else if(max(value.r,max(value.g,value.b))>128.0)coverage=1.0;
+        }
+        if(coverage>0.0){
+            vec2 p=(uv-stellarHint.xy)*vec2(texel.y/texel.x,1);
+            vec2 outward=length(p)>1e-8?normalize(p):vec2(1,0);
+            vec2 beyond=stellarHint.xy+outward*vec2(texel.x/texel.y,1)
+                *(stellarHint.z*1.6+texel.y*exp2(lod)*3.0);
+            vec3 sky=textureLod(scene,beyond,lod).rgb;
+            // Grade only covered stellar light. Preserve the uncovered sky in
+            // filtered limb pixels; grading the whole hint circle creates a
+            // black annulus around an otherwise bright photosphere.
+            value=value*.001+sky*(1.0-coverage)*.999;
+        }
+    }
+    return value;
+}
 
 float undoTca(float distorted, vec3 terms) {
     float radius = distorted;
@@ -142,25 +171,25 @@ void main() {
     }
     float redScale = radius > 0.00001 ? undoDistortion(undoTca(radius, redTca)) / radius : 1.0;
     float blueScale = radius > 0.00001 ? undoDistortion(undoTca(radius, blueTca)) / radius : 1.0;
-    vec3 color = vec3(texture(scene, 0.5 + 0.5 * screenPosition * redScale).r,
-        texture(scene, uv).g, texture(scene, 0.5 + 0.5 * screenPosition * blueScale).b);
+    vec3 color = vec3(gradedScene(0.5 + 0.5 * screenPosition * redScale,0.0).r,
+        gradedScene(uv,0.0).g, gradedScene(0.5 + 0.5 * screenPosition * blueScale,0.0).b);
     if (profile == 1) {
         vec2 offset = texel * smoothstep(0.05, 1.0, radiusSquared) * 2.5;
-        vec3 peripheral = (texture(scene, uv + vec2(offset.x, 0)).rgb
-            + texture(scene, uv - vec2(offset.x, 0)).rgb
-            + texture(scene, uv + vec2(0, offset.y)).rgb
-            + texture(scene, uv - vec2(0, offset.y)).rgb) * 0.25;
+        vec3 peripheral = (gradedScene(uv + vec2(offset.x, 0),0.0)
+            + gradedScene(uv - vec2(offset.x, 0),0.0)
+            + gradedScene(uv + vec2(0, offset.y),0.0)
+            + gradedScene(uv - vec2(0, offset.y),0.0)) * 0.25;
         color = mix(color, peripheral, smoothstep(0.05, 0.8, radiusSquared) * 0.65);
     }
     // PA vignetting uses radius normalised to the full-frame corner.
     float vignetteRadiusSquared = radius * radius / 3.25;
     color *= max(0.01, 1.0 + vignetteRadiusSquared * (vignetting.x
         + vignetteRadiusSquared * (vignetting.y + vignetteRadiusSquared * vignetting.z)));
-    vec3 glow = max(textureLod(scene, uv, 2.0).rgb - 1.0, vec3(0)) * 0.04;
+    vec3 glow = max(gradedScene(uv, 2.0) - 1.0, vec3(0)) * 0.04;
     for(int tap=0;tap<8;++tap) {
         float angle=float(tap)*.78539816;
         vec2 offset=vec2(cos(angle),sin(angle))*texel*12.0;
-        glow+=max(textureLod(scene,uv+offset,4.0).rgb-.5,vec3(0))*.0035;
+        glow+=max(gradedScene(uv+offset,4.0)-.5,vec3(0))*.0035;
     }
     color += glow;
     vec3 opticalLight=vec3(0);
@@ -245,8 +274,13 @@ void main() {
                     float smallSource=1.0/(1.0+sourceRadius*90.0);
                     vec3 warmWhite=normalize(tint+vec3(1.2,1.1,.85))*1.7;
                     float core=exp(-r*r/.00012)*6.0;
-                    float streak=exp(-abs(p.y)/(.0012+r*.003))*exp(-abs(p.x)/.48)*.10;
-                    opticalLight+=warmWhite*energy*smallSource*(core+scatter*(.2+fineRays*2.0)+streak);
+                    float lineWidth=max(texel.y*.55,.0003)+r*.0008;
+                    float streak=exp(-abs(p.y)/lineWidth)*exp(-abs(p.x)/.32)
+                        +exp(-abs(p.x)/lineWidth)*exp(-abs(p.y)/.24);
+                    opticalLight+=warmWhite*energy*smallSource*(core+scatter*(.2+fineRays*2.0));
+                    // A thermal-coloured cross for unresolved star points. Broad
+                    // diffuse signatures remain in their existing lens profiles.
+                    opticalLight+=tint*energy*smallSource*streak*(profile==5?.7:.24);
                     float aspect=texel.y/texel.x;
                     float arcRadius=(.36+.015*float(profile))*aspect;
                     vec3 bands=exp(-pow((vec3(r)-arcRadius*vec3(1.055,1.0,.945))
@@ -271,7 +305,12 @@ void main() {
         }
     }
     float adaptedGain=automaticExposure?exp2(texelFetch(exposureState,ivec2(0),0).r):1.0;
-    color = max(color * exposureGain * adaptedGain, vec3(0));
+    float localGain=adaptedGain;
+    vec4 sourceClass=texture(scene,uv);
+    if(automaticExposure && texture(localDepth,uv).r<.99998 && sourceClass.a<.99
+        && max(sourceClass.r,max(sourceClass.g,sourceClass.b))<2.0)
+        localGain=max(adaptedGain,.65);
+    color = max(color * exposureGain * localGain, vec3(0));
     if (hdrMode) {
         // Apply the shoulder to peak radiance, preserving highlight hue ratios.
         float peak=max(color.r,max(color.g,color.b));
@@ -300,6 +339,7 @@ void main() {
     glGenFramebuffers(1, &framebuffer);
     glGenTextures(1, &sceneColor);
     glGenRenderbuffers(1, &sceneDepth);
+    glGenTextures(1,&depthTexture);
     const char *extract = R"(#version 330 core
 out vec4 result;
 uniform sampler2D scene;
@@ -454,6 +494,12 @@ void CameraOptics::BeginFrame()
         }
         glBindRenderbuffer(GL_RENDERBUFFER, sceneDepth);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
+        glBindTexture(GL_TEXTURE_2D,depthTexture);
+        glTexImage2D(GL_TEXTURE_2D,0,GL_DEPTH_COMPONENT24,width,height,0,GL_DEPTH_COMPONENT,GL_UNSIGNED_INT,nullptr);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
     }
     glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sceneColor, 0);
@@ -474,6 +520,9 @@ void CameraOptics::Render(int profile, float fieldOfView, float exposureEv, bool
     glBindTexture(GL_TEXTURE_2D, sceneTexture);
     if (!reuseScene)
     {
+        glBindTexture(GL_TEXTURE_2D,depthTexture);
+        glCopyTexSubImage2D(GL_TEXTURE_2D,0,0,0,0,0,width,height);
+        glBindTexture(GL_TEXTURE_2D,sceneTexture);
 #ifdef RENDER_ENGINE_DX12
         const bool reconstructed=NativeDX12::ResolveSceneReconstruction(sceneColor,sceneDepth,sceneTexture,realSeconds);
         glBindTexture(GL_TEXTURE_2D,sceneTexture);
@@ -516,6 +565,9 @@ void CameraOptics::Render(int profile, float fieldOfView, float exposureEv, bool
     glBindTexture(GL_TEXTURE_2D,exposureMeter.Texture());
     glUniform1i(glGetUniformLocation(program,"exposureState"),2);
     glUniform1i(glGetUniformLocation(program,"automaticExposure"),adaptive);
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D,depthTexture);
+    glUniform1i(glGetUniformLocation(program,"localDepth"),3);
     glUniform1i(glGetUniformLocation(program,"referenceGlare"),referenceGlare);
     glActiveTexture(GL_TEXTURE0);
     glUniform1f(glGetUniformLocation(program, "flareStrength"), flareStrength);
@@ -564,9 +616,10 @@ void CameraOptics::Release()
         glDeleteTextures(1, &sceneColor);
     if (sceneDepth)
         glDeleteRenderbuffers(1, &sceneDepth);
+    if(depthTexture)glDeleteTextures(1,&depthTexture);
     if (framebuffer)
         glDeleteFramebuffers(1, &framebuffer);
-    program = vao = sceneTexture = sceneColor = sceneDepth = framebuffer = 0;
+    program = vao = sceneTexture = sceneColor = sceneDepth = depthTexture = framebuffer = 0;
     frameActive = false;
     width = height = 0;
 }

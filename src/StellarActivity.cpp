@@ -55,8 +55,12 @@ vec3 stellarSurface(vec3 radial, vec3 tint, float mu, float temperature) {
         // Artistic display calibration: cool stellar photospheres remain visibly
         // emissive instead of resembling dim, lit planetary rock at default EV.
         tint*=max(1.0,2.0/max(max(tint.r,tint.g),max(tint.b,.0001)));
-        tint=mix(tint,max(tint.r,max(tint.g,tint.b))*vec3(1.0,.40,.055),warmth*.90);
+        tint=mix(tint,max(tint.r,max(tint.g,tint.b))*vec3(1.0,.70,.40),warmth*.18);
     }
+    // Scene-linear emitter/display separation: catalogue points have a visibility
+    // grade, while a resolved photosphere must dominate automatic metering.
+    tint/=max(max(tint.r,tint.g),max(tint.b,.0001));
+    tint*=8000.0*clamp(pow(temperature/5772.0,4.0),.25,3.0);
     if(!stellarEnabled) return tint;
     float phase=stellarTime*6.2831853/3600.0;
     vec3 drift=vec3(sin(phase),cos(phase),sin(phase*2.0));
@@ -82,18 +86,18 @@ uniform mat4 model;
 uniform mat4 viewProjection;
 uniform float temperature;
 out vec3 relativePosition;
-out vec3 plasmaNormal;
 out float brightness;
 out float strand;
-out float halo;
+out vec2 particleUv;
 vec3 curve(float u, vec3 anchor, vec3 tangent, float height, float span) {
     return normalize(anchor+tangent*((u*2.0-1.0)*span))
          *(1.002+height*sin(3.14159265*u)*(1.0+.025*sin(u*37.0)));
 }
 void main() {
-    float n=floor(float(gl_InstanceID)/6.0);
-    float filament=mod(float(gl_InstanceID),3.0)-1.0;
-    halo=mod(float(gl_InstanceID),6.0)>2.5?1.0:0.0;
+    float instance=float(gl_InstanceID);
+    float n=floor(instance/512.0);
+    float filament=floor(mod(instance,512.0)/64.0)-3.5;
+    float node=mod(instance,64.0);
     vec3 anchor=stellarAnchor(n);
     vec3 reference=abs(anchor.y)<.9?vec3(0,1,0):vec3(1,0,0);
     vec3 tangent=normalize(cross(reference,anchor));
@@ -103,41 +107,50 @@ void main() {
     binormal=normalize(cross(anchor,tangent));
     float event=stellarEnvelope(n);
     float activity=mix(1.35,.65,smoothstep(3500.0,12000.0,temperature));
-    float height=(.035+.12*stellarHash(n+8.0))*activity*(.45+event)
-                +(n<.5?stellarPulse*.12:0.0)+filament*.007;
-    float span=.06+.14*stellarHash(n+9.0)+filament*.006;
-    float u=parameter.x;
+    float height=(.045+.16*stellarHash(n+8.0))*activity*(.45+event)
+                +(n<.5?stellarPulse*.14:0.0)+filament*.004;
+    float span=.06+.14*stellarHash(n+9.0)+filament*.003;
+    // GPU advected particles follow seeded magnetic arches. No dynamic CPU
+    // mesh or emitter integration is needed; pausing simulation freezes flow.
+    float u=fract((node+.5)/64.0+stellarTime*(.001+.0005*stellarHash(n+filament+72.0)));
     vec3 center=curve(u,anchor,tangent,height,span);
     vec3 along=normalize(curve(min(u+.001,1.001),anchor,tangent,height,span)
                        -curve(max(u-.001,-.001),anchor,tangent,height,span));
-    vec3 side=normalize(cross(along,binormal));
-    vec3 normal=side*cos(parameter.y)+binormal*sin(parameter.y);
-    center+=binormal*filament*.006*sin(u*3.14159265);
-    float width=(.002+.002*stellarHash(n+5.0))*(.5+event)*mix(1.0,4.0,halo);
-    relativePosition=(model*vec4(center+normal*width,1)).xyz;
-    plasmaNormal=normalize(mat3(model)*normal);
-    brightness=(.12+event*1.4)*activity;
+    center+=binormal*filament*.003*sin(u*3.14159265)
+        +binormal*.0015*sin(u*31.0+stellarTime*.02+filament);
+    vec3 position=(model*vec4(center,1)).xyz;
+    vec3 trail=normalize(mat3(model)*along);
+    vec3 side=cross(trail,normalize(-position));
+    if(dot(side,side)<.0001)side=vec3(viewProjection[0][0],viewProjection[1][0],viewProjection[2][0]);
+    side=normalize(side);
+    float radius=length(model[0].xyz);
+    float width=radius*(.00045+.00065*stellarHash(n+filament+5.0))*(.6+event);
+    relativePosition=position+trail*parameter.x*radius*.014+side*parameter.y*width;
+    brightness=(.10+event*1.4)*activity*(.35+.65*stellarHash(node+filament*67.0+n*127.0));
     strand=u;
+    particleUv=parameter;
     gl_Position=viewProjection*vec4(relativePosition,1);
 }
 )";
   const auto fragment = std::string("#version 330 core\n") + R"(
 in vec3 relativePosition;
-in vec3 plasmaNormal;
 in float brightness;
 in float strand;
-in float halo;
+in vec2 particleUv;
 uniform float temperature;
 uniform float stellarTime;
 out vec4 color;
 void main() {
     gl_FragDepth=log2(1.0+length(relativePosition)*1e12)/log2(1.0+20000.0*1e12);
-    float facing=abs(dot(normalize(plasmaNormal),normalize(-relativePosition)));
-    float threads=.6+.4*sin(strand*190.0-stellarTime*6.2831853*46.0/3600.0);
-    // Enhanced emission-line-inspired palette, not a broadband blackbody spectrum.
-    vec3 tint=mix(vec3(1.0,.12,.018),vec3(.28,.48,1.0),smoothstep(7500.0,18000.0,temperature));
-    vec3 core=mix(tint,vec3(1.0,.75,.35),pow(facing,5.0)*.6);
-    color=vec4(core*brightness*threads*3.0,mix(.20+.4*facing,.035+.04*facing,halo));
+    float profile=exp(-particleUv.y*particleUv.y*5.0)*pow(max(0.0,1.0-particleUv.x*particleUv.x),2.0);
+    if(profile<.02)discard;
+    float footpoint=exp(-strand*24.0)+exp(-(1.0-strand)*24.0);
+    float hot=clamp(footpoint+profile*.35,0.0,1.0);
+    // Multi-temperature illustration: warm-white hot strands/footpoints and
+    // weaker hydrogen-like red edges, rather than uniformly orange wires.
+    vec3 tint=mix(vec3(1.0,.38,.28),vec3(1.0,.94,.84),hot);
+    tint=mix(tint,vec3(.62,.78,1.0),smoothstep(7500.0,18000.0,temperature));
+    color=vec4(tint*brightness*(1.0+footpoint*2.0)*3.0,profile*.38);
 }
 )";
   program = compileShaderProgram(vertex.c_str(), fragment.c_str());
@@ -147,15 +160,7 @@ void main() {
     Release();
     return false;
   }
-  std::vector<glm::vec2> mesh;
-  for (int u = 0; u < 64; ++u)
-    for (int v = 0; v < 8; ++v) {
-      const glm::vec2 a(u / 64.f, v * 6.2831853f / 8),
-          b((u + 1) / 64.f, v * 6.2831853f / 8);
-      const glm::vec2 c((u + 1) / 64.f, (v + 1) * 6.2831853f / 8),
-          d(u / 64.f, (v + 1) * 6.2831853f / 8);
-      mesh.insert(mesh.end(), {a, b, c, a, c, d});
-    }
+  const std::vector<glm::vec2> mesh{{-1,-1},{1,-1},{1,1},{-1,-1},{1,1},{-1,1}};
   vertices = static_cast<int>(mesh.size());
   glGenVertexArrays(1, &vao);
   glGenBuffers(1, &buffer);
@@ -306,7 +311,7 @@ void StellarActivity::Render(const glm::mat4 &vp, const glm::mat4 &model,
   glDepthMask(GL_FALSE);
   glDisable(GL_CULL_FACE);
   glBindVertexArray(vao);
-  glDrawArraysInstanced(GL_TRIANGLES, 0, vertices, 72);
+  glDrawArraysInstanced(GL_TRIANGLES, 0, vertices, 12*8*64);
   glDepthMask(depthMask);
   glBlendFuncSeparate(srcRgb, dstRgb, srcAlpha, dstAlpha);
   if (!blend)

@@ -248,6 +248,7 @@
       <Command>if not exist "$(TargetDir)assets" mkdir "$(TargetDir)assets"
 copy /Y "$(ProjectDir)assets\galaxy.png" "$(TargetDir)assets\galaxy.png"
 copy /Y "$(ProjectDir)assets\galaxy-variants.png" "$(TargetDir)assets\galaxy-variants.png"
+copy /Y "$(ProjectDir)assets\galaxy-hoag-hubble.jpg" "$(TargetDir)assets\galaxy-hoag-hubble.jpg"
 if not exist "$(TargetDir)assets\stellar" mkdir "$(TargetDir)assets\stellar"
 copy /Y "$(ProjectDir)assets\stellar\corona.png" "$(TargetDir)assets\stellar\corona.png"
 if not exist "$(TargetDir)assets\ui" mkdir "$(TargetDir)assets\ui"

@@ -14,10 +14,12 @@
 #include "GalacticCore.h"
 #include "CelestialPhenomena.h"
 #include "MilkyWayModel.h"
+#include "NearbyGalaxies.h"
 #include "WormholePhysics.h"
 #include "CameraZoom.h"
 #include "../tests/KerrCaptureReference.h"
 #include "ObjectLoader.h"
+#include "AssetManager.h"
 #include "glad/glad.h"
 #ifdef RENDER_ENGINE_DX12
 #include "dx12/Dx12SceneBridge.h"
@@ -29,6 +31,7 @@
 #include <source_location>
 #include <chrono>
 #include <functional>
+unsigned int compileShaderProgram(const char*,const char*);
 
 // Optional hidden-window GPU smoke checks; normal application startup never runs this.
 bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,bool galaxyOnly,bool lensingOnly,bool wormholeOnly)
@@ -36,6 +39,9 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,boo
     if (!blackHoleReady || !starSystemReady || !quantumReady || !opticsReady)
         return false;
     std::filesystem::create_directories(directory);
+    // Authored reference captures teleport between poses. Test actual motion
+    // adaptation separately below rather than treating those jumps as flight.
+    blackHole.SetAdaptiveSkyQuality(false);
 #ifdef RENDER_ENGINE_DX12
     NativeDX12::SetSceneSwapInterval(0);
 #else
@@ -417,12 +423,29 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,boo
         // image cannot hide inside a merely nonempty scene capture.
         MilkyWaySky isolatedSky;GalaxyBackground isolatedGalaxies;
         if(!isolatedSky.Initialize() || !isolatedGalaxies.Initialize()){fail();return;}
-        const auto isolatedView=[&](const char* name,const glm::dvec3& modelCamera,const glm::dvec3& aim,bool backdrop=false,float limit=10.2f,bool allowDark=false){
+        auto spiralPath=std::filesystem::path("assets/galaxy.png");
+#ifdef _WIN32
+        wchar_t executablePath[32768];GetModuleFileNameW(nullptr,executablePath,32768);
+        spiralPath=std::filesystem::path(executablePath).parent_path()/spiralPath;
+#endif
+        const auto porousSpiral=AssetManager::LoadTexture(spiralPath.string().c_str(),true);
+        GLint sw,sh;glBindTexture(GL_TEXTURE_2D,porousSpiral);
+        glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_WIDTH,&sw);glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_HEIGHT,&sh);
+        std::vector<float> spiralPixels(static_cast<size_t>(sw)*sh*4);glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_FLOAT,spiralPixels.data());
+        size_t alphaSamples=0,openGaps=0,translucent=0;
+        for(int y=0;y<sh;++y)for(int x=0;x<sw;++x){const double dx=(x+.5)/sw*2-1,dy=(y+.5)/sh*2-1,r=std::hypot(dx,dy);
+            if(r<.2 || r>.8)continue;const float a=spiralPixels[(static_cast<size_t>(y)*sw+x)*4+3];
+            ++alphaSamples;if(a<.25)++openGaps;if(a>=.25 && a<.95)++translucent;
+        }
+        std::cout<<"Spiral interior alpha: open gaps="<<openGaps<<" translucent="<<translucent<<" samples="<<alphaSamples<<"\n";
+        if(!alphaSamples || openGaps<alphaSamples*.10 || translucent<alphaSamples*.10){std::cerr<<"Spiral PNG became an opaque filled disk\n";fail();}
+        glDeleteTextures(1,&porousSpiral);
+        const auto isolatedView=[&](const char* name,const glm::dvec3& modelCamera,const glm::dvec3& aim,bool backdrop=false,float limit=10.2f,bool allowDark=false,bool resetSky=true){
             const auto world=MilkyWayModel::ToWorldAu(modelCamera);
             const auto front=glm::normalize(glm::vec3(MilkyWayModel::Orientation()*(aim-modelCamera)));
             auto up=glm::vec3(MilkyWayModel::Orientation()[1]);if(std::abs(glm::dot(front,up))>.98f)up=glm::vec3(MilkyWayModel::Orientation()[2]);
             const auto vp=glm::perspective(glm::radians(65.f),static_cast<float>(viewWidth)/viewHeight,.00001f,20000.f)*glm::lookAt(glm::vec3(0),front,up);
-            isolatedSky.Invalidate();
+            if(resetSky)isolatedSky.Invalidate();
             return capture(name,false,[&](){
                 glViewport(0,0,viewWidth,viewHeight);optics.BeginFrame();glClearColor(0,0,0,0);glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
                 if(backdrop)isolatedGalaxies.Render(vp,world,limit);else isolatedSky.Render(vp,world);
@@ -434,6 +457,42 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,boo
 #endif
             },allowDark);
         };
+        // Measure the actual sprite over a coloured sky, with a bright source
+        // underneath its outskirts. A soft halo must survive without covering
+        // background light or retaining a plate-like perimeter.
+        {
+            const auto& m31=NearbyGalaxies::Catalog[0];const float fov=static_cast<float>(m31.majorArcmin/60*2.4);
+            const auto front=glm::vec3(m31.Direction()),up=glm::vec3(m31.Frame()[0]);
+            const auto vp=glm::perspective(glm::radians(fov),static_cast<float>(viewWidth)/viewHeight,.00001f,20000.f)*glm::lookAt(glm::vec3(0),front,up);
+            const double ry=std::tan(glm::radians(m31.majorArcmin/120))/std::tan(glm::radians(static_cast<double>(fov))*.5)*viewHeight*.5;
+            const double rx=ry*m31.minorArcmin/m31.majorArcmin;
+            const int markerX=viewWidth/2,markerY=viewHeight/2+static_cast<int>(ry*.85);
+            capture("galaxy-translucent-edge-sky",false,[&](){
+                glViewport(0,0,viewWidth,viewHeight);optics.BeginFrame();glClearColor(.01f,.015f,.02f,0);glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+                glEnable(GL_SCISSOR_TEST);glScissor(markerX,markerY,1,1);glClearColor(.6f,.7f,.8f,1);glClear(GL_COLOR_BUFFER_BIT);glDisable(GL_SCISSOR_TEST);
+                isolatedGalaxies.Render(vp,glm::dvec3(0),10.2f);optics.Render(0,fov,0,true,0,false,.016f);
+#ifdef RENDER_ENGINE_DX12
+                NativeDX12::PresentScene();
+#else
+                glfwSwapBuffers(window);
+#endif
+            });
+            glBindTexture(GL_TEXTURE_2D,optics.SceneInputTexture());std::vector<float> pixels(static_cast<size_t>(viewWidth)*viewHeight*4);
+            glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_FLOAT,pixels.data());
+            double flux[3]={};size_t samples[3]={};
+            for(int y=0;y<viewHeight;++y)for(int x=0;x<viewWidth;++x){
+                if(std::abs(x-markerX)<3 && std::abs(y-markerY)<3)continue;
+                const double r=std::hypot((x+.5-viewWidth*.5)/rx,(y+.5-viewHeight*.5)/ry);
+                const int bin=r<.15?0:r>.45 && r<.6?1:r>.8 && r<.92?2:-1;if(bin<0)continue;
+                const auto p=(static_cast<size_t>(y)*viewWidth+x)*4;
+                flux[bin]+=std::max(0.f,pixels[p]-.01f)+std::max(0.f,pixels[p+1]-.015f)+std::max(0.f,pixels[p+2]-.02f);++samples[bin];
+            }
+            for(int i=0;i<3;++i)flux[i]/=std::max<size_t>(samples[i],1);
+            const auto marker=(static_cast<size_t>(markerY)*viewWidth+markerX)*4;
+            std::cout<<"Galaxy core/mid/outskirts signal="<<flux[0]<<" / "<<flux[1]<<" / "<<flux[2]<<"\n";
+            if(flux[0]<.02 || flux[2]<=0 || flux[2]>flux[0]*.08 || flux[1]<flux[2]*3
+                || pixels[marker]<.595 || pixels[marker+1]<.695 || pixels[marker+2]<.795){std::cerr<<"Galaxy outskirts failed feathering/background transmission\n";fail();}
+        }
         for(const auto p:std::array<glm::dvec3,3>{{{18.2,.68,0},{0,8,0},{0,-8,0}}}){
             const auto away=p.x>0?glm::dvec3(1,0,0):glm::dvec3(0,p.y>0?1:-1,0);
             const auto image=isolatedView(("mw-no-mirror-"+std::to_string(int(p.x>0?0:p.y>0?1:2))).c_str(),p,p+away,false,10.2f,true);
@@ -466,6 +525,49 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,boo
                 if(centerLit<30){std::cerr<<"Nearby galaxy disappeared with inclination\n";fail();}
             }
         }
+        // Exercise real translation, then stopping, without resetting the
+        // cache/motion sample between frames. The authored views above reset
+        // independently so camera teleports never masquerade as flight.
+        isolatedSky.Invalidate();
+        glm::dvec3 adaptivePosition(0,.35,32);
+        auto adaptiveWorld=MilkyWayModel::ToWorldAu(adaptivePosition);
+        isolatedSky.ObserveCamera(adaptiveWorld,.016,65,viewHeight);
+        isolatedView("mw-adaptive-stationary-start",adaptivePosition,{0,0,0},false,10.2f,false,false);
+        adaptivePosition.x+=.03;adaptiveWorld=MilkyWayModel::ToWorldAu(adaptivePosition);
+        isolatedSky.ObserveCamera(adaptiveWorld,.016,65,viewHeight);
+        isolatedView("mw-adaptive-motion-start",adaptivePosition,{0,0,0},false,10.2f,false,false);
+        if(!isolatedSky.BakedMovingQuality() || isolatedSky.CacheWidth()!=1024 || isolatedSky.RaySteps()!=48){std::cerr<<"Fast translation did not choose preview quality\n";fail();}
+        glfwSetTime(isolatedSky.CacheTimestamp()+.12);
+        isolatedSky.ObserveCamera(adaptiveWorld,.016,65,viewHeight);
+        const auto preview=isolatedView("mw-adaptive-moving-preview",adaptivePosition,{0,0,0},false,10.2f,false,false);
+        glfwSetTime(isolatedSky.CacheTimestamp()+.30);
+        isolatedSky.ObserveCamera(adaptiveWorld,.016,65,viewHeight);
+        if(!isolatedSky.NeedsFrame(adaptiveWorld)){std::cerr<<"Stopping failed to wake sky refinement\n";fail();}
+        isolatedView("mw-adaptive-refinement-start",adaptivePosition,{0,0,0},false,10.2f,false,false);
+        if(isolatedSky.BakedMovingQuality() || isolatedSky.CacheWidth()!=2048 || isolatedSky.RaySteps()!=192){std::cerr<<"Stationary sky failed to choose refined quality\n";fail();}
+        glfwSetTime(isolatedSky.CacheTimestamp()+.35);
+        isolatedSky.ObserveCamera(adaptiveWorld,.016,65,viewHeight);
+        const auto refined=isolatedView("mw-adaptive-stationary-refined",adaptivePosition,{0,0,0},false,10.2f,false,false);
+        const auto detailEnergy=[&](const std::vector<unsigned char>& image){
+            // Measure the resolved dust lane, not the enormous faint halo:
+            // 8-bit quantization of that smooth halo otherwise dominates a
+            // whole-frame Laplacian despite containing no resolved structure.
+            const int halfHeight=std::max(3,viewHeight/175);
+            double sum=0;for(int y=viewHeight/2-halfHeight;y<viewHeight/2+halfHeight;++y)for(int x=viewWidth/4;x<viewWidth*3/4;++x){
+                const auto p=(static_cast<size_t>(y)*viewWidth+x)*3;
+                const double center=image[p]+image[p+1]+image[p+2];
+                const auto intensity=[&](size_t i){return image[i]+image[i+1]+image[i+2];};
+                const double laplacian=intensity(p-3)+intensity(p+3)+intensity(p-viewWidth*3)+intensity(p+viewWidth*3)-4*center;
+                sum+=laplacian*laplacian;
+            }return sum;
+        };
+        std::cout<<"Adaptive galaxy: preview 1024x512 / 48 steps; refined 2048x1024 / 192 steps; detail energy "<<detailEnergy(preview)<<" -> "<<detailEnergy(refined)<<"\n";
+        if(preview==refined || detailEnergy(refined)<=detailEnergy(preview)*1.2 || isolatedSky.NeedsFrame(adaptiveWorld)){std::cerr<<"Stationary sky failed to sharpen and return to idle\n";fail();}
+        const auto refinedBuilds=isolatedSky.CacheBuilds();
+        isolatedView("mw-adaptive-refined-rotation",adaptivePosition,{.3,0,0},false,10.2f,false,false);
+        if(isolatedSky.CacheBuilds()!=refinedBuilds || isolatedSky.MovingQuality())fail();
+        isolatedSky.ObserveCamera(adaptiveWorld+glm::dvec3(1,0,0),.016,65,viewHeight);
+        if(isolatedSky.MovingQuality()){std::cerr<<"Subpixel navigation degraded galaxy quality\n";fail();}
         isolatedSky.Release();isolatedGalaxies.Release();sceneCacheValid=false;
         const auto difference=[](const std::vector<unsigned char>& a,const std::vector<unsigned char>& b){
             double sum=0;if(a.size()!=b.size())return 1e9;for(size_t i=0;i<a.size();++i)sum+=std::abs(int(a[i])-int(b[i]));return sum/a.size();
@@ -556,6 +658,16 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,boo
         if(larger.second<old.second*1.3 || brighter.first<larger.first*1.6){std::cerr<<"Gargantua disc did not become larger and brighter\n";fail();}
         size_t clipped=0;for(size_t p=0;p<bright.size();p+=3)if(bright[p]>250 && bright[p+1]>250 && bright[p+2]>250)++clipped;
         if(clipped>bright.size()/3*.01){std::cerr<<"HDR erased the disc's highlight detail\n";fail();}
+        blackHole.SetHotFlowDiagnostic(true);sceneCacheValid=false;capture("gargantua-disc-transmission");
+        glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,optics.SceneInputTexture());GLint tw,th;
+        glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_WIDTH,&tw);glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_HEIGHT,&th);
+        std::vector<float> trans(static_cast<size_t>(tw)*th*4);glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_FLOAT,trans.data());
+        size_t translucent=0;
+        for(size_t p=0;p<trans.size();p+=4)if(trans[p]>.02f && trans[p]<.98f
+            && std::abs(trans[p]-trans[p+1])<.0001f && std::abs(trans[p]-trans[p+2])<.0001f)++translucent;
+        std::cout<<"Thin disk partially transmitting pixels="<<translucent<<"\n";
+        if(translucent<300){std::cerr<<"Accretion disk is an opaque cutout\n";fail();}
+        blackHole.SetHotFlowDiagnostic(false);sceneCacheValid=false;
         KeyCallback(window,1201,0,GLFW_PRESS,0);optics.SetAutoExposure(true);capture("gargantua-cinematic-auto");
         KeyCallback(window,1200,0,GLFW_PRESS,0);blackHole.SetRayBudget(160);
     };
@@ -685,6 +797,43 @@ Connections: {
         starSystem.SetEarthClouds(true);sceneCacheValid=false;const auto cloudy=capture(("earth-clouds-"+std::to_string(int(altitudeKm))+"km-on").c_str());
         if(altitudeKm==500 && clear==cloudy){std::cerr<<"Earth cloud shell made no visible contribution\n";fail();}
     }
+    // Locate an actual procedural ocean landing, then compare the reflection
+    // contribution with/without volumetric weather. Cloud changes in the sky
+    // alone cannot satisfy the water-only difference-of-differences check.
+    const auto readWaterScene=[&](){
+        glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,optics.SceneInputTexture());GLint w,h;
+        glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_WIDTH,&w);glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_HEIGHT,&h);
+        std::vector<float> result(static_cast<size_t>(w)*h*4);glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_FLOAT,result.data());return result;
+    };
+    bool oceanFound=false;
+    for(int pose=0;pose<12 && !oceanFound;++pose){
+        if(starSystem.IsLanded())starSystem.ToggleLanding(simulationTime,cameraFront,cameraUp);
+        const double angle=.35+pose*.31;
+        const auto radial=glm::normalize(cloudRadial*std::cos(angle)+cloudTangent*std::sin(angle));
+        starSystem.camera=cloudEarth+radial*(Astronomy::earthRadiusAu*1.1);
+        starSystem.ToggleLanding(simulationTime,cameraFront,cameraUp);
+        cameraFront=glm::normalize(cameraFront-cameraUp*.12f);fieldOfView=100;visionProfile=0;exposureEv=0;
+        starSystem.SetOceanReflections(false);starSystem.SetEarthClouds(false);sceneCacheValid=false;float dt=.016f;Update(dt);
+        const auto water=readWaterScene();size_t receivers=0;
+        for(size_t p=0;p<water.size();p+=4)if(water[p+3]>=.099f && water[p+3]<=.405f)++receivers;
+        oceanFound=receivers>10000;
+    }
+    if(!oceanFound){std::cerr<<"No ocean receiver found for weather reflection check\n";fail();}
+    else{
+        capture("earth-ocean-clear-ssr-off");const auto clearOff=readWaterScene();
+        starSystem.SetOceanReflections(true);sceneCacheValid=false;capture("earth-ocean-clear-ssr-on");const auto clearOn=readWaterScene();
+        starSystem.SetEarthClouds(true);starSystem.SetOceanReflections(false);sceneCacheValid=false;capture("earth-ocean-clouds-ssr-off");const auto cloudsOff=readWaterScene();
+        starSystem.SetOceanReflections(true);sceneCacheValid=false;capture("earth-ocean-clouds-ssr-on");const auto cloudsOn=readWaterScene();
+        size_t reflectedWeather=0;
+        for(size_t p=0;p<clearOff.size();p+=4)if(clearOff[p+3]>=.099f && clearOff[p+3]<=.405f){
+            float change=0;for(int c=0;c<3;++c)change+=std::abs((cloudsOn[p+c]-cloudsOff[p+c])-(clearOn[p+c]-clearOff[p+c]));
+            if(change>.0001f)++reflectedWeather;
+        }
+        std::cout<<"Volumetric weather reflected on ocean pixels="<<reflectedWeather<<"\n";
+        if(reflectedWeather<100)fail();
+    }
+    starSystem.SetOceanReflections(true);starSystem.SetEarthClouds(true);
+    if(starSystem.IsLanded())starSystem.ToggleLanding(simulationTime,cameraFront,cameraUp);
     starSystem.SelectPlanet(2);starSystem.GoToSelected(simulationTime,cameraFront,cameraUp);fieldOfView=45;
     const auto moon=std::find_if(starSystem.Planets().begin(),starSystem.Planets().end(),[](const auto& p){return p.name=="Moon";});
     if(moon==starSystem.Planets().end())return false;
@@ -801,17 +950,45 @@ Connections: {
     ToggleLanding();
     fieldOfView = 80;
     capture("miller-surface");
+    // Grazing, near-ground view: both the bright lensed disk and its reflected
+    // direction fit on screen. SSR must affect the ocean, never the sky.
+    const auto reflectionCenter=BlackHole::PlanetPosition(simulationTime);
+    const auto radialOut=glm::normalize(reflectionCenter);
+    const auto sideways=glm::normalize(glm::cross(radialOut,glm::dvec3(0,1,0)));
+    const auto surfaceUp=glm::normalize(sideways-radialOut*.045);
+    cameraPos=reflectionCenter+surfaceUp*(blackHole.PlanetSurfaceRadius(glm::vec3(surfaceUp),simulationTime,0)+2.0/Astronomy::metresPerAu);
+    cameraFront=glm::normalize(glm::vec3(-radialOut-surfaceUp*.10));cameraUp=glm::vec3(surfaceUp);
+    landed=false;followPlanet=followSelected=followSpacecraft=false;selectedTarget=-1;
+    fieldOfView=90;visionProfile=0;lensFlareStrength=0;
+    blackHole.SetOceanReflectionsEnabled(false);sceneCacheValid=false;
+    const auto oceanUnreflected=capture("miller-water-reflections-off");
+    blackHole.SetOceanReflectionsEnabled(true);sceneCacheValid=false;
+    const auto oceanReflected=capture("miller-water-reflections-on");
+    size_t reflectionPixels=0,replacedSpecular=0;
+    for(size_t p=0;p<oceanReflected.size();p+=3)if(std::abs(int(oceanReflected[p])-int(oceanUnreflected[p]))
+        +std::abs(int(oceanReflected[p+1])-int(oceanUnreflected[p+1]))+std::abs(int(oceanReflected[p+2])-int(oceanUnreflected[p+2]))>3)++reflectionPixels;
+    std::cout<<"Miller reflection pixels="<<reflectionPixels<<"\n";
+    if(reflectionPixels<20)fail();
+    for(size_t p=0;p<oceanReflected.size();p+=3){
+        const int before=int(oceanUnreflected[p])+oceanUnreflected[p+1]+oceanUnreflected[p+2];
+        const int after=int(oceanReflected[p])+oceanReflected[p+1]+oceanReflected[p+2];
+        if(after+20<before)++replacedSpecular;
+    }
+    std::cout<<"Miller fallback specular pixels replaced="<<replacedSpecular<<"\n";
+    if(replacedSpecular<20)fail();
+    // Air-only comparisons below keep the reflection contribution fixed.
+    blackHole.SetOceanReflectionsEnabled(false);
     // Foreground air must only affect rays intersecting its own shell, even
     // when the accretion disk is directly behind the planet. Disable camera
     // optics here so this tests atmospheric/lensing composition in scene RGB.
-    ToggleLanding();followPlanet=false;followSpacecraft=false;followSelected=false;
+    followPlanet=false;followSpacecraft=false;followSelected=false;
     trajectories=false;selectedTarget=-1;lensFlareStrength=0;visionProfile=0;exposureEv=0;
     const auto millerCenter=BlackHole::PlanetPosition(simulationTime);
     const auto millerOutward=glm::normalize(millerCenter);
     const auto millerUp=glm::normalize(glm::cross(millerOutward,glm::dvec3(0,1,0)));
     const auto millerSide=glm::normalize(glm::cross(millerOutward,millerUp));
     fieldOfView=65;
-    for(double radii:{3.0,1.029,1.031}){
+    for(double radii:{3.0,1.029,1.031,1.000001}){
         const auto offset=glm::normalize(millerOutward*(radii>2?.94:.35)+millerSide*(radii>2?.35:.94));
         cameraPos=millerCenter+offset*(Astronomy::millerRadiusAu*radii);
         const auto toPlanet=-offset;
@@ -839,7 +1016,7 @@ Connections: {
         for(int y=0;y<height;++y)for(int x=0;x<width;++x){
             const auto direction=glm::normalize(glm::dvec3(cameraFront)+right*((2*(x+.5)/width-1)*tangent*aspect)+up*((2*(y+.5)/height-1)*tangent));
             const double along=glm::dot(origin,direction);
-            const bool intersects=along<0 && glm::dot(origin,origin)-along*along<shellRadius*shellRadius;
+            const bool intersects=glm::length(origin)<shellRadius || (along<0 && glm::dot(origin,origin)-along*along<shellRadius*shellRadius);
             const size_t pixel=(static_cast<size_t>(y)*width+x)*4;
             bool changed=false;
             for(int c=0;c<3;++c){
@@ -851,6 +1028,7 @@ Connections: {
         std::cout<<label<<" texture="<<width<<"x"<<height<<" affected="<<affected<<"; air outside shell="<<leaked<<"; nonfinite="<<nonfinite<<"\n";
         if(leaked>0 || affected<100){std::cerr<<"Miller atmosphere escaped its foreground shell\n";fail();}
     }
+    blackHole.SetOceanReflectionsEnabled(true);
     StartSolarSystem();
     starSystem.SelectPlanet(-1);
     starSystem.GoToSelected(simulationTime, cameraFront, cameraUp);
@@ -1094,6 +1272,39 @@ Connections: {
     glReadBuffer(readBuffer);
     std::cout<<"Glare brightness response: "<<brightnessSignals[0]<<" -> "<<brightnessSignals[1]<<"\n";
     if(brightnessSignals[1]<=brightnessSignals[0])fail();
+    // Independent synthetic scene: a bright emitter, a dim distant background
+    // and finite non-emissive geometry must receive three distinct treatments.
+    const auto exposureScene=compileShaderProgram(R"(#version 330 core
+out vec2 uv;void main(){vec2 p=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2));uv=p;gl_Position=vec4(p*2.0-1.0,0,1);})",
+R"(#version 330 core
+in vec2 uv;out vec4 color;uniform float brightness;
+void main(){color=vec4(.01,.01,.01,0);gl_FragDepth=.999999;
+if(uv.x<.30 && uv.y>.35 && uv.y<.65){color=vec4(.2,.16,.1,0);gl_FragDepth=.5;}
+if(length(uv-vec2(.75,.75))<.08){color=vec4(vec3(brightness),uv.x<.75?1.0:0.0);gl_FragDepth=.999;}})");
+    unsigned int exposureVao;glGenVertexArrays(1,&exposureVao);
+    std::array<std::array<unsigned char,3>,2> planetSignals{};
+    for(int bright=0;bright<2;++bright){
+        sourceProbe.SetAutoExposure(true);sourceProbe.SetStellarHint({.75f,.75f,.08f});
+        glViewport(0,0,128,128);sourceProbe.BeginFrame();glDepthMask(GL_TRUE);
+        glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);glEnable(GL_DEPTH_TEST);
+        glUseProgram(exposureScene);glUniform1f(glGetUniformLocation(exposureScene,"brightness"),bright?32000.f:8000.f);
+        glBindVertexArray(exposureVao);glDrawArrays(GL_TRIANGLES,0,3);
+        sourceProbe.Render(0,45,0,false,0,false,0);
+        unsigned char sky[3]={},emitter[3]={};glReadBuffer(GL_BACK);
+        glReadPixels(10,10,1,1,GL_RGB,GL_UNSIGNED_BYTE,sky);
+        glReadPixels(20,64,1,1,GL_RGB,GL_UNSIGNED_BYTE,planetSignals[bright].data());
+        glReadPixels(96,96,1,1,GL_RGB,GL_UNSIGNED_BYTE,emitter);
+        std::cout<<"Auto exposure probe: sky="<<int(sky[0])<<" planet="<<int(planetSignals[bright][0])<<" emitter="<<int(emitter[0])<<"\n";
+        if(sky[0]>3 || planetSignals[bright][0]<80 || emitter[0]<130 || emitter[0]>245)fail();
+    }
+    if(planetSignals[0]!=planetSignals[1]){std::cerr<<"Bright emitter hid local planet geometry\n";fail();}
+    sourceProbe.Render(0,45,0,true,0,true,0);
+    unsigned char exposedSurface[3]={},plasmaCoveredSurface[3]={};
+    glReadPixels(91,96,1,1,GL_RGB,GL_UNSIGNED_BYTE,exposedSurface);
+    glReadPixels(100,96,1,1,GL_RGB,GL_UNSIGNED_BYTE,plasmaCoveredSurface);
+    std::cout<<"HDR photosphere with optical mask cleared: "<<int(exposedSurface[0])<<" -> "<<int(plasmaCoveredSurface[0])<<"\n";
+    if(std::abs(int(exposedSurface[0])-int(plasmaCoveredSurface[0]))>5)fail();
+    glDeleteVertexArrays(1,&exposureVao);glDeleteProgram(exposureScene);glReadBuffer(readBuffer);
     glUseProgram(0);sourceProbe.Release();maskAtmosphere.Release();glActiveTexture(GL_TEXTURE0);
     glViewport(oldViewport[0],oldViewport[1],oldViewport[2],oldViewport[3]);
     glClearColor(oldClear[0],oldClear[1],oldClear[2],oldClear[3]);
@@ -1395,6 +1606,64 @@ Connections: {
         SelectCatalogue(core);EnterSelectedSystem(true);fieldOfView=55;
         KeyCallback(window,1200,0,GLFW_PRESS,0);capture(core==GalacticCores::tonId?"ton-618-hdr":"sagittarius-a-hdr");
         KeyCallback(window,1201,0,GLFW_PRESS,0);optics.SetAutoExposure(true);capture(core==GalacticCores::tonId?"ton-618-auto":"sagittarius-a-auto");
+    }
+    KeyCallback(window,1200,0,GLFW_PRESS,0);
+    const auto tonDefault=capture("ton-618-volume-default");
+#ifdef _WIN32
+    KeyCallback(window,GLFW_KEY_F5,0,GLFW_PRESS,0);
+    const auto tonEditor=static_cast<HWND>(objectEditor.NativeHandle());
+    if(!IsWindowEnabled(GetDlgItem(tonEditor,ObjectEditor::Thickness)))fail();
+    SetDlgItemTextA(tonEditor,ObjectEditor::Thickness,"2.0");SetDlgItemTextA(tonEditor,ObjectEditor::Temperature,"8500");
+    SendMessageW(tonEditor,WM_COMMAND,MAKEWPARAM(ObjectEditor::ApplyDisk,BN_CLICKED),0);
+    if(blackHole.DiskAppearance(GalacticCores::tonId)!=glm::vec2(2,8500))fail();
+    SetDlgItemTextA(tonEditor,ObjectEditor::Temperature,"nan");
+    SendMessageW(tonEditor,WM_COMMAND,MAKEWPARAM(ObjectEditor::ApplyDisk,BN_CLICKED),0);
+    if(blackHole.DiskAppearance(GalacticCores::tonId)!=glm::vec2(2,8500))fail();
+    SetDlgItemTextA(tonEditor,ObjectEditor::Temperature,"8500");
+    SendMessageW(tonEditor,WM_COMMAND,MAKEWPARAM(ObjectEditor::ApplyDisk,BN_CLICKED),0);
+    RefreshObjectEditor();captureUi("ui-ton-disk-editor",tonEditor);
+    KeyCallback(window,GLFW_KEY_F5,0,GLFW_PRESS,0);
+#else
+    blackHole.SetDiskAppearance(GalacticCores::tonId,2.f,8500.f);
+#endif
+    sceneCacheValid=false;
+    const auto tonThick=capture("ton-618-volume-thick-cool");
+    if(tonDefault==tonThick)fail();
+    blackHole.SetDiskAppearance(GalacticCores::tonId,1.f,12500.f);
+    for(size_t i=0;i<NearbyGalaxies::Catalog.size();++i){
+        const char* aliases[]={"NGC224","M33","LMC","SMC","Haog's Object"};
+        const auto& galaxy=NearbyGalaxies::Catalog[i];const auto found=navigationCatalog.Find(aliases[i],simulationTime);
+        const auto entry=std::find_if(found.begin(),found.end(),[&](const auto& e){return e.kind==NavigationEntry::Kind::Galaxy && e.system==NearbyGalaxies::firstId+static_cast<int>(i);});
+        if(entry==found.end()){fail();continue;}
+        if(std::abs(glm::length(entry->anchorAu)/Astronomy::auPerLightYear-galaxy.distanceLy)>.001)fail();
+        StartSolarSystem();starSystem.camera={0,0,2};cameraFront=glm::vec3(galaxy.Direction());cameraUp=glm::vec3(galaxy.Frame()[0]);
+        visionProfile=0;lensFlareStrength=0;fieldOfView=static_cast<float>(galaxy.majorArcmin/60.0*3);sceneCacheValid=false;
+        capture(("nearby-galaxy-"+std::to_string(i)+"-from-sun").c_str(),false,{},galaxy.morphology==4);
+        if(galaxy.morphology==4){
+            const float baseLimit=limitingMagnitude;SetMagnitudeLimit(18);sceneCacheValid=false;
+            capture("hoags-object-distant-sensitive-camera");SetMagnitudeLimit(baseLimit);
+        }
+        GoToNavigation(*entry);sceneCacheValid=false;capture(("nearby-galaxy-"+std::to_string(i)+"-approach").c_str());
+        if(galaxy.morphology==4){
+            capture("hoags-object-hubble-ring");glBindTexture(GL_TEXTURE_2D,optics.SceneInputTexture());GLint rw,rh;
+            glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_WIDTH,&rw);glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_HEIGHT,&rh);
+            std::vector<float> ringPixels(static_cast<size_t>(rw)*rh*4);glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_FLOAT,ringPixels.data());
+            const double ry=rh/(2*std::tan(glm::radians(static_cast<double>(fieldOfView))*.5)*3.5),rx=ry*galaxy.minorArcmin/galaxy.majorArcmin;
+            double coreRed=0,coreBlue=0,ringRed=0,ringBlue=0,gap=0;size_t coreN=0,ringN=0,gapN=0;
+            for(int y=0;y<rh;++y)for(int x=0;x<rw;++x){const double r=std::hypot((x+.5-rw*.5)/rx,(y+.5-rh*.5)/ry);const auto p=(static_cast<size_t>(y)*rw+x)*4;
+                if(r<.12){coreRed+=ringPixels[p];coreBlue+=ringPixels[p+2];++coreN;}
+                if(r>.69 && r<.84){ringRed+=ringPixels[p];ringBlue+=ringPixels[p+2];++ringN;}
+                if(r>.43 && r<.50){gap+=ringPixels[p]+ringPixels[p+1]+ringPixels[p+2];++gapN;}
+            }
+            const double ringMean=(ringRed+ringBlue)/std::max<size_t>(1,ringN),gapMean=gap/std::max<size_t>(1,gapN);
+            std::cout<<"Hoag ring: core R/B="<<coreRed<<"/"<<coreBlue<<" ring B/R="<<ringBlue<<"/"<<ringRed<<" gap="<<gapMean<<" ring="<<ringMean<<"\n";
+            if(!coreN || !ringN || coreRed<coreBlue*1.2 || ringBlue<ringRed*1.1 || gapMean>ringMean*.3){std::cerr<<"Hoag lost its yellow nucleus, detached gap or blue ring\n";fail();}
+        }
+        const auto submitted=blackHole.LastSubmittedStars();
+        KeyCallback(window,1201,0,GLFW_PRESS,0);optics.SetAutoExposure(true);sceneCacheValid=false;
+        capture(("nearby-galaxy-"+std::to_string(i)+"-auto").c_str());
+        if(blackHole.LastSubmittedStars()!=submitted){std::cerr<<"Galaxy exposure altered star population\n";fail();}
+        KeyCallback(window,1200,0,GLFW_PRESS,0);
     }
     KeyCallback(window,1200,0,GLFW_PRESS,0);visionProfile=0;lensFlareStrength=0;
     for(const auto& nebula:CelestialPhenomena::Nebulae()){
