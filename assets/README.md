@@ -14,6 +14,10 @@ Prompt:
 
 ## Engine screenshots
 
+`solar-system-flare-50-au.png` and `solar-system-flare-10000-au.png` are native DX12 regression captures showing optical ownership retained by the Sun across the detailed/point rendering transition. The guides in the 50 AU image are a separate additive annotation pass. Both PNGs were validated against their raw RGB framebuffer captures.
+
+`andromeda-m32-companion.png` and `m32-seeded-stars.png` are native DX12 framebuffer captures from the seeded-cell render checks. They show the illustrative M32 companion profile beside Andromeda and the local star field within M32 at magnitude 13. These are engine renders, not observational photographs; the PPM-to-PNG copies were verified against every raw RGB pixel.
+
 `miller-water-reflections.png`, `earth-weather-reflections.png`, `solar-prominence-particles.png` and `ton-618-volume.png` are actual native DX12 framebuffer captures from the November 17 render checks. They show wave-driven screen-space reflections, reflected volumetric weather, GPU prominence particles and the illustrative quasar volume. They are not the user's reference images or generated marketing art.
 
 `screenshots/` contains original framebuffer captures, converted losslessly from PPM to PNG with `tests/convert_render_checks.py`. The Earth low-Sun, Miller ocean, Mann ice, Edmunds desert, Saturn rings, Endurance interior and Ranger interior captures come from this repository's OpenGL `--render-check` harness. `dx12-native-kerr.png` comes from the separate native DX12 preview's `--smoke` harness, captured on the RTX 4080 Laptop GPU. These are actual engine images, not AI-generated artwork or movie frames, and show the implementation's current limits. The original OpenGL gallery remains a reference for the ongoing DX12 port.
@@ -30,3 +34,7 @@ Prompt:
 
 
 `assets/screenshots/ui-laboratory-menu.png` and `dx12-full-gargantua.png` are actual captures of the November 12 full native DX12 application. The menu uses original vector decoration and native control painting; no SpaceEngine assets are used. Existing Earth/Interstellar gallery captures are retained.
+
+`screenshots/gargantua-tesseract.png`, `screenshots/living-planet-vegetation.png` and `screenshots/paired-wormhole.png` are verified native DX12 captures of original procedural geometry and shaders. They contain no imported movie frames, vegetation photos or SpaceEngine models.
+
+`screenshots/gargantua-continuous-descent.png` and `screenshots/gargantua-tesseract-landing.png` show the spatial interior reveal and deck collision in the same world camera, captured from the validated native DX12 Release application.

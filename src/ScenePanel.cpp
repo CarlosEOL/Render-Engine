@@ -46,6 +46,10 @@ void ScenePanel::Create(void *nativeParent)
     add(L"BUTTON",L"-",2110,BS_PUSHBUTTON|WS_TABSTOP);
     add(L"BUTTON",L"0",2111,BS_PUSHBUTTON|WS_TABSTOP);
     add(L"BUTTON",L"+",2112,BS_PUSHBUTTON|WS_TABSTOP);
+    add(L"STATIC",L"Galaxies 14.00",2113,SS_LEFT);
+    add(L"BUTTON",L"-",2114,BS_PUSHBUTTON|WS_TABSTOP);
+    add(L"BUTTON",L"0",2115,BS_PUSHBUTTON|WS_TABSTOP);
+    add(L"BUTTON",L"+",2116,BS_PUSHBUTTON|WS_TABSTOP);
     SendDlgItemMessageW(window,2108,WM_SETFONT,reinterpret_cast<WPARAM>(UiTheme::Font(window,11)),TRUE);
     RECT rect;
     GetClientRect(window, &rect);
@@ -71,7 +75,7 @@ void ScenePanel::Resize(int width, int height)
     place(2105, margin, static_cast<int>(24 * scale), margin);
     place(2100, static_cast<int>(42 * scale), static_cast<int>(27 * scale), margin);
     const int contentTop=static_cast<int>((currentSystemOnly?77:77)*scale);
-    const int contentBottom=height-static_cast<int>(190*scale);
+    const int contentBottom=height-static_cast<int>(222*scale);
     const int listHeight=browserVisible?(informationVisible?(contentBottom-contentTop)/2:contentBottom-contentTop):0;
     place(2101,contentTop,std::max(60,listHeight),margin);
     place(2106,static_cast<int>(42*scale),static_cast<int>(27*scale),margin);
@@ -81,6 +85,8 @@ void ScenePanel::Resize(int width, int height)
     place(2108,height-static_cast<int>(140*scale),static_cast<int>(44*scale),margin);
     MoveWindow(GetDlgItem(window,2109),x+margin,height-static_cast<int>(178*scale),bodyWidth-static_cast<int>(94*scale),static_cast<int>(28*scale),TRUE);
     for(int i=0;i<3;++i)MoveWindow(GetDlgItem(window,2110+i),width-margin-static_cast<int>((90-i*30)*scale),height-static_cast<int>(182*scale),static_cast<int>(26*scale),static_cast<int>(28*scale),TRUE);
+    MoveWindow(GetDlgItem(window,2113),x+margin,height-static_cast<int>(212*scale),bodyWidth-static_cast<int>(94*scale),static_cast<int>(28*scale),TRUE);
+    for(int i=0;i<3;++i)MoveWindow(GetDlgItem(window,2114+i),width-margin-static_cast<int>((90-i*30)*scale),height-static_cast<int>(216*scale),static_cast<int>(26*scale),static_cast<int>(28*scale),TRUE);
     place(2107,height-static_cast<int>(88*scale),static_cast<int>(34*scale),margin);
     place(2104,height-static_cast<int>(46*scale),static_cast<int>(34*scale),margin);
     RefreshVisibility();
@@ -265,11 +271,13 @@ void ScenePanel::Release()
     parent = font = backgroundBrush = nullptr;
 }
 
-void ScenePanel::SetMagnitude(float value,float base){
+void ScenePanel::SetMagnitude(float value,float base,float galaxies){
 #ifdef _WIN32
     if(!parent)return;std::ostringstream label;label<<std::fixed<<std::setprecision(2);
-    if(value>base+.01f)label<<"Mag "<<value<<" | base "<<base;
-    else label<<"Magnitude limit "<<value;
+    if(value>base+.01f)label<<"Stars "<<value<<" ("<<base<<")";
+    else label<<"Stars "<<value;
     SetDlgItemTextA(static_cast<HWND>(parent),2109,label.str().c_str());
+    std::ostringstream galaxyLabel;galaxyLabel<<"Galaxies "<<std::fixed<<std::setprecision(2)<<galaxies;
+    SetDlgItemTextA(static_cast<HWND>(parent),2113,galaxyLabel.str().c_str());
 #endif
 }

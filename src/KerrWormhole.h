@@ -8,7 +8,7 @@ public:
     void SetEnabled(bool value) {enabled=value;}
     void SetDiagnostic(bool value) {diagnostic=value;}
     void Render(const glm::mat4& vp,const glm::dvec3& centerFromCamera,double radiusAu,
-                unsigned int skyCube) const;
+                unsigned int skyCube,bool reverse=false) const;
 private:
     unsigned int program=0,vao=0,color=0,depth=0;
     mutable int width=0,height=0;

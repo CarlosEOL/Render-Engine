@@ -1,6 +1,7 @@
 #include "glad/glad.h"
 #include "Atmosphere.h"
 #include <cmath>
+#include <string>
 #include <glm/gtc/type_ptr.hpp>
 
 unsigned int compileShaderProgram(const char*, const char*);
@@ -15,8 +16,7 @@ void main() {
     gl_Position = vec4(screenPosition, 0.0, 1.0);
 }
 )";
-    const char* fragment = R"(
-#version 330 core
+    const std::string fragment=std::string("#version 330 core\n")+PlanetWeather::ShaderFunctions()+PlanetWeather::SurfaceShaderFunctions()+R"(
 in vec2 screenPosition;
 out vec4 fragColor;
 uniform sampler2D scene;
@@ -42,21 +42,60 @@ float cloudNoise(vec3 p){
  return mix(mix(mix(cloudHash(b),cloudHash(b+vec3(1,0,0)),f.x),mix(cloudHash(b+vec3(0,1,0)),cloudHash(b+vec3(1,1,0)),f.x),f.y),
  mix(mix(cloudHash(b+vec3(0,0,1)),cloudHash(b+vec3(1,0,1)),f.x),mix(cloudHash(b+vec3(0,1,1)),cloudHash(b+vec3(1,1,1)),f.x),f.y),f.z);
 }
+vec3 cloudCoordinates(vec3 n){
+ float latitude=abs(n.y);
+ float a=weatherAdvection.x,b=weatherAdvection.y,c=weatherAdvection.z;
+ vec2 trades=mat2(cos(a),-sin(a),sin(a),cos(a))*n.xz;
+ vec2 westerlies=mat2(cos(b),-sin(b),sin(b),cos(b))*n.xz;
+ vec2 polar=mat2(cos(c),-sin(c),sin(c),cos(c))*n.xz;
+ vec2 drift=mix(trades,westerlies,smoothstep(.28,.55,latitude));
+ drift=mix(drift,polar,smoothstep(.72,.9,latitude));
+ return vec3(drift.x,n.y,drift.y);
+}
 float weather(vec3 p){
- vec3 n=normalize(cloudFrame*p);n+=vec3(cloudTime*.0000007,0,cloudTime*.0000003);
- float field=.58*cloudNoise(n*11.0)+.28*cloudNoise(n*29.0+17.0)+.14*cloudNoise(n*73.0+31.0);
- return smoothstep(.43,.65,field);
+ vec3 radial=normalize(cloudFrame*p),n=cloudCoordinates(radial);
+ float latitude=abs(radial.y),seed=weatherParameters.z;
+ vec3 warp=n+vec3(cloudNoise(n*4.0+seed),cloudNoise(n*4.0+seed+11.0),cloudNoise(n*4.0+seed+23.0))*.11;
+ float macro=cloudNoise(warp*6.0+seed),banks=cloudNoise(warp*19.0+seed+17.0),cells=cloudNoise(warp*67.0+seed+31.0);
+ float equatorial=exp(-pow((radial.y+.035*sin(seed))/.15,2.0));
+ float dry=exp(-pow((latitude-.44)/.14,2.0));
+ float fronts=exp(-pow((latitude-.70)/.19,2.0));
+ float threshold=.50+.10*dry-.075*equatorial-.055*fronts+( .58-weatherParameters.y)*.30;
+ float field=.58*macro+.29*banks+.13*cells;
+ float coverage=smoothstep(threshold-.075,threshold+.14,field);
+ // Long, broken fronts in the westerlies; small scattered cumulus in trades.
+ float front=.5+.5*sin(n.y*34.0+macro*11.0+banks*3.0);
+ coverage=max(coverage,fronts*smoothstep(.55,.85,front)*smoothstep(.35,.65,banks)*.78);
+ for(int i=0;i<3;++i){
+  if(weatherStorms[i].w<=0.0)continue;
+  vec3 centre=weatherStorms[i].xyz;float cosine=clamp(dot(radial,centre),-1.0,1.0);
+  float radius=acos(cosine)/weatherShapes[i].x;if(radius>1.5)continue;
+  vec3 east=normalize(cross(vec3(0,1,0),centre)),north=cross(centre,east);
+  float angle=atan(dot(radial,north),dot(radial,east));
+  float spiral=.5+.5*cos(3.0*angle-weatherShapes[i].y*(radius*13.0+weatherShapes[i].z));
+  float ragged=.75+.25*cloudNoise(radial*220.0+seed+float(i)*7.0);
+  float wallRadius=.22+.022*sin(angle*4.0+weatherShapes[i].z)+.018*(cells-.5);
+  float eyewall=exp(-pow((radius-wallRadius)/.105,2.0))*ragged;
+  float bands=smoothstep(.34,.77,spiral)*exp(-radius*radius*1.8)*smoothstep(.13,.36,radius)*ragged;
+  float life=clamp(weatherShapes[i].w,0.0,1.0);
+  coverage*=1.0-(1.0-smoothstep(.065,.14,radius))*life;
+  float anvil=exp(-radius*radius*3.0)*smoothstep(.12,.22,radius)*.30;
+  coverage=max(coverage,(eyewall*.98+bands*.8+anvil)*life);
+ }
+ return clamp(coverage,0.0,1.0);
 }
 float cloudDensity(vec3 p,float coverage){
  float height=(length(p)-planetRadius)*149597870.7;
  if(height<2.0 || height>12.0)return 0.0;
  if(coverage<.03)return 0.0;
  float profile=smoothstep(2.0,3.2,height)*(1.0-smoothstep(7.0,12.0,height));
- vec3 local=cloudFrame*p*149597870.7;
- float erosion=.65*cloudNoise(local*.13+vec3(cloudTime*.00001,0,0))+.35*cloudNoise(local*.47);
- return max(0.0,coverage-erosion*.35)*profile*.75;
+ vec3 local=cloudCoordinates(normalize(cloudFrame*p))*length(p)*149597870.7;
+ float erosion=.65*cloudNoise(local*.13+weatherParameters.z)+.35*cloudNoise(local*.47);
+ // Erode only boundaries: dense banks remain coherent and clear gaps stay open.
+ return max(0.0,coverage-erosion*.32*(1.0-coverage))*profile*.75;
 }
 
+)"+R"(
 vec2 sphereInterval(vec3 origin, vec3 direction, float radius) {
     // Solve in planet radii and use the product of roots near the surface.
     // Subtracting two nearly equal AU distances loses metre-scale intersections.
@@ -73,6 +112,40 @@ vec2 sphereInterval(vec3 origin, vec3 direction, float radius) {
 }
 
 float depthDistance(float z){return (exp2(z*log2(1.0+20000.0*1e12))-1.0)/1e12;}
+
+vec3 auroralLight(vec3 origin,vec3 direction,float finish){
+    if(auroraAxis.w<=0.0)return vec3(0);
+    float km=149597870.7;
+    float top=min(350.0,planetRadius*km*.09),base=top*.26;
+    vec2 outer=sphereInterval(origin,direction,planetRadius+top/km);
+    vec2 inner=sphereInterval(origin,direction,planetRadius+base/km);
+    float begin=max(0.0,outer.x),end=min(finish,outer.y);
+    if(inner.x>begin)end=min(end,inner.x);
+    if(length(origin)<planetRadius+base/km)begin=max(begin,inner.y);
+    if(end<=begin)return vec3(0);
+    vec3 axis=auroraAxis.xyz,east=normalize(cross(vec3(0,0,1),axis)),north=cross(axis,east);
+    vec3 light=vec3(0);float step=(end-begin)/20.0;
+    for(int i=0;i<20;++i){
+        vec3 p=origin+direction*(begin+(float(i)+.5)*step);
+        float height=(length(p)-planetRadius)*km;
+        vec3 n=normalize(cloudFrame*p);
+        float angle=atan(dot(n,north),dot(n,east));
+        float colatitude=acos(clamp(abs(dot(n,axis)),0.0,1.0));
+        float folds=sin(angle*7.0+auroraMotion.x)*.018+sin(angle*13.0-auroraMotion.y)*.008;
+        float oval=exp(-pow((colatitude-.32-folds)/.022,2.0));
+        if(oval<.001)continue;
+        float rays=.18+.82*pow(.5+.5*sin(angle*83.0+sin(angle*17.0+auroraMotion.x)*3.0+auroraMotion.y),2.0);
+        float ripples=.55+.45*cloudNoise(n*75.0+vec3(auroraMotion.z,auroraMotion.x,0));
+        float green=exp(-pow((height/top-.38)/.16,2.0));
+        float red=exp(-pow((height/top-.75)/.21,2.0));
+        float purple=exp(-pow((height/top-.28)/.055,2.0));
+        vec3 sun=normalize(lightPosition-planetCenter-p);
+        float night=1.0-smoothstep(-.15,.18,dot(normalize(p),sun));
+        vec3 emission=vec3(.06,1.0,.20)*green+vec3(.34,.015,.05)*red+vec3(.14,.035,.30)*purple;
+        light+=emission*oval*rays*ripples*night*step*km*.004*auroraAxis.w;
+    }
+    return light;
+}
 
 vec3 oceanReflection(vec3 background,vec3 origin,vec3 direction,float z){
     if(!oceanReflections || z>=.99999)return background;
@@ -94,10 +167,7 @@ vec3 oceanReflection(vec3 background,vec3 origin,vec3 direction,float z){
     // spurious slopes and let the continuous material waves supply fine detail.
     if(dot(n,radial)<.995)n=radial;else n=normalize(mix(radial,n,.15));
     vec3 surface=waterOriginMetres+cloudFrame*(direction*distance*149597870700.0);
-    vec3 k1=vec3(.7,.1,.5)*2.0,k2=vec3(-.3,.2,.8)*5.0;
-    float a=dot(surface,k1)+waveTime,b=dot(surface,k2)-waveTime;
-    float filter1=1.0-smoothstep(.7,3.0,fwidth(a)),filter2=1.0-smoothstep(.7,3.0,fwidth(b));
-    vec3 gradient=.025*(k1*cos(a)*filter1+.4*k2*cos(b)*filter2);
+    vec3 gradient=weatherWaveGradient(surface,normalize(cloudFrame*radial),true);
     gradient=transpose(cloudFrame)*gradient;gradient-=radial*dot(gradient,radial);
     n=normalize(n-gradient);
     vec3 reflected=reflect(direction,n);
@@ -134,6 +204,7 @@ vec3 oceanReflection(vec3 background,vec3 origin,vec3 direction,float z){
     float border=min(min(hitUv.x,hitUv.y),min(1.0-hitUv.x,1.0-hitUv.y));
     confidence*=smoothstep(0.0,.055,border);
     confidence*=smoothstep(0.0,.025,dot(reflected,radial));
+    confidence*=1.0-.85*weatherOceanFoam(surface,normalize(cloudFrame*radial));
     vec2 texel=1.0/vec2(textureSize(scene,0));
     vec3 reflectedLight=texture(scene,hitUv).rgb*.5;
     reflectedLight+=(texture(scene,hitUv+texel*vec2(1,0)).rgb+texture(scene,hitUv-texel*vec2(1,0)).rgb
@@ -151,7 +222,8 @@ void main() {
     vec4 farPoint = inverseViewProjection * vec4(screenPosition, 1.0, 1.0);
     vec3 direction = normalize(farPoint.xyz - cameraPosition * farPoint.w);
     vec3 origin = cameraPosition - planetCenter;
-    vec2 shell = sphereInterval(origin, direction, planetRadius * 1.025);
+    float auroraTop=auroraAxis.w>0.0?min(350000.0/149597870700.0,planetRadius*.09):0.0;
+    vec2 shell = sphereInterval(origin, direction, max(planetRadius * 1.025,planetRadius+auroraTop));
     float start = max(shell.x, 0.0);
     float finish = shell.y;
     float opaqueDepth = texture(sceneDepth, screenPosition * 0.5 + 0.5).r;
@@ -175,7 +247,8 @@ void main() {
         fragColor = vec4(background, source.a);
         return;
     }
-    float sourceEligibility=source.a;
+    bool diskEmitter=source.a>1.5;
+    float sourceEligibility=diskEmitter?source.a-2.0:source.a;
     bool waterReceiver=source.a>=.099 && source.a<=.405 && opaqueDepth<.99999;
     if(earthClouds){
         // A shell approximation and a bounded volume share weather and optical
@@ -202,11 +275,19 @@ void main() {
         vec3 volumeLight=vec3(0);float volumeT=1.0;
         if(volumeWeight>0.0 && cloudEnd>cloudBegin){
             cloudEnd=min(cloudEnd,cloudBegin+200000.0/149597870700.0);
-            float coverage=weather(origin+direction*((cloudBegin+cloudEnd)*.5));
-            float step=(cloudEnd-cloudBegin)/24.0;
-            for(int i=0;i<24;++i){
-                if(coverage<.03)break;
+            // Interpolate coarse weather independently of the finer erosion
+            // samples, keeping coverage continuous as the ray interval changes.
+            vec4 coverageKnots;
+            for(int k=0;k<4;++k)coverageKnots[k]=weather(origin+direction*mix(cloudBegin,cloudEnd,float(k)/4.0));
+            float lastCoverage=weather(origin+direction*cloudEnd);
+            int cloudSteps=int(clamp(ceil((cloudEnd-cloudBegin)*149597870.7/.65),24.0,128.0));
+            float step=(cloudEnd-cloudBegin)/float(cloudSteps);
+            for(int i=0;i<128;++i){
+                if(i>=cloudSteps)break;
                 vec3 p=origin+direction*(cloudBegin+(float(i)+.5)*step);
+                float knot=(float(i)+.5)*4.0/float(cloudSteps);
+                int index=min(3,int(knot));
+                float coverage=mix(coverageKnots[index],index<3?coverageKnots[min(index+1,3)]:lastCoverage,fract(knot));
                 float density=cloudDensity(p,coverage);if(density<.001)continue;
                 vec3 sun=normalize(lightPosition-planetCenter-p);
                 float shadow=cloudDensity(p+sun*(3500.0/149597870700.0),coverage)*4.0;
@@ -216,7 +297,9 @@ void main() {
                     +vec3(1.0,.96,.88)*daylight*exp(-shadow)*(.55+phase);
                 float passing=exp(-density*step*149597870.7);
                 volumeLight+=volumeT*(1.0-passing)*lighting;volumeT*=passing;
-                if(volumeT<.01)break;
+                // Even one percent of an HDR disk can dominate the image.
+                // Integrate extinction through the complete interval: stopping
+                // at a fixed opacity floor reveals the last sample as a stripe.
             }
             if(sheetDistance>cloudEnd){volumeLight+=volumeT*sheetLight;volumeT*=sheetT;}
         }
@@ -274,10 +357,11 @@ void main() {
         transmittance *= segment;
     }
     if(waterReceiver)sourceEligibility=.1+(source.a-.1)*dot(transmittance,vec3(.2126,.7152,.0722));
-    fragColor = vec4(background * transmittance + scattering, sourceEligibility);
+    if(diskEmitter)sourceEligibility+=2.0;
+    fragColor = vec4(background * transmittance + scattering+auroralLight(origin,direction,finish)*sqrt(transmittance), sourceEligibility);
 }
 )";
-    program = compileShaderProgram(vertex, fragment);
+    program = compileShaderProgram(vertex, fragment.c_str());
     int linked = 0;
     glGetProgramiv(program, GL_LINK_STATUS, &linked);
     if (!linked) {
@@ -292,7 +376,7 @@ void main() {
 
 void Atmosphere::Render(const glm::mat4& viewProjection, const glm::vec3& camera,
                         const glm::vec3& center, float radius, bool logarithmicDepth,
-                        const glm::vec3& lightPosition,bool earthClouds,double seconds,const glm::mat3& rotation,bool oceanReflections,float waterSpecularScale) const {
+                        const glm::vec3& lightPosition,bool earthClouds,double seconds,const glm::mat3& rotation,bool oceanReflections,float waterSpecularScale,const PlanetWeather::State* weather) const {
     int viewport[4];
     glGetIntegerv(GL_VIEWPORT, viewport);
     if (viewport[2] <= 0 || viewport[3] <= 0)
@@ -301,7 +385,7 @@ void Atmosphere::Render(const glm::mat4& viewProjection, const glm::vec3& camera
         const auto clip=viewProjection*glm::vec4(center,1);
         if(clip.w<=0)return;
         const float projectionScale=glm::length(glm::vec3(viewProjection[0][1],viewProjection[1][1],viewProjection[2][1]));
-        const float screenRadius=radius*1.03f*projectionScale/clip.w;
+        const float screenRadius=radius*1.10f*projectionScale/clip.w;
         if(screenRadius*viewport[3]*.5f<1.0f)return;
         const auto ndc=glm::vec2(clip)/clip.w;
         if(std::abs(ndc.x)>1+screenRadius || std::abs(ndc.y)>1+screenRadius)return;
@@ -330,6 +414,7 @@ void Atmosphere::Render(const glm::mat4& viewProjection, const glm::vec3& camera
     glBindTexture(GL_TEXTURE_2D, depthTexture);
     glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, viewport[0], viewport[1], textureWidth, textureHeight);
     glUseProgram(program);
+    PlanetWeather::Upload(program,weather?*weather:PlanetWeather::Make(PlanetWeather::Profile{},seconds));
     const auto inverse = glm::inverse(viewProjection);
     glUniformMatrix4fv(glGetUniformLocation(program, "inverseViewProjection"), 1, GL_FALSE, glm::value_ptr(inverse));
     glUniformMatrix4fv(glGetUniformLocation(program, "viewProjection"), 1, GL_FALSE, glm::value_ptr(viewProjection));

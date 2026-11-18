@@ -32,17 +32,16 @@ void main(){
     for(int y=0;y<36;++y)for(int x=0;x<64;++x){
         if(x>=size.x || y>=size.y)continue;
         vec2 uv=(vec2(x,y)+.5)/vec2(size);
-        vec3 c=textureLod(scene,uv,level).rgb;
+        vec4 sample=textureLod(scene,uv,level);vec3 c=sample.rgb;
         float luminance=dot(c,vec3(.2126,.7152,.0722));
-        if(luminance>.0001){
-            logSum+=log2(max(luminance,.0001));
-            weightSum+=1.0;
-        }
+        // Dark sky participates in adaptation. Dropping these pixels makes a
+        // handful of distant points act like a frame-filling light source.
+        logSum+=log2(max(luminance,.000001));weightSum+=1.0;
         float peak=max(c.r,max(c.g,c.b));
         if(peak>highlight){highlight=peak;highlightPosition=uv;}
         if(peak>8.0)++hotCells;
         float diskDistance=length((uv-blackHoleHint.xy)*vec2(dimensions.x/dimensions.y,1));
-        if(blackHoleHint.z>0 && diskDistance<blackHoleHint.z && peak>.5 && c.g<max(c.r,c.b)*1.15){
+        if(blackHoleHint.z>0 && (sample.a>1.5 || diskDistance<blackHoleHint.z) && peak>.5 && c.g<max(c.r,c.b)*1.15){
             int bin=clamp(int(floor(log2(peak)))+16,0,31);++diskHistogram[bin];++diskSamples;
         }
     }
@@ -63,20 +62,42 @@ void main(){
         }
         highlightPosition=position;highlight=max(highlight,best);
     }
-    if(highlight>0)target=min(target,log2(.90/highlight));
+    if(highlight>0 && hotCells>=8)target=min(target,log2(.90/highlight));
+    // Resolve small disks in their own screen rectangle, at native texels.
+    // A whole-screen mip can dilute a distant disk below the histogram cutoff.
+    int localHistogram[32];for(int i=0;i<32;++i)localHistogram[i]=0;
+    int localSamples=0;
+    if(blackHoleHint.z>0){
+        vec2 radius=max(vec2(blackHoleHint.z*dimensions.y/dimensions.x,blackHoleHint.z)*1.5,2.0/dimensions);
+        vec2 lower=max(vec2(0),blackHoleHint.xy-radius),upper=min(vec2(1),blackHoleHint.xy+radius);
+        if(all(greaterThan(upper,lower)))for(int y=0;y<64;++y)for(int x=0;x<64;++x){
+            vec2 uv=mix(lower,upper,(vec2(x,y)+.5)/64.0);
+            vec4 sample=texelFetch(scene,clamp(ivec2(uv*dimensions),ivec2(0),ivec2(dimensions)-1),0);
+            float peak=max(sample.r,max(sample.g,sample.b));
+            if(sample.a>2.001 && peak>.00001){int bin=clamp(int(floor(log2(peak)))+16,0,31);++localHistogram[bin];++localSamples;}
+        }
+    }
+    if(localSamples>0){diskSamples=localSamples;for(int i=0;i<32;++i)diskHistogram[i]=localHistogram[i];}
+    float diskEv=0.0;
     // A beamed disk can span many stops. Meter its resolved emitting area,
     // allowing a small hot core to clip instead of hiding the entire disk.
-    if(diskSamples>=8){
-        int accumulated=0;float percentile=.5;
+    if(diskSamples>0){
+        int accumulated=0;float percentile=.5,median=.5;bool foundMedian=false;
         for(int i=0;i<32;++i){
             accumulated+=diskHistogram[i];
-            if(accumulated*10>=diskSamples*9){percentile=exp2(float(i)-15.5);break;}
+            if(!foundMedian && accumulated*2>=diskSamples){median=exp2(float(i)-15.5);foundMedian=true;}
+            if(accumulated*4>=diskSamples*3){percentile=exp2(float(i)-15.5);break;}
         }
         // Meter the resolved luminous object, allowing its extreme beamed
         // pixels to clip. A single hot pixel must not hide the rest of a disk.
-        target=min(log2(.22/max(average,.0001)),log2(.65/percentile));
+        // Keep most of the emitting disk luminous. The former 90th-percentile
+        // calibration let a small beamed rim underexpose the broad warm clouds.
+        diskEv=clamp(log2(.90/percentile),-18.0,8.0);
+        // Auto exposes the body of the disk brightly; HDR separately preserves
+        // its highlight detail. A tiny beamed knot may clip in Auto Exposure.
+        target=log2(2.4/max(median,.00001));
     }
-    if(stellarHint.z>0){
+    if(stellarHint.z*dimensions.y>=2.0){
         float samples[16];int count=0;
         float aspect=dimensions.x/dimensions.y;
         for(int i=0;i<16;++i){
@@ -108,10 +129,10 @@ void main(){
     }
     target=clamp(target,-18.0,8.0);
     float previous=texelFetch(history,ivec2(0),0).r;
-    float speed=target<previous?4.0:1.1;
+    float speed=target<previous?4.0:2.0;
     float adapted=initialize?target:mix(previous,target,1.0-exp(-realSeconds*speed));
     if(abs(adapted-target)<.001)adapted=target;
-    state=vec4(adapted,target,highlight,average);
+    state=vec4(adapted,target,diskEv,average);
 })";
   program = compileShaderProgram(vertex, fragment);
   int linked = 0;

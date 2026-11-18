@@ -8,6 +8,7 @@ public:
   void Update(unsigned int scene, const glm::vec3 &stellarHint,
               float realSeconds,const glm::vec3& blackHoleHint=glm::vec3(-1,-1,0)) const;
   void Reset() const { valid = false; }
+  // RGBA = adapted camera EV, target camera EV, independent disk EV, mean light.
   unsigned int Texture() const { return textures[current]; }
   void Release();
 

@@ -30,7 +30,7 @@ struct Galaxy {
         return {major,normal,glm::normalize(glm::cross(major,normal))};
     }
 };
-inline const std::array<Galaxy,5> Catalog{{
+inline const std::array<Galaxy,6> Catalog{{
     {"Andromeda (M31)","M31 NGC224 UGC454 Andromeda",10.6847083333,41.26875,2540000,199.53,70.79,35,3.44,0},
     {"Triangulum (M33)","M33 NGC598 Triangulum",23.4620690622,30.6601751120,2730000,60.26,35.48,22,5.72,0},
     {"Large Magellanic Cloud", "LMC Large Magellanic Cloud",80.8941666667,-69.7561111111,163000,322.82666,274.77,170,.4,3},
@@ -38,7 +38,8 @@ inline const std::array<Galaxy,5> Catalog{{
     // Full 120 kly outer ring (NASA/Hubble); SIMBAD D25 is the smaller bright
     // optical extent. The name, J2000 centre and V magnitude are catalogued.
     {"Hoag's Object", "Hoag Hoags Object Haog Haogs Object PGC54559 PRCD51",229.31002860781,21.58551562657,600000000,
-        .687549352,.637771,0,15.1,4}
+        .687549352,.637771,0,15.1,4},
+    {"M32 (NGC 221)", "M32 NGC221 UGC452 PGC2555 Andromeda companion",10.67427,40.86517,2490000,8.7,6.5,179,8.1,5}
 }};
 inline bool IsCatalogued(int id){return id>=firstId && id<firstId+static_cast<int>(Catalog.size());}
 }

@@ -66,6 +66,7 @@ struct Attribute {
   GLuint buffer = 0;
   GLint components = 4;
   GLsizei stride = 0;
+  GLuint divisor = 0;
   size_t offset = 0;
   bool enabled = false;
 };
@@ -271,7 +272,7 @@ public:
          boundRenderbuffer = 0, boundProgram = 0;
   UINT activeUnit = 0, rtvCursor = 0, dsvCursor = 0, srvCursor = 0,
        samplerCursor = 0;
-  GLenum error = GL_NO_ERROR, readBuffer = GL_BACK, polygon = GL_FILL;
+  GLenum error = GL_NO_ERROR, readBuffer = GL_BACK, polygon = GL_FILL, depthFunction = GL_LESS;
   GLint pack = 4, unpack = 4;
   GLfloat pointSize = 1;
   std::array<float, 4> clearColor{0, 0, 0, 0};
@@ -962,6 +963,9 @@ D3D12_GPU_VIRTUAL_ADDRESS SceneBridge::Constants(const ShaderStage &stage,
                                                  const Program &program) {
   auto memory = Upload((stage.constants + 255) & ~255u);
   std::memset(memory.first, 0, (stage.constants + 255) & ~255u);
+  const auto guide=program.values.find("guideOverlay");
+  int guideOverlay=0;
+  if(guide!=program.values.end() && guide->second.bytes>=sizeof(guideOverlay))std::memcpy(&guideOverlay,guide->second.data.data(),sizeof(guideOverlay));
   for (const auto &variable : stage.uniforms) {
     const auto found = program.values.find(variable.name);
     if (found == program.values.end())
@@ -969,7 +973,7 @@ D3D12_GPU_VIRTUAL_ADDRESS SceneBridge::Constants(const ShaderStage &stage,
     auto value = found->second;
     // Jitter the actual projection/ray inverse, never the finished image. GL
     // images use bottom-up Y; NGX receives top-down pixel jitter below.
-    if (dlssFrame && viewport[2] == static_cast<GLint>(dlss.InputSize().x) &&
+    if (dlssFrame && !guideOverlay && viewport[2] == static_cast<GLint>(dlss.InputSize().x) &&
         viewport[3] == static_cast<GLint>(dlss.InputSize().y) &&
         value.bytes == sizeof(glm::mat4) && Color().layers == 1) {
       const bool forward = variable.name == "viewProjection" || variable.name == "vp" || variable.name == "projection";
@@ -1118,13 +1122,15 @@ Com<ID3D12PipelineState> SceneBridge::Pipeline(Program &program, GLenum mode) {
   std::ostringstream key;
   key << mode << '/' << Color().format << '/' << (Depth() != nullptr) << '/'
       << depthTest << depthMask << blend << cull << polygon << sourceRgb
-      << destRgb << sourceAlpha << destAlpha;
+      << destRgb << sourceAlpha << destAlpha << '/' << depthFunction;
   auto &vao = arrays[boundVao];
   auto inputs = program.inputs;
   for (auto &input : inputs) {
     const auto &attribute = vao.attributes[input.InputSlot];
     input.AlignedByteOffset = static_cast<UINT>(attribute.offset);
-    key << '/' << attribute.offset;
+    input.InputSlotClass=attribute.divisor?D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA:D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
+    input.InstanceDataStepRate=attribute.divisor;
+    key << '/' << attribute.offset << ':' << attribute.divisor;
   }
   const auto existing = program.pipelines.find(key.str());
   if (existing != program.pipelines.end())
@@ -1146,7 +1152,7 @@ Com<ID3D12PipelineState> SceneBridge::Pipeline(Program &program, GLenum mode) {
   p.DepthStencilState.DepthEnable = depthTest && Depth() != nullptr;
   p.DepthStencilState.DepthWriteMask =
       depthMask ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
-  p.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+  p.DepthStencilState.DepthFunc = static_cast<D3D12_COMPARISON_FUNC>(depthFunction-GL_NEVER+1);
   p.DSVFormat = Depth() ? DXGI_FORMAT_D32_FLOAT : DXGI_FORMAT_UNKNOWN;
   auto &b = p.BlendState.RenderTarget[0];
   b.BlendEnable = blend;
@@ -1591,6 +1597,9 @@ void APIENTRY dglVertexAttribPointer(GLuint index, GLint components,
   a.stride = stride;
   a.offset = reinterpret_cast<size_t>(offset);
 }
+void APIENTRY dglVertexAttribDivisor(GLuint index,GLuint divisor) {
+  C().arrays[C().boundVao].attributes.at(index).divisor=divisor;
+}
 GLuint APIENTRY dglCreateShader(GLenum type) {
   const auto id = C().nextId++;
   C().shaders[id].type = type;
@@ -1849,6 +1858,10 @@ GLboolean APIENTRY dglIsEnabled(GLenum capability) {
                                          : false;
 }
 void APIENTRY dglDepthMask(GLboolean value) { C().depthMask = value != 0; }
+void APIENTRY dglDepthFunc(GLenum value) {
+  if(value<GL_NEVER || value>GL_ALWAYS)throw std::runtime_error("Unsupported scene depth comparison");
+  C().depthFunction=value;
+}
 void APIENTRY dglBlendFunc(GLenum source, GLenum destination) {
   C().sourceRgb = C().sourceAlpha = source;
   C().destRgb = C().destAlpha = destination;
@@ -1901,13 +1914,23 @@ void APIENTRY dglGetIntegerv(GLenum query, GLint *value) {
     *value = c.boundVao;
     break;
   case GL_FRAMEBUFFER_BINDING:
+  case GL_READ_FRAMEBUFFER_BINDING:
     *value = c.boundFbo;
+    break;
+  case GL_RENDERBUFFER_BINDING:
+    *value=c.boundRenderbuffer;
+    break;
+  case GL_DEPTH_FUNC:
+    *value=c.depthFunction;
     break;
   case GL_POLYGON_MODE:
     value[0] = value[1] = c.polygon;
     break;
   case GL_TEXTURE_BINDING_2D:
     *value = c.units[c.activeUnit].image;
+    break;
+  case GL_TEXTURE_BINDING_CUBE_MAP:
+    *value=c.units[c.activeUnit].cube;
     break;
   case GL_READ_BUFFER:
     *value = c.readBuffer;
@@ -1965,6 +1988,7 @@ void InitializeSceneBridge(void *window) {
   INSTALL(glDeleteVertexArrays);
   INSTALL(glEnableVertexAttribArray);
   INSTALL(glVertexAttribPointer);
+  INSTALL(glVertexAttribDivisor);
   INSTALL(glCreateShader);
   INSTALL(glShaderSource);
   INSTALL(glCompileShader);
@@ -2029,6 +2053,7 @@ void InitializeSceneBridge(void *window) {
   INSTALL(glGetIntegerv);
   INSTALL(glGetBooleanv);
   INSTALL(glGetFloatv);
+  INSTALL(glDepthFunc);
   INSTALL(glGetError);
 #undef INSTALL
   std::cout

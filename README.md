@@ -21,6 +21,20 @@ Galaxy spirals now use genuinely translucent gaps between arms and softer outer 
 
 ![Hoag's Object — native DX12 engine capture, NASA/Hubble image](assets/screenshots/hoags-object.png)
 
+Star generation now streams repeatable, density-weighted spatial cells throughout all existing galaxies. The old dense Solar-neighbourhood sphere is removed; the camera loads local stars according to magnitude and fades them before cell boundaries. Stars and galaxies have separate magnitude controls. **M32 / NGC 221**, Andromeda's compact companion, is available through F3; the distant procedural galaxies are searchable as **Field galaxy 1–256**. [Generation, controls, validation and limits](docs/SEEDED_STAR_STREAMING.md).
+
+Optical flares now belong to the nearest system's visible emitters, including separate centres for multiple stars. Navigation guides no longer cover a subpixel Sun or cause its flare to jump to a distant catalogue star. [Flare ownership, overlay separation and validation](docs/SYSTEM_FLARE_OWNERSHIP.md).
+
+Approaching Andromeda now uses bounded, cached star lookups instead of repeatedly traversing distant catalogue populations. Star counts and rendering quality are retained. [Performance measurements and correctness checks](docs/ANDROMEDA_PERFORMANCE.md).
+
+Andromeda and the other external galaxies now blend from their distant images into cached spatial light volumes as you approach. Diffuse galactic light remains visible inside the disk, with independent caches for nearby companions and lighter previews during fast travel. [Transition and validation details](docs/GALAXY_INTERIOR_TRANSITION.md).
+
+Planet weather now includes circulation-driven cloud banks and fronts, seeded ocean cyclones, wind-driven waves and matching ocean reflections. Eligible magnetic planets have animated polar auroras. Gargantua's HDR disk response and cloud sampling are improved, and paused views refine to native resolution. Panurge is the outer neutron-star companion, beyond Miller's orbit. [Weather, auroras, exposure and model assumptions](docs/PLANET_WEATHER_AND_ACCRETION.md).
+
+Endurance now has twelve beveled equipment modules, radiator panels, open connecting braces, engine pods and a docking spine, modelled from the supplied Sketchfab preview. [Exterior model notes](docs/ENDURANCE_MODEL.md).
+
+Distant Gargantua now uses consistent HDR disk/glow grading and native disk metering. Auto Exposure keeps the disk bright and recovers after turning away. [Distant rendering and exposure recovery](docs/DISTANT_GARGANTUA_EXPOSURE.md).
+
 ## Startup laboratories
 
 The app opens at a main menu. Choose **Planetorium** for either **Solar System - 1:1 scale** or the **Gargantua system**. Choose **Quantum Simulation** for 38 selectable examples: infinite-well states and superpositions, harmonic-oscillator states, coherent and squeezed states, free packets, 3D hydrogen orbitals, spin states, Bell states, and numerical tunneling/scattering experiments.
@@ -253,3 +267,9 @@ The renderer now distinguishes captured, escaped, emitting and unfinished rays. 
 ![Corrected Gargantua shadow](assets/screenshots/gargantua-capture-fixed.png)
 
 [Every correction, its reason, equations, validation and remaining approximations](docs/KERR_CAPTURE_FIX_2026-11-12.md).
+
+## Connected wormholes and explorable interiors
+
+The Saturn and Gargantua wormholes now connect in both directions. Find either mouth in the object finder, use **Go to selection**, and fly into its throat. The destination view and camera transport share the same orientation; speed and world time carry through. [Connection details](docs/PAIRED_WORMHOLES.md).
+
+All black-hole horizons can be entered. Gargantua reveals an original tesseract continuously as you descend, preserving the camera and allowing free flight or **L** landing on its decks; **Home** returns outside. Living worlds receive three tree forms and instanced sprite grass, and oceans have wind-driven crests, fine ripples and whitecaps. [Controls, appearance and validation](docs/BLACK_HOLE_INTERIORS_AND_NATURE.md).

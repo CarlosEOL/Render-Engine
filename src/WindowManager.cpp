@@ -16,6 +16,9 @@
 #include "ObjectLoader.h"
 #include "Astronomy.h"
 #include "CameraMotion.h"
+#include "WormholeTransit.h"
+#include "WormholePhysics.h"
+#include "TesseractSpace.h"
 #ifdef _WIN32
 #include <GLFW/glfw3native.h>
 #endif
@@ -392,10 +395,11 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
             manager.starSystem.ToggleFollow(manager.simulationTime);
             manager.ShowStatusToast(manager.starSystem.IsFollowing()?"Position follow on":"Position follow off");
         }
-        else if (key==GLFW_KEY_HOME) manager.starSystem.Overview(cameraFront,cameraUp);
+        else if (key==GLFW_KEY_HOME) {manager.starSystem.Overview(cameraFront,cameraUp);manager.blackHoleJourney.Reset();manager.observerGravity=manager.horizonReached=manager.kerrObserverValid=false;}
         else if (key==GLFW_KEY_LEFT_BRACKET) { manager.starSystem.speedAu=glm::max(FlightUnits::minimumAu,manager.starSystem.speedAu*.5); manager.ShowSpeedToast(manager.starSystem.speedAu,true); }
         else if (key==GLFW_KEY_RIGHT_BRACKET) { manager.starSystem.speedAu=glm::min(FlightUnits::maximumAu,manager.starSystem.speedAu*2); manager.ShowSpeedToast(manager.starSystem.speedAu,true); }
         else if (key==GLFW_KEY_N) { /* Catalogued solar surfaces retain their seed. */ }
+        else if (key==GLFW_KEY_H && manager.starSystem.IsCore())handled=false;
         else if (key==GLFW_KEY_H || key==GLFW_KEY_B || key==GLFW_KEY_R) return;
         else handled = false;
         if (handled) { manager.SyncCameraAngles(); manager.RefreshPanel(); return; }
@@ -494,14 +498,17 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
         manager.cameraSpeed = glm::max(static_cast<float>(1.0/Astronomy::metresPerAu),target.radius*.25f);
         manager.ShowSpeedToast(manager.cameraSpeed, false);
     } else if (key == GLFW_KEY_H && manager.blackHoleReady) {
+        manager.interiorDrift=false;
+        manager.interiorLanding=manager.interiorGrounded=false;
+        if(manager.inStarSystem)manager.starSystem.SelectPlanet(-1);
         manager.followSelected = false;
-        manager.showBlackHole = true;
+        manager.showBlackHole = !manager.inStarSystem;
         manager.landed = false;
         manager.followPlanet = false;
         manager.followSpacecraft = false;
         manager.observerGravity = !manager.observerGravity;
         manager.horizonReached = false;
-        manager.observer = {glm::dvec3(cameraPos), glm::dvec3(0.0)};
+        manager.observer = {manager.inStarSystem?manager.starSystem.camera:cameraPos, glm::dvec3(0.0)};
         manager.kerrObserverValid=false;manager.pendingObserverProper=0;
         cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
     } else if (key == GLFW_KEY_F6 && manager.blackHoleReady) {
@@ -544,6 +551,8 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
 }
 
 void WindowManager::ResetView() {
+    blackHoleJourney.Reset();kerrObserverValid=false;pendingObserverProper=0;
+    interiorLanding=interiorGrounded=interiorDrift=false;interiorVerticalSpeed=0;interiorVelocityAu={0,0,0};
     interiorVehicle=0;
     followSelected = false;
     landed = false;
@@ -627,6 +636,15 @@ void WindowManager::ApplyVisionProfile(int profile) {
 }
 
 void WindowManager::ToggleLanding() {
+    if(!inStarSystem && showBlackHole && blackHoleJourney.inside){
+        interiorLanding=!interiorLanding;interiorGrounded=false;
+        if(interiorLanding){
+            const auto axis=InterstellarWorlds::Orientation()[1];
+            interiorVerticalSpeed=observerGravity?glm::dot(observer.velocity,axis)/TesseractSpace::Scale(BlackHole::HorizonRadius()):0;
+            observerGravity=false;interiorDrift=false;pendingObserverProper=0;
+        }
+        ShowStatusToast(interiorLanding?"Tesseract landing on":"Tesseract free camera");return;
+    }
     followSelected = false;
     landed = !landed;
     observerGravity = false;
@@ -663,7 +681,19 @@ void WindowManager::ToggleLanding() {
 }
 
 void WindowManager::UpdateObserver(double previousTime, float realSeconds) {
-    if (landed) {
+    const bool core=inStarSystem && starSystem.IsCore();
+    if(inStarSystem && !core)return;
+    if(!core && blackHoleJourney.interiorBlend>=1 && observerGravity){
+        // Continue the incoming velocity in the same world coordinates beyond
+        // the physical model. Never replace the observer pose with a scene pose.
+        const double seconds=std::max(0.0,static_cast<double>(realSeconds))*timeRates[timeRateIndex];
+        if(!interiorDrift){interiorVelocityAu=kerrObserverValid?observer.velocity:glm::dvec3(0);interiorDrift=true;}
+        const auto acceleration=-InterstellarWorlds::Orientation()[1]*TesseractSpace::Scale(BlackHole::HorizonRadius())*.8;
+        cameraPos+=interiorVelocityAu*seconds+acceleration*(.5*seconds*seconds);
+        interiorVelocityAu+=acceleration*seconds;observer.position=cameraPos;observer.velocity=interiorVelocityAu;
+        localTime+=seconds;pendingObserverProper=0;return;
+    }
+    if (landed && !core) {
         const auto center = BlackHole::PlanetPosition(simulationTime, landedPlanet);
         const auto rotation = BlackHole::PlanetRotation(simulationTime,landedPlanet)
             * glm::transpose(BlackHole::PlanetRotation(previousTime,landedPlanet));
@@ -674,14 +704,16 @@ void WindowManager::UpdateObserver(double previousTime, float realSeconds) {
     }
     if (!observerGravity)
         return;
-    const auto fromDisk=InterstellarWorlds::Orientation(),toDisk=glm::transpose(fromDisk);
-    const double rs=BlackHole::HorizonRadius(),spin=blackHole.Spin();
-    if(!kerrObserverValid || observerSpin!=spin){
-        if(kerrObserverValid){
+    const auto preset=GalacticCores::Get(core?activeSystemTarget:GalacticCores::firstId);
+    const auto fromDisk=core && preset.hotFlow?GalacticCores::HotFlowFrame():InterstellarWorlds::Orientation(),toDisk=glm::transpose(fromDisk);
+    const double rs=core?preset.RadiusAu():BlackHole::HorizonRadius(),spin=core?preset.spin:blackHole.Spin();
+    const int source=core?activeSystemTarget:0;auto& position=core?starSystem.camera:cameraPos;
+    if(!kerrObserverValid || observerSpin!=spin || observerSourceId!=source){
+        if(kerrObserverValid && observerSourceId==source){
             const auto beta=KerrSpacetime::ObserverBeta(kerrObserver,rs,observerSpin);
-            kerrObserver=KerrSpacetime::MakeObserver(toDisk*cameraPos,rs,spin,beta);
-        }else kerrObserver=KerrSpacetime::MakeStationaryObserver(toDisk*cameraPos,rs,spin);
-        kerrObserverValid=true;observerSpin=spin;
+            kerrObserver=KerrSpacetime::MakeObserver(toDisk*position,rs,spin,beta);
+        }else kerrObserver=KerrSpacetime::MakeStationaryObserver(toDisk*position,rs,spin);
+        kerrObserverValid=true;observerSpin=spin;observerSourceId=source;
     }
     pendingObserverProper+=std::max(0.0,static_cast<double>(realSeconds))*timeRates[timeRateIndex];
     const double oldCoordinate=kerrObserver.coordinateSeconds;
@@ -690,21 +722,101 @@ void WindowManager::UpdateObserver(double previousTime, float realSeconds) {
     for(int step=0;step<512 && pendingObserverProper>0;++step){
         const double radius=KerrSpacetime::Radius(kerrObserver.state.position,rs,spin);
         if(radius<=horizon)horizonReached=true;
+        if(source==0 && radius<=horizon*.55)break;
         if(radius<=innerLimit){
             observerGravity=false;pendingObserverProper=0;
             simulationPlaying=false;
-            ShowStatusToast("Modeled interior limit reached",true);break;
+            ShowStatusToast(source==0?"Inside Gargantua":"Inside black hole - Home to return",true);break;
         }
         const double interval=std::min(pendingObserverProper,std::max(.001,.002*radius/Astronomy::lightSpeedAu));
         KerrSpacetime::AdvanceObserver(kerrObserver,rs,spin,interval,Astronomy::lightSpeedAu);
         pendingObserverProper-=interval;localTime+=interval;
     }
-    cameraPos=fromDisk*kerrObserver.state.position;
+    position=fromDisk*kerrObserver.state.position;
     if(KerrSpacetime::Radius(kerrObserver.state.position,rs,spin)<=horizon)horizonReached=true;
-    observer.position=cameraPos;
+    observer.position=position;
     observer.velocity=fromDisk*KerrSpacetime::ObserverCoordinateVelocity(kerrObserver,rs,spin)*Astronomy::lightSpeedAu;
     cameraClockRate=1/KerrSpacetime::ObserverTimeComponent(kerrObserver,rs,spin);
     if(simulationPlaying)simulationTime=previousTime+kerrObserver.coordinateSeconds-oldCoordinate;
+}
+
+void WindowManager::UpdateBlackHoleJourney(const glm::dvec3& previousCamera,float realSeconds){
+    const bool core=inStarSystem && starSystem.IsCore();
+    if(quantumMode || (!core && (inStarSystem || !showBlackHole))){
+        blackHoleJourney.Reset();interiorLanding=interiorGrounded=interiorDrift=false;interiorVerticalSpeed=0;return;
+    }
+    const auto preset=GalacticCores::Get(core?activeSystemTarget:GalacticCores::firstId);
+    const auto frame=core && preset.hotFlow?GalacticCores::HotFlowFrame():InterstellarWorlds::Orientation();
+    const auto inverse=glm::transpose(frame);
+    const double rs=core?preset.RadiusAu():BlackHole::HorizonRadius(),spin=core?preset.spin:blackHole.Spin();
+    const double horizon=KerrSpacetime::Horizon(rs,spin);
+    auto& position=core?starSystem.camera:cameraPos;
+    const auto metricRadius=[&](const glm::dvec3& p){return KerrSpacetime::Radius(inverse*p,rs,spin);};
+    if(!observerGravity && !horizonReached && !blackHoleJourney.atLimit){
+        const auto movement=position-previousCamera;const double square=glm::dot(movement,movement);
+        const double closest=square>0?glm::clamp(-glm::dot(previousCamera,movement)/square,0.0,1.0):1.0;
+        if(metricRadius(position)<horizon || metricRadius(previousCamera+movement*closest)<horizon){
+            if(core && metricRadius(previousCamera)>horizon && square>0){
+                double low=0,high=closest;
+                for(int i=0;i<40;++i){const double middle=(low+high)*.5;if(metricRadius(previousCamera+movement*middle)>horizon)low=middle;else high=middle;}
+                position=previousCamera+movement*high;
+            }
+            if(core && glm::length(position)<rs*.01)position=frame*glm::dvec3(horizon*.98,0,0);
+            if(core)observerGravity=true;
+            horizonReached=true;kerrObserverValid=false;pendingObserverProper=0;
+            landed=followPlanet=followSpacecraft=followSelected=false;
+            ShowStatusToast("Event horizon crossed");
+        }
+    }
+    blackHoleJourney.Advance(core?activeSystemTarget:0,metricRadius(position)<=horizon*1.00001,realSeconds,metricRadius(position)/horizon);
+    const double innerLimit=std::max(rs*.03,rs*.5*(1-std::sqrt(1-spin*spin))*1.05);
+    if(core && blackHoleJourney.inside && metricRadius(position)<=innerLimit*1.001)blackHoleJourney.atLimit=true;
+    if(!blackHoleJourney.inside){interiorLanding=interiorGrounded=interiorDrift=false;interiorVerticalSpeed=0;}
+}
+
+void WindowManager::MoveInterior(const glm::dvec3& displacement,float realSeconds){
+    const auto frame=InterstellarWorlds::Orientation();
+    const double scale=TesseractSpace::Scale(BlackHole::HorizonRadius());
+    const auto before=glm::transpose(frame)*cameraPos/scale;
+    cameraPos+=displacement;
+    if(!interiorLanding || blackHoleJourney.interiorBlend<1)return;
+    const double seconds=std::max(0.0,static_cast<double>(realSeconds));
+    const double velocity=std::max(-20.0,interiorVerticalSpeed-9.81*seconds);
+    cameraPos+=frame[1]*(scale*(interiorVerticalSpeed+velocity)*.5*seconds);
+    interiorVerticalSpeed=velocity;
+    auto after=glm::transpose(frame)*cameraPos/scale;const double height=after.y;
+    interiorGrounded=TesseractSpace::Land(before,after);
+    if(interiorGrounded){cameraPos+=frame[1]*((after.y-height)*scale);interiorVerticalSpeed=0;}
+}
+
+void WindowManager::UpdateWormholeTransit(const glm::dvec3& previousCamera,double previousTime,float realSeconds){
+    wormholeCooldown=std::max(0.f,wormholeCooldown-realSeconds);
+    const bool fromSaturn=inStarSystem && starSystem.IsSolarSystem();
+    const bool fromGargantua=!inStarSystem && showBlackHole;
+    if(wormholeCooldown>0 || quantumMode || interiorVehicle || observerGravity || blackHoleJourney.inside
+        || (!fromSaturn && !fromGargantua))return;
+    const auto saturnBefore=StarSystem::SaturnWormholePosition(previousTime),saturnNow=StarSystem::SaturnWormholePosition(simulationTime);
+    const auto gargantuaBefore=WormholePhysics::GargantuaPosition(previousTime),gargantuaNow=WormholePhysics::GargantuaPosition(simulationTime);
+    const auto rotation=fromSaturn?WormholePhysics::SaturnToGargantuaRotation():glm::transpose(WormholePhysics::SaturnToGargantuaRotation());
+    const auto crossing=WormholeTransit::Sweep(previousCamera,fromSaturn?starSystem.camera:cameraPos,
+        fromSaturn?saturnBefore:gargantuaBefore,fromSaturn?saturnNow:gargantuaNow,
+        fromSaturn?gargantuaNow:saturnNow,rotation,WormholePhysics::ThroatRadiusAu());
+    if(!crossing.entered)return;
+    const double speed=fromSaturn?starSystem.speedAu:cameraSpeed;
+    const auto front=glm::normalize(glm::vec3(rotation*glm::dvec3(cameraFront))),up=glm::normalize(glm::vec3(rotation*glm::dvec3(cameraUp)));
+    blackHoleJourney.Reset();observerGravity=horizonReached=kerrObserverValid=false;pendingObserverProper=0;
+    landed=followPlanet=followSpacecraft=followSelected=false;interiorVehicle=0;
+    if(fromSaturn){
+        inStarSystem=false;showBlackHole=true;pendingSystemTarget=0;cameraPos=crossing.position;cameraSpeed=speed;
+        SelectCatalogue(0);selectedTarget=12;blackHole.Update(simulationTime);
+        scenePanel.SetCurrentSystemName("Gargantua system");
+    }else{
+        SelectCatalogue(-2);EnterSelectedSystem(false);starSystem.camera=crossing.position;starSystem.speedAu=speed;
+        scenePanel.SetCurrentSystemName("Sun / Solar System");
+    }
+    cameraFront=front;cameraUp=up;wormholeCooldown=1.5f;navigationSelectionValid=false;
+    sceneCacheValid=false;blackHole.InvalidateSky();SyncCameraAngles();RefreshPanel();UpdateTitle();
+    ShowStatusToast(fromSaturn?"Wormhole transit: Gargantua system":"Wormhole transit: Saturn / Solar System");
 }
 
 void WindowManager::SyncCameraAngles() {
@@ -856,7 +968,7 @@ void WindowManager::SelectCatalogue(int id) {
     navigationSelectionValid=false;
     pendingSystemTarget=id;
     if (id==0) {
-        scenePanel.SetPlanets({"Gargantua","Miller's planet","Mann's planet","Edmunds' planet","Orbiting star 1","Orbiting star 2","Orbiting star 3","Orbiting star 4","Orbiting star 5","Spacecraft"});
+        scenePanel.SetPlanets({"Gargantua","Miller's planet","Mann's planet","Edmunds' planet","Orbiting star 1","Orbiting star 2","Orbiting star 3","Orbiting star 4","Panurge (neutron star)","Spacecraft"});
         selectedTarget=0;
     } else {
         if(GalacticCores::IsCore(id))previewSystem.LoadCore(id);
@@ -897,7 +1009,7 @@ void WindowManager::UpdateNearbySystem(){
     // Sun and the authored fictional Gargantua preset have separate local
     // scenes at the same legacy origin. Enter the Sun explicitly from there.
     if(!inStarSystem && nearest==-2)return;
-    const auto position=nearest==-2?glm::dvec3(0):blackHole.Catalogue().Positions()[Universe::StarIndex(nearest)];
+    const auto position=nearest==-2?glm::dvec3(0):blackHole.Catalogue().Position(Universe::StarIndex(nearest));
     const double distance=glm::length((oldAnchor-position)+oldLocal);
     const bool arrival=distance<3;
     const bool rebase=inStarSystem && !starSystem.InDetailRange() && distance<glm::length(starSystem.camera)*.9;
@@ -925,7 +1037,7 @@ void WindowManager::UpdateNavigationAnchor(){
         if(nearest>=0){navigationLocalAu=starSystem.Position(nearest,simulationTime);navigationAnchorName=starSystem.Planets()[nearest].name;}
     }else{
         const auto world=inStarSystem?systemOriginAu+starSystem.camera:cameraPos;const int id=blackHole.NearestStar(world);
-        navigationAnchorAu=id==-2?glm::dvec3(0):blackHole.Catalogue().Positions()[Universe::StarIndex(id)];navigationLocalAu=glm::dvec3(0);navigationAnchorName=id==-2?"Sun":Universe::StarName(Universe::StarIndex(id));
+        navigationAnchorAu=id==-2?glm::dvec3(0):blackHole.Catalogue().Position(Universe::StarIndex(id));navigationLocalAu=glm::dvec3(0);navigationAnchorName=id==-2?"Sun":Universe::StarName(Universe::StarIndex(id));
     }
 }
 NavigationEntry WindowManager::CurrentNavigationObject(){
@@ -956,6 +1068,7 @@ void WindowManager::ActivateNavigation(NavigationPanel::Action action,const Navi
     if(action==NavigationPanel::Action::Go){GoToNavigation(entry);navigationPanel.Hide();}
 }
 void WindowManager::GoToNavigation(const NavigationEntry& entry){
+    blackHoleJourney.Reset();horizonReached=observerGravity=false;kerrObserverValid=false;
     using Kind=NavigationEntry::Kind;
     if(entry.kind==Kind::Universe || entry.kind==Kind::Group){navigationScope=entry;return;}
     if(entry.kind==Kind::Nebula){
@@ -971,6 +1084,11 @@ void WindowManager::GoToNavigation(const NavigationEntry& entry){
             StartSolarSystem();const auto offset=-galaxy.Direction()*galaxy.Radius()*3.5;
             starSystem.camera=galaxy.Center()+offset;cameraFront=glm::normalize(glm::vec3(-offset));cameraUp=glm::vec3(galaxy.Frame()[0]);
             fieldOfView=55;starSystem.speedAu=galaxy.Radius()*.2;blackHole.InvalidateSky();
+        }else if(entry.system>=10000){
+            const auto galaxy=Universe::GalaxyAt(entry.system-10000);StartSolarSystem();
+            const auto offset=galaxy.rotation*glm::dvec3(0,galaxy.axesAu.x*1.7,galaxy.axesAu.x*1.7);
+            starSystem.camera=galaxy.centerAu+offset;cameraFront=glm::normalize(glm::vec3(-offset));cameraUp=glm::vec3(galaxy.rotation[2]);
+            fieldOfView=55;starSystem.speedAu=galaxy.axesAu.x*.2;blackHole.InvalidateSky();
         }else{
             SelectCatalogue(GalacticCores::firstId+entry.system);EnterSelectedSystem(true);const auto galaxy=Universe::GalaxyAt(entry.system);starSystem.camera=galaxy.rotation*glm::dvec3(0,galaxy.axesAu.x*1.7,galaxy.axesAu.x*1.7);cameraFront=glm::normalize(glm::vec3(-starSystem.camera));cameraUp=glm::vec3(galaxy.rotation[2]);starSystem.speedAu=galaxy.axesAu.x*.2;
         }
@@ -1018,7 +1136,7 @@ void WindowManager::RefreshObjectEditor(){
 
 void WindowManager::RefreshPanel() {
     RefreshObjectEditor();
-    scenePanel.SetMagnitude(EffectiveMagnitudeLimit(),limitingMagnitude);
+    scenePanel.SetMagnitude(EffectiveMagnitudeLimit(),limitingMagnitude,CameraZoom::MagnitudeLimit(galaxyLimitingMagnitude,CameraMagnification()));
     if (mainMenu.Visible()) return;
     std::ostringstream playback;
     if(quantumMode)playback<<"STATE t = "<<std::fixed<<std::setprecision(3)<<quantum.Time()<<"\r\n"<<(simulationPlaying?"PLAYING":"PAUSED")<<"  |  "<<quantumRates[quantumRateIndex]<<"x";
@@ -1120,6 +1238,7 @@ void WindowManager::HandleInterfaceCommand(int id,int notification) {
         }
         if (notification==LBN_DBLCLK) HandleInterfaceCommand(2104,0);
     } else if(id>=2110 && id<=2112){SetMagnitudeLimit(id==2111?7.f:limitingMagnitude+(id==2110?-.2f:.2f));
+    } else if(id>=2114 && id<=2116){SetGalaxyMagnitudeLimit(id==2115?14.f:galaxyLimitingMagnitude+(id==2114?-.2f:.2f));
     } else if(id==2107){
         KeyCallback(window,GLFW_KEY_SPACE,0,GLFW_PRESS,0);RefreshPanel();UpdateTitle();
         // The native button takes focus on click; return it before the next
@@ -1145,6 +1264,7 @@ void WindowManager::UpdateTitle() {
     const auto seconds = static_cast<std::uint64_t>(localTime);
     const auto worldSeconds = static_cast<std::uint64_t>(simulationTime);
     title << "Render-Engine | " << (inStarSystem ? starSystem.Host().name : showBlackHole ? "Gargantua-inspired" : "Model")
+          << (blackHoleJourney.tesseract?" | Tesseract":"")
           << " | " << CameraOptics::Name(visionProfile)
           << (hdrMode ? " | HDR" : optics.IsAutoExposure()?" | Pure exposure (auto)":" | Pure exposure (manual)")
           << ((!hdrMode && optics.IsAutoExposure())?" | EV bias ":" | EV ") << std::showpos << exposureEv << std::noshowpos
@@ -1153,7 +1273,7 @@ void WindowManager::UpdateTitle() {
           << (followSelected ? (followSelectedRotation?" | Following rotation":" | Following position") : "")
           << (landed ? " | Surface free-cam" : "")
           << (observerGravity ? " | Falling free-cam" : "")
-          << (horizonReached ? (KerrSpacetime::Radius(glm::transpose(InterstellarWorlds::Orientation())*cameraPos,BlackHole::HorizonRadius(),blackHole.Spin()) < KerrSpacetime::Horizon(BlackHole::HorizonRadius(),blackHole.Spin())
+          << (horizonReached ? (blackHoleJourney.inside
               ? " | Inside event horizon" : " | Horizon crossed") : "")
           << (photonView ? " | Photon samples: fly aside to inspect" : "")
           << (showBlackHole && selectedTarget >= 0 ? " | Selected " + blackHole.ResolveTarget(selectedTarget, simulationTime).name + " [G]" : "")
@@ -1406,6 +1526,29 @@ void WindowManager::ProcessCamera(GLFWwindow* window, const float& deltaTime) {
         return;
     auto& manager = *static_cast<WindowManager*>(glfwGetWindowUserPointer(window));
     double speed = manager.cameraSpeed * deltaTime;
+    if(!manager.inStarSystem && manager.showBlackHole && manager.blackHoleJourney.inside){
+        const auto axis=glm::vec3(InterstellarWorlds::Orientation()[1]);
+        auto forward=cameraFront;
+        if(manager.interiorLanding && manager.blackHoleJourney.interiorBlend>=1){
+            forward-=axis*glm::dot(forward,axis);
+            if(glm::length(forward)<.001f)forward=glm::vec3(InterstellarWorlds::Orientation()[2]);
+            forward=glm::normalize(forward);
+        }
+        const auto right=glm::normalize(glm::cross(forward,manager.interiorLanding?axis:cameraUp));glm::dvec3 movement(0);
+        if(!manager.observerGravity){
+            if(glfwGetKey(window,GLFW_KEY_W)==GLFW_PRESS)movement+=glm::dvec3(forward);
+            if(glfwGetKey(window,GLFW_KEY_S)==GLFW_PRESS)movement-=glm::dvec3(forward);
+            if(glfwGetKey(window,GLFW_KEY_A)==GLFW_PRESS)movement-=glm::dvec3(right);
+            if(glfwGetKey(window,GLFW_KEY_D)==GLFW_PRESS)movement+=glm::dvec3(right);
+            if(!manager.interiorLanding){
+                if(glfwGetKey(window,GLFW_KEY_R)==GLFW_PRESS)movement+=glm::dvec3(cameraUp);
+                if(glfwGetKey(window,GLFW_KEY_F)==GLFW_PRESS)movement-=glm::dvec3(cameraUp);
+            }
+        }
+        const double boost=glfwGetKey(window,GLFW_KEY_LEFT_SHIFT)==GLFW_PRESS?5.:1.;
+        manager.MoveInterior(movement*(manager.cameraSpeed*static_cast<double>(deltaTime)*boost),deltaTime);return;
+    }
+    if(manager.blackHoleJourney.atLimit)return;
     if(manager.interiorVehicle)return; // Seated look-around keeps the cockpit's up axis.
     const bool grounded=manager.landed || (manager.inStarSystem && manager.starSystem.IsLanded());
     if (!grounded) {
@@ -1414,7 +1557,7 @@ void WindowManager::ProcessCamera(GLFWwindow* window, const float& deltaTime) {
         CameraMotion::Roll(cameraFront,cameraUp,glm::radians(60.0f)*bank*deltaTime);
     }
     if (manager.inStarSystem) {
-        manager.starSystem.Move(window,deltaTime,cameraFront,cameraUp);
+        if(!manager.observerGravity)manager.starSystem.Move(window,deltaTime,cameraFront,cameraUp);
         return;
     }
     glm::vec3 right = glm::normalize(glm::cross(cameraFront, cameraUp));
@@ -1456,8 +1599,7 @@ void WindowManager::ProcessCamera(GLFWwindow* window, const float& deltaTime) {
         const double surface = manager.blackHole.PlanetSurfaceRadius(glm::vec3(radial), manager.simulationTime, planet) + Astronomy::observerClearanceAu;
         if (distance < surface)
             cameraPos = planetCenter + radial * surface;
-        const float minimumRadius = manager.observerGravity || manager.horizonReached
-            ? BlackHole::HorizonRadius() * 0.005f : BlackHole::HorizonRadius()*1.015f;
+        const float minimumRadius = BlackHole::HorizonRadius() * 0.005f;
         if (glm::length(cameraPos) < minimumRadius)
             cameraPos = glm::normalize(cameraPos + glm::dvec3(0,0,1e-12)) * static_cast<double>(minimumRadius);
     }
@@ -1809,8 +1951,9 @@ void WindowManager::Update(float& dT) {
         titleUpdateElapsed = 0.0f;
     }
 
+    const auto previousFlightCamera=inStarSystem?starSystem.camera:cameraPos;
     const bool falling = observerGravity;
-    if (!inStarSystem) UpdateObserver(previousTime, dT);
+    UpdateObserver(previousTime,dT);
     if (blackHoleReady && showBlackHole && !inStarSystem && (glm::length(cameraPos)<20000 || interiorVehicle || followSpacecraft))
         blackHole.Update(simulationTime);
     if(interiorVehicle){
@@ -1842,6 +1985,8 @@ void WindowManager::Update(float& dT) {
         lastSelectedPosition = position;
     }
     ProcessCamera(window, dT);
+    UpdateBlackHoleJourney(previousFlightCamera,dT);
+    UpdateWormholeTransit(previousFlightCamera,previousTime,dT);
     UpdateNearbySystem();
     UpdateNavigationAnchor();
     if(!falling){
@@ -1888,29 +2033,71 @@ void WindowManager::Update(float& dT) {
     const auto preciseCamera=inStarSystem?starSystem.camera:cameraPos;
     optics.SetStellarHint(glm::vec3(-1,-1,0));
     optics.SetBlackHoleHint(glm::vec3(-1,-1,0));
-    if((showBlackHole && !inStarSystem) || (inStarSystem && starSystem.IsCore())){
-        const auto offset=inStarSystem?-starSystem.camera:-cameraPos;const double along=glm::dot(offset,glm::dvec3(cameraFront));
-        if(along>0){
-            const auto right=glm::normalize(glm::cross(cameraFront,cameraUp)),up=glm::normalize(glm::cross(right,cameraFront));
-            const double halfHeight=along*std::tan(glm::radians(static_cast<double>(fieldOfView))*.5);
-            double emittingRadius=blackHole.GargantuaDiskOuterRadius();
-            if(inStarSystem){const auto core=GalacticCores::Get(activeSystemTarget);emittingRadius=core.RadiusAu()*(core.hotFlow?24:core.quasar?12:4.3);}
-            optics.SetBlackHoleHint(glm::vec3(.5+.5*glm::dot(offset,glm::dvec3(right))/(halfHeight*aspectRatio),
-                .5+.5*glm::dot(offset,glm::dvec3(up))/halfHeight,emittingRadius/(halfHeight*2)));
-        }
-    }
-    if(inStarSystem && !starSystem.IsCore()) {
-        const auto offset=-starSystem.camera;
+    std::array<glm::vec4,8> opticalMembers{};int opticalMemberCount=0;
+    const auto projectEmitter=[&](const glm::dvec3& offset,double radius,bool stellar,bool opticalSource=true){
+        glm::vec3 hint(-1,-1,0);
         const double along=glm::dot(offset,glm::dvec3(cameraFront));
         if(along>0) {
             const auto right=glm::normalize(glm::cross(cameraFront,cameraUp));
             const auto up=glm::normalize(glm::cross(right,cameraFront));
             const double halfHeight=along*std::tan(glm::radians(static_cast<double>(fieldOfView))*.5);
-            optics.SetStellarHint(glm::vec3(.5+.5*glm::dot(offset,glm::dvec3(right))/(halfHeight*aspectRatio),
+            hint=glm::vec3(.5+.5*glm::dot(offset,glm::dvec3(right))/(halfHeight*aspectRatio),
                 .5+.5*glm::dot(offset,glm::dvec3(up))/halfHeight,
-                starSystem.Host().radiusSolar*Astronomy::solarRadiusAu/(halfHeight*2)));
+                radius/(halfHeight*2));
+            if(opticalSource && opticalMemberCount<8)opticalMembers[opticalMemberCount++]=glm::vec4(hint,stellar?1.f:0.f);
         }
+        return hint;
+    };
+    const bool coreView=(showBlackHole && !inStarSystem) || (inStarSystem && starSystem.IsCore());
+    const bool companionView=inStarSystem && activeSystemTarget>=4 && activeSystemTarget<=8;
+    bool groupOwnsOptics=coreView || companionView;
+    if(groupOwnsOptics && blackHoleReady){
+        const auto anchor=inStarSystem?systemOriginAu:glm::dvec3(0),local=inStarSystem?starSystem.camera:cameraPos;
+        blackHole.Catalogue().UpdateStream(anchor+local,EffectiveMagnitudeLimit());
+        const int nearest=blackHole.NearestStar(anchor+local);
+        const auto position=nearest==-2?glm::dvec3(0):blackHole.ResolveTarget(nearest,simulationTime).position;
+        double groupDistance=glm::length(inStarSystem && starSystem.IsCore()?local:anchor+local);
+        if(!inStarSystem || companionView)for(int id=4;id<=8;++id)groupDistance=std::min(groupDistance,glm::length((blackHole.ResolveTarget(id,simulationTime).position-anchor)-local));
+        if(glm::length((position-anchor)-local)<groupDistance*.999)groupOwnsOptics=false;
     }
+    // Disk metering follows the visible object, independently of which nearby
+    // stellar system owns lens flares at the camera's position.
+    if(coreView){
+        const double radius=inStarSystem?GalacticCores::Get(activeSystemTarget).RadiusAu()
+            *(GalacticCores::Get(activeSystemTarget).hotFlow?24:GalacticCores::Get(activeSystemTarget).quasar?12:4.3)
+            :blackHole.GargantuaDiskOuterRadius();
+        optics.SetBlackHoleHint(projectEmitter(inStarSystem?-starSystem.camera:-cameraPos,radius,false,false));
+    }
+    if(groupOwnsOptics){
+        const auto coreOffset=inStarSystem?(-systemOriginAu-starSystem.camera):-cameraPos;
+        double radius=blackHole.GargantuaDiskOuterRadius();
+        if(inStarSystem && starSystem.IsCore()){const auto core=GalacticCores::Get(activeSystemTarget);radius=core.RadiusAu()*(core.hotFlow?24:core.quasar?12:4.3);}
+        // Core scenes use their own local origin; their world location can be
+        // far from the legacy Gargantua origin.
+        const auto diskHint=projectEmitter(inStarSystem && starSystem.IsCore()?-starSystem.camera:coreOffset,radius,false);
+        optics.SetBlackHoleHint(diskHint);
+        if(!inStarSystem || companionView){
+            for(int id=4;id<=8;++id){
+                const auto member=blackHole.ResolveTarget(id,simulationTime);
+                const auto offset=inStarSystem?(member.position-systemOriginAu)-starSystem.camera:member.position-cameraPos;
+                const auto hint=projectEmitter(inStarSystem && activeSystemTarget==id?-starSystem.camera:offset,member.radius,true);
+                if(id==4 || (inStarSystem && activeSystemTarget==id))optics.SetStellarHint(hint);
+            }
+        }
+    }else if(blackHoleReady && (inStarSystem || showBlackHole)){
+        // LOD and the selected object do not determine optical ownership.
+        // Outside the active system's detail range, use spatial proximity.
+        int nearest=activeSystemTarget;
+        if(!inStarSystem || !starSystem.InDetailRange() || coreView || companionView){
+            const auto world=inStarSystem?systemOriginAu+starSystem.camera:cameraPos;
+            blackHole.Catalogue().UpdateStream(world,EffectiveMagnitudeLimit());
+            nearest=blackHole.NearestStar(world);
+        }
+        const auto member=nearest==-2?BlackHole::Target{glm::dvec3(0),static_cast<float>(Astronomy::solarRadiusAu),"Sun"}:blackHole.ResolveTarget(nearest,simulationTime);
+        const auto offset=inStarSystem && nearest==activeSystemTarget?-starSystem.camera:inStarSystem?(member.position-systemOriginAu)-starSystem.camera:member.position-cameraPos;
+        optics.SetStellarHint(projectEmitter(offset,member.radius,true));
+    }
+    optics.SetSystemSources(opticalMembers,opticalMemberCount);
     const std::array<double,24> signature={preciseCamera.x,preciseCamera.y,preciseCamera.z,
         cameraFront.x,cameraFront.y,cameraFront.z,cameraUp.x,cameraUp.y,cameraUp.z,
         simulationTime,fieldOfView,static_cast<double>(sceneWidth),static_cast<double>(fullHeight),
@@ -1918,7 +2105,15 @@ void WindowManager::Update(float& dT) {
         static_cast<double>(selectedTarget),static_cast<double>(starSystem.Selected()),static_cast<double>(trajectories),
         static_cast<double>(photonView),static_cast<double>(observerGravity),static_cast<double>(horizonReached),blackHoleResolution,static_cast<double>(interiorVehicle)};
     if(blackHoleReady)blackHole.ObserveSkyCamera(inStarSystem?systemOriginAu+starSystem.camera:cameraPos,dT,fieldOfView,fullHeight);
+    const bool blackHoleView=blackHoleJourney.interiorBlend<1 && ((showBlackHole && !inStarSystem) || (inStarSystem && starSystem.IsCore()));
+    bool sameCamera=sceneCacheValid && signature[10]==lastSceneSignature[10];
+    for(int i=0;i<9;++i)if(signature[i]!=lastSceneSignature[i])sameCamera=false;
+    if(!sameCamera)lastBlackHoleCameraChange=glfwGetTime();
+    const float blackHoleScale=adaptiveBlackHoleQuality && blackHoleView && !simulationPlaying
+        && glfwGetTime()-lastBlackHoleCameraChange>=.25?1.f:blackHoleResolution;
     idleFrame=sceneCacheValid && !simulationPlaying && !observerGravity && (showBlackHole || inStarSystem) && signature==lastSceneSignature;
+    if(blackHoleJourney.inside)idleFrame=false;
+    if(blackHoleView && renderedBlackHoleScale!=blackHoleScale)idleFrame=false;
     if(blackHoleReady && blackHole.SkyNeedsFrame(inStarSystem?systemOriginAu+starSystem.camera:cameraPos))idleFrame=false;
 #ifdef RENDER_ENGINE_DX12
     const auto reconstructionSize=NativeDX12::PrepareSceneReconstruction(sceneWidth,fullHeight,idleFrame);
@@ -1927,21 +2122,42 @@ void WindowManager::Update(float& dT) {
     if(idleFrame) {
         glBindFramebuffer(GL_FRAMEBUFFER,0);glViewport(0,0,sceneWidth,fullHeight);
         optics.Render(visionProfile,fieldOfView,exposureEv,hdrMode,lensFlareStrength,true,dT);
+        if(inStarSystem && !starSystem.IsCore())starSystem.RenderOverlays(fieldOfView,aspectRatio,cameraFront,cameraUp,simulationTime,trajectories,pendingSystemTarget==activeSystemTarget,visionProfile);
         RenderSpeedToast();PresentFrame(window);return;
     }
     lastSceneSignature=signature;
 
-    if((showBlackHole && !inStarSystem) || (inStarSystem && starSystem.IsCore()))
-        glViewport(0,0,glm::max(1,static_cast<int>(sceneWidth*blackHoleResolution)),glm::max(1,static_cast<int>(fullHeight*blackHoleResolution)));
+    if(blackHoleView){
+        glViewport(0,0,glm::max(1,static_cast<int>(sceneWidth*blackHoleScale)),glm::max(1,static_cast<int>(fullHeight*blackHoleScale)));
+        renderedBlackHoleScale=blackHoleScale;
+    }
 #ifdef RENDER_ENGINE_DX12
     if(NativeDX12::ReconstructionNeedsFrame())glViewport(0,0,reconstructionSize.x,reconstructionSize.y);
 #endif
     blackHole.SetGalaxyAutoExposure(!hdrMode && optics.IsAutoExposure());
+    // Build remote environments only when a mouth can occupy visible pixels.
+    // These caches do not move the active observer or its streamed star cells.
+    const double portalRange=1000*WormholePhysics::ThroatRadiusAu();
+    if(!blackHoleJourney.inside && blackHoleReady){
+        if(inStarSystem && starSystem.IsSolarSystem()
+            && glm::length(starSystem.camera-StarSystem::SaturnWormholePosition(simulationTime))<portalRange)
+            gargantuaPortalSky=blackHole.WormholeSky(simulationTime);
+        if(!inStarSystem && showBlackHole
+            && glm::length(cameraPos-WormholePhysics::GargantuaPosition(simulationTime))<portalRange){
+            if(!solarPortalReady){solarPortalSystem.LoadSolarSystem();solarPortalReady=solarPortalSystem.Initialize();}
+            if(solarPortalReady)solarPortalSky=solarPortalSystem.WormholeSky(simulationTime,[&](const auto& vp,const auto& mouth){
+                blackHole.RenderBackground(vp,mouth,false,simulationTime,glm::dvec3(0),false);
+            });
+        }
+    }
+    blackHole.SetWormholeSky(solarPortalSky);
     optics.BeginFrame();
     glClearColor(0.0f,0.0f,0.0f,0.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    if (inStarSystem && starSystemReady) {
+    if(blackHoleJourney.atLimit){
+        optics.SetBlackHoleHint({-1,-1,0});optics.SetStellarHint({-1,-1,0});optics.SetSystemSources({},0);
+    }else if (inStarSystem && starSystemReady) {
         glPolygonMode(GL_FRONT_AND_BACK,GL_FILL);
         if(blackHoleReady && !starSystem.IsCore()){
             const auto skyProjection=glm::perspective(glm::radians(fieldOfView),aspectRatio,.00001f,20000.f);
@@ -1949,25 +2165,30 @@ void WindowManager::Update(float& dT) {
             blackHole.RenderBackground(skyProjection*skyView,systemOriginAu+starSystem.camera);
             if(photonView)blackHole.RenderBackground(skyProjection*skyView,systemOriginAu+starSystem.camera,true,simulationTime,systemOriginAu+starSystem.camera);
         }
-        if(starSystem.IsCore())blackHole.RenderCore(glm::perspective(glm::radians(fieldOfView),aspectRatio,.00001f,20000.f)*glm::lookAt(glm::vec3(0),cameraFront,cameraUp),starSystem.camera,activeSystemTarget,simulationTime);
+        if(starSystem.IsCore()){
+            const auto core=GalacticCores::Get(activeSystemTarget);
+            const auto frame=core.hotFlow?GalacticCores::HotFlowFrame():InterstellarWorlds::Orientation();
+            const bool physical=kerrObserverValid && observerSourceId==activeSystemTarget && (observerGravity || horizonReached);
+            const auto beta=physical?glm::vec3(frame*KerrSpacetime::ObserverBeta(kerrObserver,core.RadiusAu(),core.spin)):glm::vec3(0);
+            blackHole.RenderCore(glm::perspective(glm::radians(fieldOfView),aspectRatio,.00001f,20000.f)*glm::lookAt(glm::vec3(0),cameraFront,cameraUp),starSystem.camera,activeSystemTarget,simulationTime,physical,beta);
+        }
         else starSystem.Render(fieldOfView,aspectRatio,cameraFront,cameraUp,simulationTime,trajectories,photonView,pendingSystemTarget==activeSystemTarget,
-            blackHoleReady && starSystem.IsSolarSystem() && starSystem.InDetailRange()?blackHole.WormholeSky():0);
+            blackHoleReady && starSystem.IsSolarSystem()?gargantuaPortalSky:0);
         if(pendingSystemTarget>=10 && pendingSystemTarget!=activeSystemTarget)
             blackHole.RenderCatalogueSelection(projection*glm::lookAt(glm::vec3(0),cameraFront,cameraUp),
                 systemOriginAu+starSystem.camera,pendingSystemTarget,simulationTime);
-    } else if (showBlackHole && blackHoleReady) {
+    } else if (showBlackHole && blackHoleReady && blackHoleJourney.interiorBlend<1) {
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
         const bool physicalObserver=kerrObserverValid && observerSpin==blackHole.Spin() && (observerGravity || horizonReached) && !interiorVehicle
             && glm::length(cameraPos-InterstellarWorlds::Orientation()*kerrObserver.state.position)<1e-9;
         const auto physicalBeta=physicalObserver?InterstellarWorlds::Orientation()*KerrSpacetime::ObserverBeta(kerrObserver,BlackHole::HorizonRadius(),observerSpin):glm::dvec3(0);
-        if(glm::length(cameraPos)<20000 || interiorVehicle)blackHole.Render(projection * view, cameraPos, simulationTime,
+        blackHole.Render(projection * view, cameraPos, simulationTime,
             interiorVehicle?glm::vec3(blackHole.CockpitPose(interiorVehicle,simulationTime).velocity)
                 :observerGravity || horizonReached ? glm::vec3(observer.velocity) : glm::vec3(0.0f),trajectories,selectedTarget,interiorVehicle,glm::vec3(physicalBeta),physicalObserver);
-        else blackHole.RenderBackground(projection*view,cameraPos);
         if(interiorVehicle)vehicleInterior.Render(projection*view,glm::mat3(lastCabinRotation),interiorVehicle>=2,
             static_cast<float>(blackHole.SpacecraftFuelSeconds()/InterstellarWorlds::FuelSeconds));
         glPolygonMode(GL_FRONT_AND_BACK, showWireframe ? GL_LINE : GL_FILL);
-    } else {
+    } else if(blackHoleJourney.interiorBlend<1) {
         //Apply Lighting When Out of Wireframe Mode
         if (!showWireframe)
         {
@@ -2002,8 +2223,16 @@ void WindowManager::Update(float& dT) {
         glBindVertexArray(0);
     }
     
+    if(blackHoleJourney.interiorBlend>0){
+        optics.SetBlackHoleHint({-1,-1,0});optics.SetStellarHint({-1,-1,0});optics.SetSystemSources({},0);
+        const auto inverse=glm::transpose(InterstellarWorlds::Orientation());
+        tesseractScene.Render(inverse*cameraPos/TesseractSpace::Scale(BlackHole::HorizonRadius()),
+            glm::vec3(inverse*glm::dvec3(cameraFront)),glm::vec3(inverse*glm::dvec3(cameraUp)),aspectRatio,fieldOfView,
+            glfwGetTime(),static_cast<float>(blackHoleJourney.interiorBlend));
+    }
     glViewport(0,0,sceneWidth,fullHeight);
     optics.Render(visionProfile, fieldOfView, exposureEv, hdrMode,lensFlareStrength,false,dT);
+    if(inStarSystem && !starSystem.IsCore())starSystem.RenderOverlays(fieldOfView,aspectRatio,cameraFront,cameraUp,simulationTime,trajectories,pendingSystemTarget==activeSystemTarget,visionProfile);
     sceneCacheValid=true;
     RenderSpeedToast();
     glPolygonMode(GL_FRONT_AND_BACK, showWireframe ? GL_LINE : GL_FILL);
@@ -2072,6 +2301,7 @@ void WindowManager::MakeNewWindow() {
     blackHoleReady = blackHole.Initialize();
     if(blackHoleReady)navigationCatalog.Initialize(blackHole.Catalogue());
     if(!vehicleInterior.Initialize())blackHoleReady=false;
+    if(!tesseractScene.Initialize())blackHoleReady=false;
     opticsReady=optics.Initialize();
     InitializeOverlay();
     starSystemReady = starSystem.Initialize();
@@ -2207,8 +2437,8 @@ void WindowManager::MakeNewWindow() {
     AppendMenuW(performance,MF_STRING,1301,L"60 FPS");
     AppendMenuW(performance,MF_STRING,1302,L"120 FPS");
     AppendMenuW(performance,MF_SEPARATOR,0,nullptr);
-    AppendMenuW(performance,MF_STRING,1310,L"Black hole 50% resolution - default");
-    AppendMenuW(performance,MF_STRING,1311,L"Black hole 75% resolution");
+    AppendMenuW(performance,MF_STRING,1310,L"Black hole 50% in motion - paused view sharpens (default)");
+    AppendMenuW(performance,MF_STRING,1311,L"Black hole 75% in motion - paused view sharpens");
     AppendMenuW(performance,MF_STRING,1312,L"Black hole 100% resolution");
     AppendMenuW(performance,MF_SEPARATOR,0,nullptr);
     AppendMenuW(performance,MF_STRING,1330,L"Black hole spin 0 - Schwarzschild");
@@ -2286,8 +2516,10 @@ void WindowManager::ReleaseGraphics() {
     controlsPanel.Release();
     objectEditor.Release();
     vehicleInterior.Release();
+    tesseractScene.Release();
     quantum.Release();
     starSystem.Release();
+    solarPortalSystem.Release();
     optics.Release();
     ReleaseOverlay();
     blackHole.Release();
@@ -2324,8 +2556,12 @@ void WindowManager::SetMagnitudeLimit(float value){
 double WindowManager::CameraMagnification() const {
     return CameraZoom::Magnification(interiorVehicle?75:CameraOptics::FieldOfView(visionProfile,lensAspect),fieldOfView);
 }
+void WindowManager::SetGalaxyMagnitudeLimit(float value){
+    galaxyLimitingMagnitude=glm::clamp(value,-2.f,30.f);SyncCameraMagnitude();sceneCacheValid=false;RefreshPanel();UpdateTitle();
+}
 float WindowManager::EffectiveMagnitudeLimit() const {return CameraZoom::MagnitudeLimit(limitingMagnitude,CameraMagnification());}
 void WindowManager::SyncCameraMagnitude(){
+    blackHole.SetGalaxyMagnitudeLimit(CameraZoom::MagnitudeLimit(galaxyLimitingMagnitude,CameraMagnification()));
     const float next=EffectiveMagnitudeLimit();
     if(next!=appliedMagnitudeLimit){appliedMagnitudeLimit=next;blackHole.SetMagnitudeLimit(next);sceneCacheValid=false;}
 }

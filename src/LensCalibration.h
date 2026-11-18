@@ -6,6 +6,7 @@
 // License: https://creativecommons.org/licenses/by-sa/3.0/
 #pragma once
 #include <glm/glm.hpp>
+#include <cmath>
 
 namespace LensCalibration {
     struct Profile {
@@ -27,4 +28,11 @@ namespace LensCalibration {
         // Distagon vignetting measured at f/2, focus distance 1000 m.
         {"ZEISS Distagon 35mm f/2", 35, 2, {0.00786f,-0.02862f,0.01911f}, {0,0,1.0001515f}, {0,0,1.0001430f}, {-1.9515f,2.1666f,-0.9851f}}
     };
+    inline float FieldOfView(int profile,float aspect){
+        if(profile==0)return 45.f;
+        if(profile==1)return glm::degrees(2.f*std::atan(std::tan(glm::radians(50.f))/aspect));
+        const auto& lens=profiles[profile];
+        const float focal=lens.focalLength*(lens.distortionModel==2?1.f-lens.distortion.x-lens.distortion.y-lens.distortion.z:1.f);
+        return glm::degrees(2.f*std::atan(18.f/(focal*aspect)));
+    }
 }

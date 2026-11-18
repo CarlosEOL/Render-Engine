@@ -4,6 +4,8 @@
 #include <glm/mat3x3.hpp>
 #include <glm/vec3.hpp>
 namespace InterstellarWorlds {
+inline constexpr int neutronStarId=8;
+inline constexpr double neutronStarRadiusMetres=12000,neutronStarMassSolar=1.4,neutronStarTemperature=8569;
 enum class Surface { Ocean, Ice, Desert };
 struct Planet {
   const char *name;

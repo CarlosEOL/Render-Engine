@@ -17,6 +17,7 @@
 #include "GalacticCore.h"
 #include "WormholePhysics.h"
 #include "InterstellarWorlds.h"
+#include "LensCalibration.h"
 
 unsigned int compileShaderProgram(const char *, const char *);
 
@@ -43,6 +44,13 @@ void AlignUp(glm::vec3 &front, glm::vec3 &up, const glm::vec3 &nextUp)
 
 StarSystem::Star StarSystem::DescribeStar(int id, const std::string &name)
 {
+    if(id==InterstellarWorlds::neutronStarId){
+        Star result;result.id=id;result.name="Panurge";result.classification="Neutron star / compact companion";result.systemSeed=Universe::SystemSeed(id);
+        result.massSolar=InterstellarWorlds::neutronStarMassSolar;
+        result.radiusSolar=InterstellarWorlds::neutronStarRadiusMetres/(Astronomy::solarRadiusAu*Astronomy::metresPerAu);
+        result.temperature=InterstellarWorlds::neutronStarTemperature;result.ageGyr=1;
+        result.luminositySolar=result.radiusSolar*result.radiusSolar*std::pow(result.temperature/5772.,4);return result;
+    }
     if(Universe::StarIndex(id)>=Universe::LegacyStarCount){
         const auto p=Universe::Properties(Universe::StarIndex(id));Star result;
         result.id=id;result.name=name;result.systemSeed=Universe::SystemSeed(id);
@@ -196,6 +204,9 @@ void StarSystem::Generate(int id, const std::string &name)
         const double escapeKm=11.186*std::sqrt(planet.massEarth/planet.radiusEarth);
         planet.atmosphere=planet.gas || (escapeKm>4 && planet.temperature<850 && Random(random,0,1)>.18);
         planet.color = glm::vec3(Random(random, .12, .65), Random(random, .15, .65), Random(random, .12, .65));
+        planet.magneticField=planet.gas || (planet.radiusEarth>.5 && star.ageGyr<9 && std::abs(planet.daySeconds)<20*86400);
+        planet.life=!planet.gas && planet.atmosphere && planet.temperature>275 && planet.temperature<310
+            && planet.seaLevel>-.18f && PlanetVegetation::Unit(planet.seed+991)<.58f;
         planets.push_back(planet);
         axis *= Random(random,architecture==0?1.3:1.5,architecture==3?3.0:2.4);
     }
@@ -290,6 +301,15 @@ glm::dmat3 StarSystem::RotationDouble(int planet,double seconds) const {
     return glm::dmat3(glm::rotate(rotation,std::remainder(seconds/period,1.0)*glm::two_pi<double>(),glm::dvec3(0,1,0)));
 }
 
+PlanetWeather::State StarSystem::WeatherState(int planet,double seconds) const {
+    const auto& body=planets[planet];
+    const PlanetWeather::Profile profile{body.seed,static_cast<float>(body.radiusEarth*6371000),body.seaLevel,
+        static_cast<float>(body.temperature),solarSystem && planet==2?8.f:7.f+5*PlanetWeather::Unit(body.seed+17),false,
+        body.atmosphere && !body.gas && !body.wormhole && body.temperature>240 && body.temperature<335,
+        body.metalCore,body.magneticField && aurorasEnabled,body.atmosphere && !body.wormhole};
+    return PlanetWeather::Make(profile,seconds,weatherWindScale,weatherStormScale);
+}
+
 double StarSystem::SurfaceRadius(int planet, const glm::dvec3 &direction, double seconds) const
 {
     const auto &body = planets[planet];
@@ -298,9 +318,10 @@ double StarSystem::SurfaceRadius(int planet, const glm::dvec3 &direction, double
     const double radius = body.radiusEarth * Astronomy::earthRadiusAu;
     if (body.gas || body.wormhole)
         return radius;
+    const auto weather=WeatherState(planet,seconds);
     return radius * (1.0+PlanetTerrain::SurfaceElevation(
                         local, body.seed, static_cast<float>(std::remainder(seconds, glm::two_pi<double>())),
-                        body.seaLevel, 0.003f, static_cast<float>(2.0 / (body.radiusEarth * 6371000.0))));
+                        body.seaLevel, 0.003f, static_cast<float>(2.0 / (body.radiusEarth * 6371000.0)),false,&weather));
 }
 
 void StarSystem::ConstrainSurface(double seconds, glm::vec3 &front, glm::vec3 &up)
@@ -364,7 +385,7 @@ void StarSystem::Move(GLFWwindow *window, float realSeconds, glm::vec3 &front, g
     }
     camera += distance * movement;
     const double hostRadius=star.radiusSolar*Astronomy::solarRadiusAu;
-    if (!landed && glm::length(camera)<hostRadius+Astronomy::observerClearanceAu)
+    if (!IsCore() && !landed && glm::length(camera)<hostRadius+Astronomy::observerClearanceAu)
         camera=(glm::length(camera)>0?glm::normalize(camera):glm::dvec3(0,0,1))
             *(hostRadius+Astronomy::observerClearanceAu);
     if (landed)
@@ -373,13 +394,13 @@ void StarSystem::Move(GLFWwindow *window, float realSeconds, glm::vec3 &front, g
     {
         for (int planet = 0; planet < static_cast<int>(planets.size()); ++planet)
         {
+            if(planets[planet].wormhole)continue; // Portal crossing is handled by camera transport.
             const auto delta = camera - Position(planet, lastTime);
             const double radius = planets[planet].radiusEarth * Astronomy::earthRadiusAu;
             if (glm::length(delta) < radius * 1.01)
             {
                 const auto radial = glm::length(delta) > 0 ? glm::normalize(delta) : glm::dvec3(0, 0, 1);
-                camera = Position(planet, lastTime) + radial * (planets[planet].wormhole
-                    ? radius*1.01 : SurfaceRadius(planet, radial, lastTime) + Astronomy::observerClearanceAu);
+                camera = Position(planet, lastTime) + radial * (SurfaceRadius(planet, radial, lastTime) + Astronomy::observerClearanceAu);
             }
         }
     }
@@ -536,7 +557,7 @@ std::string StarSystem::Information(double seconds) const
                 <<"\nSpin a/M  "<<WormholePhysics::Spin<<"\nDeformation  "<<WormholePhysics::Deformation
                 <<"\nSaturn orbit  "<<WormholePhysics::OrbitRadiusKm<<" km"
                 <<"\nPeriod  "<<glm::two_pi<double>()/OrbitalMechanics::MeanMotion(GravityFor(selected),body.orbit.semiMajorAxis)/86400<<" days"
-                <<"\n\nFictional orbit; theoretical geometry\nOther exterior visible through throat\nNo solid surface or event horizon\nOptical view only; no camera transit\n";
+                <<"\n\nFictional orbit; theoretical geometry\nConnected to Gargantua Wormhole\nFly through the throat to cross\nNo solid surface or event horizon\n";
             text<<(following?"\nFollowing orbit":"\nFree camera");
             return text.str();
         }
@@ -551,6 +572,7 @@ std::string StarSystem::Information(double seconds) const
                     86400
              << " days\n"
              << "Temperature  " << body.temperature << " K\n";
+        if(body.life)text<<"Life-bearing world\nLocal vegetation: forests and grassland\n";
     }
     text         << (landed      ? "\nStanding on surface"
              : following ? (followingRotation?"\nFollowing translation and rotation":"\nFollowing position")
@@ -567,9 +589,22 @@ uniform mat4 model;
 uniform mat4 viewProjection;
 uniform int bodyKind;
 uniform float phase;
+uniform bool guideOverlay;
+uniform int guideDistortionModel;
+uniform vec3 guideDistortion;
+uniform vec2 guideRadiusScale;
 out vec3 localPosition;
 out vec3 relativePosition;
 out vec3 patchDeltaMetres;
+vec4 guideProjection(vec4 clip){
+    if(guideOverlay && clip.w>0.0){
+        float radius=length(clip.xy/clip.w*guideRadiusScale),factor=1.0;
+        if(guideDistortionModel==1)factor=1.0-guideDistortion.x+guideDistortion.x*radius*radius;
+        else if(guideDistortionModel==2)factor=((guideDistortion.x*radius+guideDistortion.y)*radius+guideDistortion.z)*radius+1.0-guideDistortion.x-guideDistortion.y-guideDistortion.z;
+        clip.xy*=factor;
+    }
+    return clip;
+}
 void main() {
     patchDeltaMetres=vec3(0);
     if(bodyKind==1 && patchDrawing){
@@ -582,18 +617,18 @@ void main() {
     localPosition = position;
     if (bodyKind == 4) {
         relativePosition = vec3(0);
-        gl_Position = vec4(position.xy,0,1);
+        gl_Position = guideProjection(vec4(position.xy,0,1));
         return;
     }
     vec3 displaced = position;
     if (bodyKind == 1)
         displaced = planetSurface(normalize(position), terrainHeight(normalize(position)), phase);
     relativePosition = (model * vec4(displaced,1)).xyz;
-    gl_Position = viewProjection * vec4(relativePosition,1);
+    gl_Position = guideProjection(viewProjection * vec4(relativePosition,1));
 }
 )";
     const std::string fragment =
-        std::string("#version 330 core\nconst float horizonRadius=0.0; const vec3 observerBeta=vec3(0);\n") +
+        std::string("#version 330 core\nconst float horizonRadius=0.0; const vec3 observerBeta=vec3(0);\n") + PlanetVegetation::ShaderFunctions() +
         PlanetTerrain::ShaderFunctions() + PlanetTerrain::SurfaceDetailShaderFunctions() + OrbitalMechanics::RelativityShaderFunctions() + StellarActivity::ShaderFunctions() + SaturnRings::ShaderFunctions() + R"(
 in vec3 localPosition;
 in vec3 relativePosition;
@@ -609,6 +644,7 @@ uniform bool patchEnabled;
 uniform bool saturnShadow;
 uniform int surfacePalette;
 uniform float bodyRadiusKm;
+uniform bool lifeBearing;
 void main() {
     if (bodyKind == 4) {
         color=vec4(albedo,0); gl_FragDepth=0; return;
@@ -647,12 +683,23 @@ void main() {
         material=mix(vec3(.55,.46,.31),material,smoothstep(seaLevel,seaLevel+.04,height));
         material=mix(material,vec3(.34,.32,.30),smoothstep(.15,.35,height));
         material=mix(material,vec3(.9),smoothstep(.25,.45,height+.15*pow(abs(radial.y),4.0)));
+        if(lifeBearing){
+            float wet=vegetationMoisture(radial,terrainSeed);
+            float altitude=max(0.0,(height-seaLevel)*.003*bodyRadiusKm*1000.0);
+            float climate=temperature+8.0-28.0*radial.y*radial.y-altitude*.005;
+            bool habitat=height>seaLevel+.006 && height<max(.18,seaLevel+.11)
+                && altitude<2200.0 && climate>265.0 && climate<312.0 && wet>.30;
+            if(habitat)material=mix(vec3(.32,.29,.10),vec3(.10,.25,.045),smoothstep(.30,.48,wet));
+        }
         material*=.80+.35*(.5+.5*terrainNoise(radial*400.0));
         vec3 ocean=mix(vec3(.02,.30,.36),vec3(.003,.015,.05),
             1.0-exp(-15.0*max(seaLevel-height,0.0)));
         material=mix(material,ocean,water);
         }
-        groundDetail(material,normal,patchDeltaMetres,water,length(relativePosition)*149597870700.0,phase);
+        if(water>.5 && weatherParameters.w>0.0){
+            vec3 wavePosition=patchDrawing?patchTextureOrigin+patchDeltaMetres:radial*weatherParameters.w;
+            normal=normalize(radial-weatherWaveGradient(wavePosition,radial,true));
+        }else groundDetail(material,normal,patchDeltaMetres,water,length(relativePosition)*149597870700.0,phase);
     } else {
         float bands=.5+.5*sin(70.0*radial.y+7.0*terrainFbm(radial*5.0));
         material=mix(albedo*.4,min(vec3(1),albedo*1.5+vec3(.15)),bands);
@@ -670,6 +717,8 @@ void main() {
         }
     }
     float specular=water*pow(max(dot(normal,normalize(light+view)),0.0),100.0);
+    float foam=water*weatherOceanFoam(patchDrawing?patchTextureOrigin+patchDeltaMetres:radial*weatherParameters.w,radial);
+    material=mix(material,vec3(.72,.80,.82),foam);specular*=1.0-.85*foam;
     color=vec4(material*(.012+diffuse)+specular,water>.95?.1+.3*specular:0.0);
 }
 )";
@@ -697,7 +746,7 @@ void main() {
     upload(patchVao, patchBuffer, {{0, 0, 0}});
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
-    if (!atmosphere.Initialize() || !stellarActivity.Initialize() || !saturnRings.Initialize() || !wormhole.Initialize()) {
+    if (!atmosphere.Initialize() || !stellarActivity.Initialize() || !saturnRings.Initialize() || !wormhole.Initialize() || !vegetation.Initialize()) {
         Release();
         return false;
     }
@@ -718,6 +767,7 @@ void StarSystem::UpdatePatch(const glm::dvec3 &direction,double radiusMetres)
 void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front, const glm::vec3 &up, double seconds,
                         bool trajectories, bool photonView, bool showSelection, unsigned int wormholeSky)
 {
+    vegetation.ClearCounts();
     if (!program || planets.empty())
         return;
     if(!InDetailRange())return;
@@ -764,6 +814,7 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
     {
         const auto &body = planets[planet];
         if(body.wormhole)continue; // The throat is rendered by null-ray transport, never terrain.
+        const auto weather=WeatherState(planet,seconds);PlanetWeather::Upload(program,weather);
         const auto center = Position(planet, seconds);
         const double radius = body.radiusEarth * Astronomy::earthRadiusAu;
         if(radius/glm::max(radius,glm::length(center-camera))*pixelsPerRadian<.75)continue;
@@ -774,6 +825,8 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
         glUniform1f(glGetUniformLocation(program,"bodyRadiusKm"),static_cast<float>(radius*Astronomy::metresPerAu/1000));
         glUniform1i(glGetUniformLocation(program, "bodyKind"), body.gas ? 2 : 1);
         glUniform1i(glGetUniformLocation(program, "surfacePalette"),static_cast<int>(body.palette));
+        glUniform1i(glGetUniformLocation(program,"lifeBearing"),body.life);
+        glUniform1f(glGetUniformLocation(program,"temperature"),static_cast<float>(body.temperature));
         glUniform1f(glGetUniformLocation(program, "terrainSeed"), static_cast<float>(body.seed));
         glUniform1f(glGetUniformLocation(program, "seaLevel"), body.seaLevel);
         glUniform1f(glGetUniformLocation(program, "terrainRelief"), .003f);
@@ -789,7 +842,7 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
             const double metres=radius*Astronomy::metresPerAu;
             UpdatePatch(localDirection,metres);
             const float elevation=PlanetTerrain::SurfaceElevation(glm::vec3(patchDirection),body.seed,
-                static_cast<float>(std::remainder(seconds,glm::two_pi<double>())),body.seaLevel,.003f,static_cast<float>(2/metres));
+                static_cast<float>(std::remainder(seconds,glm::two_pi<double>())),body.seaLevel,.003f,static_cast<float>(2/metres),false,&weather);
             PlanetTerrain::ConfigureSurfacePatch(program,patchDirection,RotationDouble(planet,seconds),center-camera,metres,elevation);
         }
         glBindVertexArray(sphereVao);
@@ -814,27 +867,6 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
         glPointSize(size);
         glDrawArrays(mode, 0, static_cast<int>(vertices.size()));
     };
-    std::vector<glm::vec3> markers;
-    for (int planet = -1; planet < static_cast<int>(planets.size()); ++planet)
-        if(planet<0 || !planets[planet].wormhole)markers.push_back(glm::vec3(Position(planet, seconds) - camera));
-    drawLines(markers, GL_POINTS, glm::vec3(.15f, .45f, .65f), 3);
-    if (trajectories)
-    {
-        if(cachedOrbits.size()!=planets.size()) {
-            cachedOrbits.resize(planets.size());
-            for(int planet=0;planet<static_cast<int>(planets.size());++planet) {
-                const double period=glm::two_pi<double>()/OrbitalMechanics::MeanMotion(GravityFor(planet),planets[planet].orbit.semiMajorAxis);
-                for(int point=0;point<=256;++point)cachedOrbits[planet].push_back(RelativePosition(planet,period*point/256.0));
-            }
-        }
-        for (int planet = 0; planet < static_cast<int>(planets.size()); ++planet)
-        {
-            std::vector<glm::vec3> path;
-            const auto offset=Position(planets[planet].parent,seconds)-camera;
-            for(const auto& point:cachedOrbits[planet])path.push_back(glm::vec3(point+offset));
-            drawLines(path, GL_LINE_STRIP, glm::vec3(.035f, .12f, .18f), 1);
-        }
-    }
     if (trajectories && !asteroids.empty())
     {
         if(cachedAsteroids.size()!=asteroids.size() || !std::isfinite(cachedAsteroidTime)
@@ -846,10 +878,6 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
             }
             cachedAsteroidTime=seconds;
         }
-        std::vector<glm::vec3> points;
-        points.reserve(asteroids.size());
-        for(const auto& p:cachedAsteroids)points.push_back(glm::vec3(p-camera));
-        drawLines(points, GL_POINTS, glm::vec3(.13f, .10f, .07f), 1);
     }
     if (photonView)
     {
@@ -879,19 +907,87 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
             planets[5].radiusEarth*Astronomy::earthRadiusAu,
             Astronomy::solarGravityAu*planets[5].massEarth/332946.0487,seconds);
     }
+    int livingPlanet=-1;double livingClearance=std::numeric_limits<double>::max();
+    if(vegetationEnabled)for(int planet=0;planet<static_cast<int>(planets.size());++planet){
+        const auto& body=planets[planet];if(!body.life || body.gas || body.wormhole)continue;
+        const double clearance=std::abs(glm::length(Position(planet,seconds)-camera)-body.radiusEarth*Astronomy::earthRadiusAu);
+        if(clearance<livingClearance){livingClearance=clearance;livingPlanet=planet;}
+    }
+    if(livingPlanet>=0){
+        const auto& body=planets[livingPlanet];
+        vegetation.SetSunlight(glm::normalize(glm::vec3(-Position(livingPlanet,seconds))));
+        vegetation.Render({body.seed,body.radiusEarth*Astronomy::earthRadiusAu*Astronomy::metresPerAu,body.temperature,body.seaLevel,body.life},
+            RotationDouble(livingPlanet,seconds),Position(livingPlanet,seconds)-camera,vp,front,seconds);
+    }
     for (int planet = 0; planet < static_cast<int>(planets.size()); ++planet)
     {
         if (!planets[planet].atmosphere)
             continue;
         const auto center = glm::vec3(Position(planet, seconds) - camera);
+        const auto weather=WeatherState(planet,seconds);
         atmosphere.Render(vp, glm::vec3(0), center,
                           static_cast<float>(planets[planet].radiusEarth * Astronomy::earthRadiusAu), true,
-                          glm::vec3(-camera),earthCloudsEnabled && solarSystem && planet==2,seconds,glm::mat3(Rotation(planet,seconds)),
-                          oceanReflectionsEnabled && !planets[planet].gas && planets[planet].seaLevel>0);
+                          glm::vec3(-camera),earthCloudsEnabled && weather.parameters.w>0,seconds,glm::mat3(Rotation(planet,seconds)),
+                          oceanReflectionsEnabled && !planets[planet].gas && planets[planet].seaLevel>0,1,&weather);
     }
     for(int body=0;body<static_cast<int>(planets.size());++body)
         if(planets[body].wormhole)wormhole.Render(vp,Position(body,seconds)-camera,
             planets[body].radiusEarth*Astronomy::earthRadiusAu,wormholeSky);
+    glBindVertexArray(0);
+}
+
+void StarSystem::RenderOverlays(float fieldOfView,float aspect,const glm::vec3& front,const glm::vec3& up,
+                                double seconds,bool trajectories,bool showSelection,int lensProfile){
+    if(!program || planets.empty() || !InDetailRange())return;
+    // UI guides must not erase a subpixel stellar emitter, enter exposure
+    // metering, or appear as opaque geometry in screen-space reflections.
+    const bool depth=glIsEnabled(GL_DEPTH_TEST),blend=glIsEnabled(GL_BLEND);
+    GLboolean depthMask;glGetBooleanv(GL_DEPTH_WRITEMASK,&depthMask);
+    GLint src,dst,srcA,dstA;glGetIntegerv(GL_BLEND_SRC_RGB,&src);glGetIntegerv(GL_BLEND_DST_RGB,&dst);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA,&srcA);glGetIntegerv(GL_BLEND_DST_ALPHA,&dstA);
+    glDisable(GL_DEPTH_TEST);glEnable(GL_BLEND);glBlendFuncSeparate(GL_ONE,GL_ONE,GL_ZERO,GL_ONE);glDepthMask(GL_FALSE);
+    const auto vp=glm::perspective(glm::radians(fieldOfView),aspect,.001f,20000.f)*glm::lookAt(glm::vec3(0),front,up);
+    const glm::mat4 identity(1);
+    glUseProgram(program);
+    lensProfile=glm::clamp(lensProfile,0,6);const auto& lens=LensCalibration::profiles[lensProfile];
+    const float zoom=std::tan(glm::radians(fieldOfView*.5f))/std::tan(glm::radians(LensCalibration::FieldOfView(lensProfile,aspect)*.5f));
+    glUniform1i(glGetUniformLocation(program,"guideOverlay"),true);
+    glUniform1i(glGetUniformLocation(program,"guideDistortionModel"),lens.distortionModel);
+    glUniform3fv(glGetUniformLocation(program,"guideDistortion"),1,glm::value_ptr(lens.distortion));
+    glUniform2f(glGetUniformLocation(program,"guideRadiusScale"),1.5f*zoom,1.5f/aspect*zoom);
+    glUniformMatrix4fv(glGetUniformLocation(program,"viewProjection"),1,GL_FALSE,glm::value_ptr(vp));
+    glUniformMatrix4fv(glGetUniformLocation(program,"model"),1,GL_FALSE,glm::value_ptr(identity));
+    glUniform1i(glGetUniformLocation(program,"bodyKind"),3);
+    glUniform1i(glGetUniformLocation(program,"patchDrawing"),false);
+    const auto drawLines=[&](const std::vector<glm::vec3>& vertices,GLenum mode,const glm::vec3& color,float size){
+        glBindVertexArray(lineVao);glBindBuffer(GL_ARRAY_BUFFER,lineBuffer);
+        glBufferData(GL_ARRAY_BUFFER,vertices.size()*sizeof(glm::vec3),vertices.data(),GL_DYNAMIC_DRAW);
+        glUniform3fv(glGetUniformLocation(program,"albedo"),1,glm::value_ptr(color));glPointSize(size);
+        glDrawArrays(mode,0,static_cast<int>(vertices.size()));
+    };
+    std::vector<glm::vec3> markers;
+    for(int planet=0;planet<static_cast<int>(planets.size());++planet)
+        if(!planets[planet].wormhole)markers.push_back(glm::vec3(Position(planet,seconds)-camera));
+    drawLines(markers,GL_POINTS,glm::vec3(.15f,.45f,.65f),3);
+    if(trajectories && !cachedAsteroids.empty()){
+        std::vector<glm::vec3> points;points.reserve(cachedAsteroids.size());
+        for(const auto& p:cachedAsteroids)points.push_back(glm::vec3(p-camera));
+        drawLines(points,GL_POINTS,glm::vec3(.13f,.10f,.07f),1);
+    }
+    if(trajectories){
+        if(cachedOrbits.size()!=planets.size()){
+            cachedOrbits.resize(planets.size());
+            for(int planet=0;planet<static_cast<int>(planets.size());++planet){
+                const double period=glm::two_pi<double>()/OrbitalMechanics::MeanMotion(GravityFor(planet),planets[planet].orbit.semiMajorAxis);
+                for(int point=0;point<=256;++point)cachedOrbits[planet].push_back(RelativePosition(planet,period*point/256.0));
+            }
+        }
+        for(int planet=0;planet<static_cast<int>(planets.size());++planet){
+            std::vector<glm::vec3> path;const auto offset=Position(planets[planet].parent,seconds)-camera;
+            for(const auto& point:cachedOrbits[planet])path.push_back(glm::vec3(point+offset));
+            drawLines(path,GL_LINE_STRIP,glm::vec3(.035f,.12f,.18f),1);
+        }
+    }
     const auto clip = vp * glm::vec4(glm::vec3(Position(selected, seconds) - camera), 1);
     if (showSelection && clip.w > 0)
     {
@@ -900,7 +996,6 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
         {
             glUseProgram(program);
             glUniform1i(glGetUniformLocation(program, "bodyKind"), 4);
-            glDisable(GL_DEPTH_TEST);
             std::vector<glm::vec3> crosshair;
             for (int sign : {-1, 1})
             {
@@ -910,14 +1005,18 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
                 crosshair.push_back({position.x, position.y + sign * .020f * aspect, 0});
             }
             drawLines(crosshair, GL_LINES, glm::vec3(.2f, 1, .75f), 1);
-            glEnable(GL_DEPTH_TEST);
         }
     }
     glBindVertexArray(0);
+    glUniform1i(glGetUniformLocation(program,"guideOverlay"),false);
+    glDepthMask(depthMask);if(depth)glEnable(GL_DEPTH_TEST);
+    glBlendFuncSeparate(src,dst,srcA,dstA);if(!blend)glDisable(GL_BLEND);
 }
 
 void StarSystem::Release()
 {
+    wormholeSkyCache.Release();
+    vegetation.Release();
     wormhole.Release();
     saturnRings.Release();
     stellarActivity.Release();
@@ -931,4 +1030,25 @@ void StarSystem::Release()
         if (buffer)
             glDeleteBuffers(1, &buffer);
     program = sphereVao = sphereBuffer = lineVao = lineBuffer = patchVao = patchBuffer = 0;
+}
+
+glm::dvec3 StarSystem::SaturnWormholePosition(double seconds) {
+    static const StarSystem solar=[](){StarSystem model;model.LoadSolarSystem();return model;}();
+    for(int i=0;i<static_cast<int>(solar.planets.size());++i)
+        if(solar.planets[i].wormhole)return solar.Position(i,seconds);
+    return glm::dvec3(0);
+}
+
+unsigned StarSystem::WormholeSky(double seconds,const WormholeBackground& background) {
+    if(!program || !solarSystem)return 0;
+    const auto previousCamera=camera;
+    const auto mouth=SaturnWormholePosition(seconds);
+    camera=mouth;
+    const unsigned result=wormholeSkyCache.Capture(seconds,[&](const glm::vec3& direction,const glm::vec3& up){
+        const auto vp=glm::perspective(glm::half_pi<float>(),1.f,1e-6f,20000.f)*glm::lookAt(glm::vec3(0),direction,up);
+        if(background)background(vp,mouth);
+        Render(90.f,1.f,direction,up,seconds,false,false,false,0);
+    });
+    camera=previousCamera;
+    return result;
 }

@@ -14,6 +14,9 @@
 #include "CelestialPhenomena.h"
 #include "WormholePhysics.h"
 #include "CameraZoom.h"
+#include "WormholeTransit.h"
+#include "BlackHoleJourney.h"
+#include "TesseractSpace.h"
 #include <algorithm>
 #include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
@@ -292,6 +295,73 @@ int main()
     Require(rejected,"Nearby search accepted a negative radius");
     std::cout<<"Navigation checks: coordinate precision, nearest-star tree, global names, planetary satellites, TON 618 and flight units passed\n";
     Require(catalogue.Positions().size()==Universe::StarCount,"Stellar catalogue size changed");
+    {
+        const auto core=MilkyWayModel::ToWorldAu({4,0,0}),rim=MilkyWayModel::ToWorldAu({15.7,0,0});
+        Require(Universe::StellarDensity(0,core)>Universe::StellarDensity(0,rim)*20,"Star density does not thin at the Galactic rim");
+        Require(Universe::StellarDensity(0,core)>Universe::StellarDensity(0,MilkyWayModel::ToWorldAu({4,4,0}))*20,"Star density ignores height above disk");
+        size_t mainResidents=0;
+        for(int galaxy:{0,1,4,5,6,7,8,9,10,27,Universe::StreamGalaxyCount-1}){
+            const auto group=Universe::GalaxyAt(galaxy);
+            const auto position=galaxy==0?glm::dvec3(0):group.centerAu;
+            catalogue.UpdateStream(position,7);
+            Require(!catalogue.StreamStars().empty(),"Entered galaxy has no seeded stars");
+            const auto saved=catalogue.StreamStars();const auto revision=catalogue.StreamRevision();
+            Require(!catalogue.UpdateStream(position,7) && catalogue.StreamRevision()==revision,"Stationary camera regenerated its star cells");
+            for(size_t i=0;i<saved.size();i+=std::max<size_t>(1,saved.size()/12)){
+                const auto& star=saved[i];const int id=Universe::StarId(star.index);
+                Require(Universe::StarIndex(id)==star.index && Universe::StreamExists(star.index),"Streamed star identity is invalid");
+                Require(Universe::StarPosition(star.index)==star.position,"Seeded cell position depends on camera");
+                Require(Universe::StarPosition(star.index,619)!=star.position,"Changing seed did not change a streamed star");
+                Require(catalogue.Nearest(star.position)==id,"Nearest lookup omitted streamed star");
+                const auto found=navigator.Find(Universe::StarName(star.index),0);
+                Require(!found.empty() && found.front().system==id,"Streamed star name is not globally searchable");
+                StarSystem first,again;first.Generate(id,Universe::StarName(star.index));again.Generate(id,Universe::StarName(star.index));
+                Require(first.Planets().size()==again.Planets().size() && first.Planets()[0].seed==again.Planets()[0].seed,"Streamed planetary system changed after revisit");
+            }
+            catalogue.UpdateStream(glm::dvec3(1e18),7);Require(catalogue.StreamStars().empty() && catalogue.ResidentCells()==0,"Distant travel retained obsolete cells");
+            catalogue.UpdateStream(position,7);
+            Require(catalogue.StreamStars().size()==saved.size(),"Revisit changed seeded star count");
+            for(size_t i=0;i<saved.size();++i)Require(catalogue.StreamStars()[i].index==saved[i].index && catalogue.StreamStars()[i].position==saved[i].position,"Revisit changed seeded cell contents");
+            catalogue.UpdateStream(position,13);
+            Require(catalogue.StreamStars().size()>=saved.size(),"Higher camera magnitude removed resident stars");
+            mainResidents=std::max(mainResidents,catalogue.StreamStars().size());
+        }
+        const auto m32=navigator.Find("NGC221",0);Require(!m32.empty() && m32.front().name=="M32 (NGC 221)","M32 alias missing");
+        Require(navigator.Parent(m32.front()).name=="Andromeda (M31)","M32 hierarchy lost Andromeda");
+        std::cout<<"Seeded streaming: "<<Universe::StreamGalaxyCount<<" galaxy domains, "<<Universe::StreamCount<<" virtual candidate identities; maximum sampled residents="<<mainResidents<<"; repeatability, density, magnitude, eviction and navigation passed\n";
+        catalogue.UpdateStream(glm::dvec3(1e18),7);
+    }
+    {
+        const auto m31=Universe::GalaxyAt(4);
+        const auto sunDirection=glm::normalize(m31.centerAu);
+        const glm::dvec3 queries[]={glm::dvec3(0),m31.centerAu-sunDirection*m31.axesAu.x*3.5,
+            m31.centerAu+m31.rotation*glm::dvec3(m31.axesAu.x*.55,0,0),glm::dvec3(8e13,-2e13,3e13)};
+        for(const auto& point:queries){
+            catalogue.UpdateStream(point,13);
+            const auto verify=[&](){
+                int expected=-2;double best=glm::dot(point,point);
+                const auto consider=[&](int id,const glm::dvec3& position){const auto d=position-point;const double r=glm::dot(d,d);if(r<best){best=r;expected=id;}};
+                for(int i=0;i<Universe::StarCount;++i)consider(Universe::StarId(i),catalogue.Positions()[i]);
+                for(const auto& star:catalogue.StreamStars())consider(Universe::StarId(star.index),star.position);
+                Require(catalogue.Nearest(point)==expected,"Bounded nearest search disagrees with full population scan");
+                const auto visits=catalogue.LastNearestTreeVisits();
+                Require(visits<20000,"Remote galaxy nearest lookup traversed too much of the catalogue");
+                Require(catalogue.Nearest(point)==expected && catalogue.LastNearestTreeVisits()==0,"Repeated nearest lookup was not cached");
+            };
+            verify();
+            std::vector<std::pair<double,int>> reference;
+            const double radius=1e6*Astronomy::auPerLightYear,radius2=radius*radius;
+            const auto consider=[&](int id,const glm::dvec3& p){const auto d=p-point;const double r=glm::dot(d,d);if(r<=radius2)reference.emplace_back(r,id);};
+            for(int i=0;i<Universe::StarCount;++i)consider(Universe::StarId(i),catalogue.Positions()[i]);
+            for(const auto& star:catalogue.StreamStars())consider(Universe::StarId(star.index),star.position);
+            const size_t count=std::min<size_t>(20,reference.size());
+            std::partial_sort(reference.begin(),reference.begin()+count,reference.end());
+            const auto closest=catalogue.Closest(point,radius,20);Require(closest.size()==count,"Bounded radius query lost entries");
+            for(size_t i=0;i<count;++i)Require(closest[i]==reference[i].second,"Bounded radius query changed nearest ordering");
+            catalogue.UpdateStream(glm::dvec3(1e18),13);verify(); // Resident eviction must invalidate nearest results.
+        }
+        std::cout<<"Spatial bounds: nearest and radius queries match exhaustive scans; repeated queries cached; remote traversal budget passed\n";
+    }
     for(int index=0;index<4;++index){
         const auto first=Universe::GalaxyAt(index),again=Universe::GalaxyAt(index);
         Require(first.key==again.key && first.centerAu==again.centerAu && first.axesAu==again.axesAu
@@ -300,9 +370,11 @@ int main()
         if(index>0)Require(first.centerAu!=Universe::GalaxyAt(index,619).centerAu,"World seed did not change galaxy position");
     }
     const std::array<Universe::Galaxy,4> boundaries={Universe::GalaxyAt(0),Universe::GalaxyAt(1),Universe::GalaxyAt(2),Universe::GalaxyAt(3)};
+    size_t formerSolarBall=0;
     for(int index=0;index<Universe::StarCount;++index){
         const int galaxy=Universe::GalaxyForStar(index);
         const auto position=catalogue.Positions()[index];
+        if(index>=Universe::LegacyStarCount && index<Universe::LegacyStarCount+262144 && glm::length(position)<2500*Astronomy::auPerLightYear)++formerSolarBall;
         Require(boundaries[galaxy].Contains(position),"Star generated outside galaxy boundary");
         if(index%1543==0){Require(position==Universe::StarPosition(index),"Camera-independent star key is not repeatable");
         Require(Universe::GalaxyAt(galaxy,619).Contains(Universe::StarPosition(index,619)),"Alternate-seed star outside galaxy boundary");}
@@ -311,6 +383,8 @@ int main()
             Require(std::find(nearby.begin(),nearby.end(),Universe::StarId(index))!=nearby.end(),"Proximity lookup lost a star");
         }
     }
+    Require(formerSolarBall<5000,"A dense spherical procedural population remains around the Sun");
+    std::cout<<"Former 262144-star Solar ball now contains "<<formerSolarBall<<" of those density-distributed entries within 2500 ly\n";
     Require(Universe::StarPosition(37)!=Universe::StarPosition(37,619),"World seed did not change stars");
     Require(std::abs(CameraZoom::Magnification(45,CameraZoom::MinimumFieldOfView(45))-20)<1e-5,"Zoom did not reach 20x");
     Require(std::abs(CameraZoom::MagnitudeLimit(7,20)-13.50515f)<.001 && CameraZoom::MagnitudeLimit(7,1)==7 && CameraZoom::MagnitudeLimit(29,20)==30,"Zoom magnitude boost/clamp failed");
@@ -326,6 +400,77 @@ int main()
         if(r>1000)farMaxEdge=std::max(farMaxEdge,edge);
     }
     Require(nearMaxEdge<4 && farMaxEdge>100,"Terrain mesh does not lower detail with distance");
+    {
+        const auto profile=PlanetWeather::Miller();
+        const auto calm=PlanetWeather::Make(profile,12345,0,0),breeze=PlanetWeather::Make(profile,12345,1,0),gale=PlanetWeather::Make(profile,12345,3,0);
+        const auto repeated=PlanetWeather::Make(profile,12345,1,0);
+        Require(breeze.phases==repeated.phases && breeze.spectrum==repeated.spectrum,"Paused weather is not deterministic");
+        double breezeEnergy=0,galeEnergy=0;
+        for(int i=0;i<512;++i){
+            const glm::dvec3 point(i*2.71,10,i*.31);const auto n=glm::normalize(glm::vec3(.3,.4,.7));
+            const double b=PlanetWeather::WaveHeight(breeze,point,n),g=PlanetWeather::WaveHeight(gale,point,n);
+            Require(PlanetWeather::WaveHeight(calm,point,n)==0,"Calm wind retained wind-driven waves");
+            Require(std::abs(b-PlanetWeather::WaveHeight(breeze,point+glm::dvec3(4096,0,0),n))<.0001,"Ocean coordinates wrap with a visible seam");
+            breezeEnergy+=b*b;galeEnergy+=g*g;
+        }
+        Require(galeEnergy>breezeEnergy*3,"Wind speed did not increase ocean energy");
+        StarSystem earth;earth.LoadSolarSystem();const auto& body=earth.Planets()[2];
+        PlanetWeather::Profile earthProfile{body.seed,6371000,body.seaLevel,288,8,false,true};
+        const auto storms=PlanetWeather::Make(earthProfile,0);
+        int active=0;
+        for(int i=0;i<3;++i)if(storms.storms[i].w>0){
+            ++active;const auto n=glm::vec3(storms.storms[i]);
+            Require(std::abs(n.y)>.087 && std::abs(n.y)<.6 && PlanetWeather::Ocean(earthProfile,n),"Tropical cyclone formed at a pole/equator or over land");
+            const auto east=glm::normalize(glm::cross(glm::vec3(0,1,0),n));const float a=storms.shapes[i].x*.23f;
+            const auto wall=n*std::cos(a)+east*std::sin(a);
+            Require(PlanetWeather::WindSpeed(storms,wall)>PlanetWeather::WindSpeed(storms,n)+10,"Cyclone eye is not calmer than the eyewall");
+            Require(storms.shapes[i].y*n.y>0,"Cyclone rotation has the wrong hemisphere");
+        }
+        Require(active>0,"Seeded Earth weather has no ocean storms");
+        auto hot=earthProfile;hot.temperature=700;
+        for(const auto& storm:PlanetWeather::Make(hot,0).storms)Require(storm.w==0,"Water cyclone formed on an overheated planet");
+        const auto later=PlanetWeather::Make(profile,12345+1800);
+        Require(later.phases!=breeze.phases,"Ocean waves do not advance with simulation time");
+        for(double t:{-1e9,1e12})Require(std::isfinite(PlanetWeather::WaveHeight(PlanetWeather::Make(profile,t),{12,34,56},{0,1,0})),"Accelerated weather produced invalid waves");
+        Require(earth.WeatherState(2,0).auroraAxis.w>0 && earth.WeatherState(0,0).auroraAxis.w==0 && earth.WeatherState(1,0).auroraAxis.w==0,"Aurora eligibility ignored magnetic activity or atmosphere");
+        auto auroraProfile=profile;auroraProfile.metalCore=false;
+        Require(PlanetWeather::Make(auroraProfile,0).auroraAxis.w==0,"Aurora ignored metal core eligibility");
+        const auto panurge=InterstellarWorlds::CompanionOrbit(InterstellarWorlds::neutronStarId-4),miller=InterstellarWorlds::Get(0).orbit;
+        Require(miller.semiMajorAxis*(1+miller.eccentricity)<panurge.semiMajorAxis*(1-panurge.eccentricity),"Miller's orbit crossed outside Panurge's periapsis");
+        const auto neutron=StarSystem::DescribeStar(InterstellarWorlds::neutronStarId,"Panurge");
+        Require(neutron.classification.find("Neutron")!=std::string::npos && std::abs(neutron.radiusSolar*Astronomy::solarRadiusAu*Astronomy::metresPerAu-12000)<.01,"Panurge is not a compact neutron-star companion");
+        std::cout<<"Weather: deterministic circulation/storms, ocean-only cyclones, calm eyes, wind-driven wave energy and periodic coordinates passed\n";
+    }
+    {
+        BlackHoleJourney journey;
+        for(int frame=0;frame<480;++frame)journey.Advance(0,true,.25,.98);
+        Require(!journey.tesseract,"A stationary camera reached the interior through a timer");
+        double lastBlend=0;
+        for(int i=0;i<=500;++i){journey.Advance(0,true,.016,1-i*.001);
+            Require(journey.interiorBlend>=lastBlend && journey.interiorBlend-lastBlend<.005,"Interior reveal is discontinuous with depth");lastBlend=journey.interiorBlend;}
+        Require(journey.tesseract && journey.interiorBlend==1,"Gargantua spatial interior did not appear");
+        journey.Advance(0,false,.25);Require(!journey.inside && !journey.tesseract && journey.insideSeconds==0,"Leaving the horizon retained the interior scene");
+        for(int id=GalacticCores::firstId;id<GalacticCores::firstId+GalacticCores::count;++id){
+            for(int frame=0;frame<80;++frame)journey.Advance(id,true,.25,.1);
+            Require(journey.inside && !journey.tesseract,"A non-Gargantua black hole acquired a tesseract");
+        }
+        const double r=WormholePhysics::ThroatRadiusAu();const auto rotation=WormholePhysics::SaturnToGargantuaRotation();
+        const glm::dvec3 a(12,3,-2),b(300,40,-8),direction(0,0,1);
+        const auto crossing=WormholeTransit::Sweep(a+direction*r*3.,a-direction*r*3.,a,a,b,rotation,r);
+        Require(crossing.entered && glm::length(crossing.position-b)>r*1.5,"Fast transit failed to exit the paired throat");
+        Require(glm::length(glm::transpose(rotation)*(rotation*direction)-direction)<1e-12,"Wormhole orientations are not reciprocal");
+        Require(!WormholeTransit::Sweep(a+direction*r*3.,a+direction*r*2.,a,a,b,rotation,r).entered,"A near approach triggered premature transit");
+        Require(!WormholeTransit::Sweep(a,a-direction*r*3.,a,a,b,rotation,r).entered,"An arrival inside the mouth immediately bounced back");
+        const auto miss=glm::dvec3(r*1.1,0,0);
+        Require(!WormholeTransit::Sweep(a+miss+direction*r*3.,a+miss-direction*r*3.,a,a,b,rotation,r).entered,"A grazing miss triggered wormhole transit");
+        const auto reverse=WormholeTransit::Sweep(b+direction*r*3.,b-direction*r*3.,b,b,a,glm::transpose(rotation),r);
+        Require(reverse.entered && glm::length(reverse.position-a)<r*6,"Return wormhole transit failed");
+        glm::dvec3 landing(0,-6,0);Require(TesseractSpace::Land({0,2,0},landing)
+            && std::abs(landing.y-(TesseractSpace::deckTop+TesseractSpace::eyeHeight))<1e-12,"Interior landing tunneled through the deck");
+        glm::dvec3 gap(TesseractSpace::roomPitch.x*.5,-6,0);Require(!TesseractSpace::Land({gap.x,2,0},gap),"Interior landing hit an empty corridor gap");
+        glm::dvec3 upper(0,4,0);Require(!TesseractSpace::Land({0,1,0},upper),"Ascending interior camera snapped to a deck");
+        std::cout<<"Journey checks: spatial continuous reveal, stationary camera, deck collisions; reciprocal wormhole crossings passed\n";
+    }
     std::cout<<"Galaxy bounds/repeatability: "<<Universe::StarCount<<" stars; terrain vertices="<<lod.size()<<"\n";
     auto ship=InterstellarWorlds::DepartureState(0);
     {

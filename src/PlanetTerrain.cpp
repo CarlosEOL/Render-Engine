@@ -1,5 +1,7 @@
 #include "PlanetTerrain.h"
 #include "Astronomy.h"
+#include "PlanetWeather.h"
+#include <string>
 #include "glad/glad.h"
 #include <glm/gtc/type_ptr.hpp>
 #include <stdexcept>
@@ -45,10 +47,12 @@ std::vector<glm::vec3> PlanetTerrain::SpherePatch(const glm::vec3& direction,int
 }
 
 float PlanetTerrain::SurfaceElevation(const glm::vec3& direction,unsigned int seed,float wavePhase,
-    float seaLevel,float relief,float waves,bool oceanOnly) {
+    float seaLevel,float relief,float waves,bool oceanOnly,const PlanetWeather::State* weather) {
     const float wave = (std::sin(35.0f * direction.y + 4.0f * std::sin(10.0f * direction.x) + wavePhase)
         + 0.35f * std::sin(80.0f * direction.y + 8.0f * direction.x - wavePhase)) / 1.35f;
-    if(oceanOnly)return waves*wave;
+    const float waveElevation=weather && weather->parameters.w>0
+        ?static_cast<float>(PlanetWeather::WaveHeight(*weather,glm::dvec3(direction)*static_cast<double>(weather->parameters.w),direction)/weather->parameters.w):waves*wave;
+    if(oceanOnly)return waveElevation;
     auto position = direction * 2.6f;
     float continents = 0.0f;
     float amplitude = 0.5f;
@@ -62,7 +66,7 @@ float PlanetTerrain::SurfaceElevation(const glm::vec3& direction,unsigned int se
     const float height = 0.75f * continents + 0.22f * (ridges * ridges - 0.5f)
         * glm::smoothstep(-0.1f, 0.25f, continents);
     const float water = 1.0f - glm::smoothstep(seaLevel - 0.008f, seaLevel + 0.008f, height);
-    return relief * glm::max(height, seaLevel) + water * waves * wave;
+    return relief * glm::max(height, seaLevel) + water * waveElevation;
 }
 
 float PlanetTerrain::SurfaceRadius(const glm::vec3& direction,unsigned int seed,float phase,
@@ -144,7 +148,7 @@ std::vector<glm::vec3> PlanetTerrain::SphereVertices(int latitudeSegments, int l
 }
 
 const char* PlanetTerrain::ShaderFunctions() {
-    return R"(
+    static const std::string source=std::string(PlanetWeather::ShaderFunctions())+R"(
 uniform float terrainSeed;
 uniform float seaLevel;
 uniform float terrainRelief;
@@ -210,6 +214,7 @@ float terrainHeight(vec3 direction) {
 }
 
 float oceanWave(vec3 direction, float phase) {
+    if(weatherParameters.w>0.0)return weatherWaveHeight(direction*weatherParameters.w,direction)/max(waterWaveHeight*weatherParameters.w,1e-9);
     return (sin(35.0 * direction.y + 4.0 * sin(10.0 * direction.x) + phase)
         + 0.35 * sin(80.0 * direction.y + 8.0 * direction.x - phase)) / 1.35;
 }
@@ -226,10 +231,10 @@ float surfaceElevation(vec3 direction,float height,float phase,bool oceanOnly){
     return (oceanOnly?0.0:terrainRelief*max(height,seaLevel))+water*waterWaveHeight*oceanWave(direction,phase);
 }
 )";
+    return source.c_str();
 }
-
 const char* PlanetTerrain::SurfaceDetailShaderFunctions(){
-    return R"(
+    static const std::string source=std::string(PlanetWeather::SurfaceShaderFunctions())+R"(
 float groundNoise(vec3 p){
     vec3 cell=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);
     float a=mix(mix(terrainHash(mod(cell,256.0)),terrainHash(mod(cell+vec3(1,0,0),256.0)),f.x),
@@ -246,6 +251,10 @@ void groundDetail(inout vec3 material,inout vec3 normal,vec3 delta,float water,f
     float fine=1.0-smoothstep(.35,.8,footprint*16.0);
     float grain=groundNoise(p*16.0),pebbles=groundNoise(p*2.0),strata=groundNoise(p*.25);
     float height=(pebbles*.035+strata*.10+grain*.006*fine)*(1.0-water);
+    if(water>.5 && weatherParameters.w>0.0){
+        normal=normalize(normal-weatherWaveGradient(p,normal,true)*fade);
+        return;
+    }
     if(water>.5)height=.025*(sin(dot(p,vec3(.7,.1,.5))*2.0+phase)+.4*sin(dot(p,vec3(-.3,.2,.8))*5.0-phase));
     vec3 dx=dFdx(delta),dy=dFdy(delta);
     vec3 r1=cross(dy,normal),r2=cross(normal,dx);
@@ -258,4 +267,5 @@ void groundDetail(inout vec3 material,inout vec3 normal,vec3 delta,float water,f
     material*=mix(1.0,variation,fade*(1.0-water));
 }
 )";
+    return source.c_str();
 }

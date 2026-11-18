@@ -2,12 +2,13 @@
 #include <glm/vec3.hpp>
 #include <glm/mat3x3.hpp>
 #include <vector>
+namespace PlanetWeather {struct State;}
 
 namespace PlanetTerrain {
     const char* ShaderFunctions();
     const char* SurfaceDetailShaderFunctions();
     float SurfaceElevation(const glm::vec3& direction, unsigned int seed, float phase,
-        float seaLevel, float relief, float waves, bool oceanOnly=false);
+        float seaLevel, float relief, float waves, bool oceanOnly=false,const PlanetWeather::State* weather=nullptr);
     std::vector<glm::vec3> SurfaceLodVertices(double radiusMetres);
     void ConfigureSurfacePatch(unsigned int program,const glm::dvec3& anchor,
         const glm::dmat3& rotation,const glm::dvec3& centerRelativeAu,double radiusMetres,float elevation);

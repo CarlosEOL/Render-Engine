@@ -5,6 +5,7 @@
 #include "InterstellarWorlds.h"
 #include "Astronomy.h"
 #include "NearbyGalaxies.h"
+#include "WormholePhysics.h"
 #include <algorithm>
 #include <cctype>
 #include <iomanip>
@@ -14,8 +15,8 @@ namespace {
 using Kind=NavigationEntry::Kind;
 std::string Normalize(const std::string& text){std::string out;for(unsigned char c:text)if(std::isalnum(c))out+=static_cast<char>(std::tolower(c));return out;}
 std::string Key(int id){return "system:"+std::to_string(id);}
-NavigationEntry Galaxy(int index){NavigationEntry e;e.kind=Kind::Galaxy;e.system=index;e.key="galaxy:"+std::to_string(index);e.parentKey="universe";e.name=index==0?"Milky Way":"Galaxy "+std::to_string(index);e.parent="Universe";e.type=index==0?"Barred spiral galaxy":"Procedural galaxy";e.anchorAu=Universe::GalaxyAt(index).centerAu;e.color={.7,.56,.37};return e;}
-NavigationEntry NearbyGalaxy(int index){const auto& g=NearbyGalaxies::Catalog.at(index);NavigationEntry e;e.kind=Kind::Galaxy;e.system=NearbyGalaxies::firstId+index;e.key="nearby-galaxy:"+std::to_string(index);e.parentKey="universe";e.name=g.name;e.parent="Universe";e.type=g.morphology==4?"Ring galaxy / Hubble observed image":"Catalogued nearby galaxy / illustrative morphology";e.anchorAu=g.Center();e.diameterKm=g.Radius()*2*Astronomy::metresPerAu/1000;e.color={.65,.74,.9};return e;}
+NavigationEntry Galaxy(int index){NavigationEntry e;e.kind=Kind::Galaxy;e.system=index>=Universe::MainStreamGalaxies?10000+index:index;e.key="galaxy:"+std::to_string(index);e.parentKey="universe";e.name=index==0?"Milky Way":index>=Universe::MainStreamGalaxies?"Field galaxy "+std::to_string(index-Universe::MainStreamGalaxies+1):"Galaxy "+std::to_string(index);e.parent="Universe";e.type=index==0?"Barred spiral galaxy":"Procedural galaxy";e.anchorAu=Universe::GalaxyAt(index).centerAu;e.color={.7,.56,.37};return e;}
+NavigationEntry NearbyGalaxy(int index){const auto& g=NearbyGalaxies::Catalog.at(index);NavigationEntry e;e.kind=Kind::Galaxy;e.system=NearbyGalaxies::firstId+index;e.key="nearby-galaxy:"+std::to_string(index);e.parentKey=index==5?"nearby-galaxy:0":"universe";e.name=g.name;e.parent=index==5?"Andromeda (M31)":"Universe";e.type=g.morphology==4?"Ring galaxy / Hubble observed image":g.morphology==5?"Compact elliptical companion galaxy":"Catalogued nearby galaxy / illustrative morphology";e.anchorAu=g.Center();e.diameterKm=g.Radius()*2*Astronomy::metresPerAu/1000;e.color={.65,.74,.9};return e;}
 void Load(StarSystem& model,int id,const std::string& name){if(id==-2)model.LoadSolarSystem();else if(GalacticCores::IsCore(id))model.LoadCore(id);else model.Generate(id,name);}
 }
 NavigationEntry NavigationCatalog::UniverseRoot() const{NavigationEntry e;e.kind=Kind::Universe;e.key="universe";e.name="Universe";e.type="Catalogue root";return e;}
@@ -35,7 +36,7 @@ void NavigationCatalog::Initialize(const Universe::Catalog& source){
         systems.push_back(std::move(e));
     };
     add(-2,"Sun",glm::dvec3(0));add(0,"Gargantua",glm::dvec3(0));
-    for(int id=4;id<=8;++id)add(id,"Orbiting star "+std::to_string(id-3),glm::dvec3(0));
+    for(int id=4;id<=8;++id)add(id,id==InterstellarWorlds::neutronStarId?"Panurge":"Orbiting star "+std::to_string(id-3),glm::dvec3(0));
     for(int i=0;i<Universe::LegacyStarCount;++i)add(Universe::StarId(i),Universe::StarName(i),source.Positions()[i]);
     for(int i=0;i<GalacticCores::count;++i){const auto core=GalacticCores::Get(GalacticCores::firstId+i);add(core.id,core.name,core.position);}
     for(const auto& nebula:CelestialPhenomena::Nebulae()){NavigationEntry e;e.kind=Kind::Nebula;e.system=nebula.id;e.key="nebula:"+std::to_string(nebula.id);e.parentKey="galaxy:0";e.name=nebula.name;e.parent="Milky Way";e.type=nebula.classification;e.anchorAu=nebula.positionAu;e.diameterKm=nebula.radiusLy*2*Astronomy::auPerLightYear*Astronomy::metresPerAu/1000;e.color=nebula.color;systems.push_back(e);}
@@ -43,10 +44,13 @@ void NavigationCatalog::Initialize(const Universe::Catalog& source){
 NavigationEntry NavigationCatalog::System(int id,double seconds) const{
     const int index=Universe::StarIndex(id);
     if(index>=Universe::LegacyStarCount){
-        NavigationEntry e;e.system=id;e.key=Key(id);e.name=Universe::StarName(index);e.anchorAu=catalog->Positions()[index];
+        NavigationEntry e;e.system=id;e.key=Key(id);e.name=Universe::StarName(index);e.anchorAu=catalog->Position(index);
         const auto star=StarSystem::DescribeStar(id,e.name);e.type=star.classification;e.temperature=star.temperature;e.luminosity=star.luminositySolar;
         e.diameterKm=2*star.radiusSolar*Astronomy::solarRadiusAu*Astronomy::metresPerAu/1000;
-        const int galaxy=Universe::GalaxyForStar(index);e.parentKey="galaxy:"+std::to_string(galaxy);e.parent=galaxy==0?"Milky Way":"Galaxy "+std::to_string(galaxy);
+        const int galaxy=Universe::GalaxyForStar(index);
+        const bool observed=galaxy>=4 && galaxy<Universe::MainStreamGalaxies;
+        e.parentKey=observed?"nearby-galaxy:"+std::to_string(galaxy-4):"galaxy:"+std::to_string(galaxy);
+        e.parent=observed?NearbyGalaxies::Catalog[galaxy-4].name:Galaxy(galaxy).name;
         e.color=star.temperature>7500?glm::vec3(.55,.72,1):star.temperature<4500?glm::vec3(1,.45,.18):glm::vec3(1,.85,.50);return e;
     }
     if(index>=0)return systems.at(7+index);
@@ -60,6 +64,10 @@ std::vector<NavigationEntry> NavigationCatalog::Bodies(int id,double seconds){
         for(int i=0;i<3;++i){const auto& body=InterstellarWorlds::Get(i);NavigationEntry e;e.kind=Kind::Planet;e.system=0;e.body=i+1;e.key=Key(0)+"/"+std::to_string(e.body);e.parentKey=Key(0);e.name=body.name;e.parent="Gargantua";e.type=body.classification;e.localAu=InterstellarWorlds::Orientation()*OrbitalMechanics::PositionAtTimeDouble(body.orbit,Astronomy::gargantuaGravityAu,seconds);e.diameterKm=body.radiusEarth*6371.0084*2;e.color=body.color;out.push_back(e);}
         NavigationEntry craft;craft.kind=Kind::Craft;craft.system=0;craft.body=9;craft.key="endurance";craft.parentKey=Key(0);craft.name="Endurance";craft.parent="Gargantua";craft.type="Spacecraft / finite-fuel gravity assist";craft.diameterKm=.05;craft.color={.65,.75,.8};out.push_back(craft);
         for(int i=0;i<2;++i){auto ranger=craft;ranger.body=10+i;ranger.key="ranger:"+std::to_string(i);ranger.parentKey=craft.key;ranger.parent="Endurance";ranger.name="Ranger "+std::to_string(i+1);ranger.type="Detachable spacecraft";ranger.diameterKm=.015;out.push_back(ranger);}
+        NavigationEntry mouth;mouth.kind=Kind::Planet;mouth.system=0;mouth.body=12;mouth.wormhole=true;
+        mouth.key=Key(0)+"/12";mouth.parentKey=Key(0);mouth.name="Gargantua Wormhole";mouth.parent="Gargantua";
+        mouth.type="Traversable Kerr-like wormhole / connected to Saturn";mouth.localAu=WormholePhysics::GargantuaPosition(seconds);
+        mouth.diameterKm=2*WormholePhysics::ThroatRadiusKm;mouth.color={.32f,.72f,.9f};out.push_back(mouth);
         return out;
     }
     if(GalacticCores::IsCore(id) || CelestialPhenomena::IsNebula(id))return {};
@@ -75,6 +83,15 @@ std::vector<NavigationEntry> NavigationCatalog::Find(const std::string& query,do
     const auto q=Normalize(query);std::vector<NavigationEntry> result;
     const auto matches=[&](const NavigationEntry& entry){auto name=Normalize(entry.name);return q.empty() || name.find(q)!=std::string::npos || (entry.system==-2 && entry.kind==Kind::Star && q=="solarsystem") || (entry.kind==Kind::Core && q=="blackhole") || (entry.name=="Sagittarius A*" && (q=="sgra" || q=="sgra*"));};
     const std::string prefix="proceduralstar";
+    const std::string seedPrefix="seedstar";
+    if(q.rfind(seedPrefix,0)==0){
+        try{size_t used=0;const auto serial=std::stoll(q.substr(seedPrefix.size()),&used);
+            if(used>0 && serial>=Universe::StreamFirstId && serial<Universe::StreamFirstId+Universe::StreamCount){
+                const int index=Universe::StarIndex(static_cast<int>(serial));
+                if(Universe::StreamExists(index)){auto e=System(static_cast<int>(serial),seconds);if(matches(e))result.push_back(e);for(auto body:Bodies(e.system,seconds))if(matches(body))result.push_back(std::move(body));}
+            }
+        }catch(const std::exception&){}
+    }
     if(q.rfind(prefix,0)==0){
         const auto start=prefix.size();size_t end=start;while(end<q.size() && std::isdigit(static_cast<unsigned char>(q[end])))++end;
         if(end>start){
@@ -83,7 +100,9 @@ std::vector<NavigationEntry> NavigationCatalog::Find(const std::string& query,do
             }catch(const std::exception&){} // Invalid/overflowing names simply have no result.
         }else if(q==prefix){for(int i=0;i<1000;++i)result.push_back(System(Universe::StarId(Universe::LegacyStarCount+i),seconds));}
     }
+    if(q.empty() || q==seedPrefix)for(const auto& star:catalog->StreamStars()){auto e=System(Universe::StarId(star.index),seconds);if(matches(e))result.push_back(std::move(e));if(result.size()>=1000)break;}
     for(int i=0;i<4;++i){auto galaxy=Galaxy(i);if(matches(galaxy))result.push_back(galaxy);}
+    for(int i=Universe::MainStreamGalaxies;i<Universe::StreamGalaxyCount;++i){auto galaxy=Galaxy(i);if(matches(galaxy))result.push_back(galaxy);}
     for(int i=0;i<static_cast<int>(NearbyGalaxies::Catalog.size());++i){auto galaxy=NearbyGalaxy(i);if(matches(galaxy) || Normalize(NearbyGalaxies::Catalog[i].aliases).find(q)!=std::string::npos)result.push_back(galaxy);}
     for(auto system:systems){
         if(system.system>=4 && system.system<=8)system=System(system.system,seconds);
@@ -106,6 +125,7 @@ std::vector<NavigationEntry> NavigationCatalog::Find(const std::string& query,do
 std::vector<NavigationEntry> NavigationCatalog::Nearby(const glm::dvec3& anchor,const glm::dvec3& local,double radiusLy,double seconds){
     if(!std::isfinite(radiusLy) || radiusLy<=0 || radiusLy>1e12)throw std::invalid_argument("Enter a radius greater than zero, up to 1e12 light-years.");
     std::vector<NavigationEntry> result;const double radius=radiusLy*Astronomy::auPerLightYear;
+    catalog->UpdateStream(anchor+local,7);
     for(auto entry:systems){if(entry.kind==Kind::Nebula)continue;if(entry.system>=4 && entry.system<=8)entry=System(entry.system,seconds);entry.distanceAu=entry.Distance(anchor,local);if(entry.distanceAu<=radius)result.push_back(std::move(entry));}
     for(int id:catalog->Closest(anchor+local,radius,1000))if(Universe::StarIndex(id)>=Universe::LegacyStarCount){auto e=System(id,seconds);e.distanceAu=e.Distance(anchor,local);result.push_back(std::move(e));}
     std::sort(result.begin(),result.end(),[](const auto& a,const auto& b){return a.distanceAu<b.distanceAu;});if(result.size()>1000)result.resize(1000);
@@ -114,8 +134,13 @@ std::vector<NavigationEntry> NavigationCatalog::Nearby(const glm::dvec3& anchor,
 }
 std::vector<NavigationEntry> NavigationCatalog::Children(const NavigationEntry& parent,double seconds){
     std::vector<NavigationEntry> result;
-    if(parent.kind==Kind::Universe){for(int i=0;i<4;++i)result.push_back(Galaxy(i));for(int i=0;i<static_cast<int>(NearbyGalaxies::Catalog.size());++i)result.push_back(NearbyGalaxy(i));result.push_back(System(0));result.push_back(System(GalacticCores::tonId));return result;}
-    if(parent.kind==Kind::Galaxy){for(const auto& e:systems)if(e.parentKey==parent.key)result.push_back(e);if(result.size()>500)result.resize(500);return result;}
+    if(parent.kind==Kind::Universe){for(int i=0;i<4;++i)result.push_back(Galaxy(i));for(int i=0;i<static_cast<int>(NearbyGalaxies::Catalog.size());++i){auto e=NearbyGalaxy(i);if(e.parentKey=="universe")result.push_back(e);}for(int i=Universe::MainStreamGalaxies;i<Universe::StreamGalaxyCount;++i)result.push_back(Galaxy(i));result.push_back(System(0));result.push_back(System(GalacticCores::tonId));return result;}
+    if(parent.kind==Kind::Galaxy){
+        for(const auto& e:systems)if(e.parentKey==parent.key)result.push_back(e);
+        for(int i=0;i<static_cast<int>(NearbyGalaxies::Catalog.size());++i){auto e=NearbyGalaxy(i);if(e.parentKey==parent.key)result.push_back(e);}
+        for(const auto& star:catalog->StreamStars()){auto e=System(Universe::StarId(star.index),seconds);if(e.parentKey==parent.key)result.push_back(std::move(e));if(result.size()>=500)break;}
+        if(result.size()>500)result.resize(500);return result;
+    }
     if(parent.kind==Kind::Group){
         StarSystem solar;solar.LoadSolarSystem();int i=0;for(const auto& orbit:solar.AsteroidOrbits()){
             NavigationEntry e;e.kind=Kind::Asteroid;e.system=-2;e.body=i++;e.key="asteroid:"+std::to_string(e.body);e.parentKey="small-bodies";std::ostringstream name;name<<"Solar asteroid "<<std::setfill('0')<<std::setw(4)<<e.body+1;e.name=name.str();e.parent="Sun";e.type="Representative belt / Kuiper object";const auto p=OrbitalMechanics::PositionAtTimeDouble(orbit,Astronomy::solarGravityAu,seconds);e.localAu={p.x,p.z,-p.y};e.color={.4,.35,.3};result.push_back(e);
@@ -143,6 +168,7 @@ NavigationEntry NavigationCatalog::Object(int system,int body,double seconds){
 NavigationEntry NavigationCatalog::Parent(const NavigationEntry& entry,double seconds){
     if(entry.parentKey=="universe" || entry.kind==Kind::Universe)return UniverseRoot();
     if(entry.parentKey.rfind("galaxy:",0)==0)return Galaxy(std::stoi(entry.parentKey.substr(7)));
+    if(entry.parentKey.rfind("nearby-galaxy:",0)==0)return NearbyGalaxy(std::stoi(entry.parentKey.substr(14)));
     if(entry.parentKey=="small-bodies"){NavigationEntry e;e.kind=Kind::Group;e.system=-2;e.key="small-bodies";e.parentKey=Key(-2);e.name="Asteroid / Kuiper belt";return e;}
     for(const auto& e:systems)if(e.key==entry.parentKey)return System(e.system,seconds);
     for(const auto& e:Bodies(entry.system,seconds))if(e.key==entry.parentKey)return e;

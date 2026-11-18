@@ -1,9 +1,12 @@
 #pragma once
+#include <glm/mat3x3.hpp>
 #include "OrbitalMechanics.h"
 
 // Fictional Saturn satellite. Optical metric parameters do not contribute
 // gravitational mass to the Solar System's prescribed two-body hierarchy.
 namespace WormholePhysics {
+glm::dvec3 GargantuaPosition(double seconds);
+glm::dmat3 SaturnToGargantuaRotation();
 inline constexpr int SaturnIndex = 5;
 inline constexpr double ThroatRadiusKm = 1000;
 inline constexpr double OrbitRadiusKm = 3000000;

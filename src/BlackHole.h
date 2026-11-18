@@ -13,6 +13,8 @@
 #include "UniverseCatalog.h"
 #include "MilkyWaySky.h"
 #include "GalacticCore.h"
+#include "KerrWormhole.h"
+#include "WormholeSky.h"
 
 class BlackHole {
 public:
@@ -36,16 +38,26 @@ public:
     float GargantuaDiskBrightness() const {return diskBrightness;}
     void SetLensingDiagnostic(bool value) { lensingDiagnostic=value; }
     void SetHotFlowDiagnostic(bool value) { hotFlowDiagnostic=value; }
+    void SetAccretionCloudsEnabled(bool value) { accretionCloudsEnabled=value; }
     void SetAtmospheresEnabled(bool enabled) { atmospheresEnabled=enabled; }
+    void SetWeatherCloudsEnabled(bool enabled) { weatherCloudsEnabled=enabled; }
     void SetOceanReflectionsEnabled(bool enabled) { oceanReflectionsEnabled=enabled; }
+    void SetWeather(float windScale,float stormScale){weatherWindScale=windScale;weatherStormScale=stormScale;}
     void SetGalaxyAutoExposure(bool enabled){if(galaxies.SetAutoExposure(enabled))skyCubeDirty=true;}
     unsigned int LensingSourceDepthTexture() const { return sourceDepth; }
-    unsigned int WormholeSky() const {if(!skyRefreshDeferred && (skyCubeDirty || glm::length(skyCubeOrigin)>1.0))BuildSkyCube();return skyCube;}
+    unsigned int WormholeSky(double seconds=0) const;
+    static glm::dvec3 GargantuaWormholePosition(double seconds);
+    void SetWormholeSky(unsigned int texture){solarWormholeSky=texture;}
+    void SetWormholeEnabled(bool value){gargantuaWormhole.SetEnabled(value);}
     bool SetSkyRefreshDeferred(bool value){const bool flush=skyRefreshDeferred && !value && skyCubeDirty;skyRefreshDeferred=value;return flush;}
     size_t LastSubmittedStars() const {return lastSubmittedStars;}
+    size_t ResidentStreamStars() const {return catalogue.StreamStars().size();}
+    size_t ResidentStarCells() const {return catalogue.ResidentCells();}
+    void SetGalaxyMagnitudeLimit(float value){value=glm::clamp(value,-2.f,30.f);if(galaxyMagnitudeLimit!=value){galaxyMagnitudeLimit=value;skyCubeDirty=true;}}
     void RenderBackground(const glm::mat4& vp,const glm::dvec3& camera,bool photons=false,
-        double seconds=0,const glm::dvec3& detector=glm::dvec3(0)) const;
-    void RenderCore(const glm::mat4& vp,const glm::dvec3& localCamera,int coreId,double seconds) const;
+        double seconds=0,const glm::dvec3& detector=glm::dvec3(0),bool includeLocal=true) const;
+    void RenderCore(const glm::mat4& vp,const glm::dvec3& localCamera,int coreId,double seconds,
+        bool physicalObserver=false,const glm::vec3& physicalBeta=glm::vec3(0)) const;
     std::vector<int> NearbyStars(const glm::dvec3& camera) const { return catalogue.Nearby(camera); }
     const Universe::Catalog& Catalogue() const {return catalogue;}
     int NearestStar(const glm::dvec3& camera) const {return catalogue.Nearest(camera);}
@@ -55,10 +67,10 @@ public:
     float MagnitudeLimit() const {return magnitudeLimit;}
     void SetWarmStellarColor(bool enabled) { stellarActivity.SetWarmColor(enabled); }
     void InvalidateSky() const { milkyWay.Invalidate(); }
-    void ObserveSkyCamera(const glm::dvec3& camera,double dt,float fov,int height) const {milkyWay.ObserveCamera(camera,dt,fov,height);}
-    void SetAdaptiveSkyQuality(bool enabled) const {milkyWay.SetAdaptiveQuality(enabled);}
+    void ObserveSkyCamera(const glm::dvec3& camera,double dt,float fov,int height) const {milkyWay.ObserveCamera(camera,dt,fov,height);galaxies.ObserveCamera(camera,dt);}
+    void SetAdaptiveSkyQuality(bool enabled) const {milkyWay.SetAdaptiveQuality(enabled);galaxies.SetAdaptiveQuality(enabled);}
     unsigned MilkyWayCacheBuilds() const { return milkyWay.CacheBuilds(); }
-    bool SkyNeedsFrame(const glm::dvec3& camera) const {return milkyWay.NeedsFrame(camera);}
+    bool SkyNeedsFrame(const glm::dvec3& camera) const {return milkyWay.NeedsFrame(camera) || galaxies.NeedsFrame();}
     double MilkyWayCacheTimestamp() const {return milkyWay.CacheTimestamp();}
     float MilkyWayCacheBlend() const {return milkyWay.BlendFraction();}
     float MilkyWayLastDrawBlend() const {return milkyWay.LastDrawBlend();}
@@ -113,14 +125,18 @@ private:
     unsigned int program = 0;
     double spin=.8;
     float magnitudeLimit=7;
+    float galaxyMagnitudeLimit=14;
     std::vector<float> starLuminosities;
     int rayBudget=160;
     float diskOuterRadii=8.f,diskBrightness=6.4f;
     bool lensingDiagnostic=false;
     bool hotFlowDiagnostic=false;
+    bool accretionCloudsEnabled=true;
     bool atmospheresEnabled=true;
+    bool weatherCloudsEnabled=true;
     std::array<glm::vec2,6> diskAppearance{};
     bool oceanReflectionsEnabled=true;
+    float weatherWindScale=1,weatherStormScale=1;
     unsigned int lensProgram = 0;
     unsigned int screenVao = 0;
     unsigned int stellarProperties = 0;
@@ -140,6 +156,9 @@ private:
                        const glm::vec3& physicalBeta,bool physicalObserver,int coreId=-1) const;
     Mesh sphere;
     Mesh backgroundStars;
+    mutable Mesh streamedStars;
+    mutable unsigned uploadedStreamRevision=0;
+    void UploadStream(const glm::dvec3& camera) const;
     Mesh craftRing;
     Mesh rangerMesh;
     Mesh craftTrail;
@@ -181,6 +200,9 @@ private:
     StellarActivity stellarActivity;
     GalaxyBackground galaxies;
     MilkyWaySky milkyWay;
+    KerrWormhole gargantuaWormhole;
+    unsigned int solarWormholeSky=0;
+    mutable WormholeSkyCache wormholeSkyCache;
     struct FlightSample {
         double time;
         OrbitalMechanics::ParticleState state;

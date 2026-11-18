@@ -13,6 +13,8 @@
 #include "ScenePanel.h"
 #include "AppMenu.h"
 #include "QuantumSimulation.h"
+#include "BlackHoleJourney.h"
+#include "TesseractScene.h"
 
 //CONTEXT: MANAGES GLFW WINDOWS
 // I intentionally left out glad so the header won't be included in memoryTiles.Cpp, also then it won't need to compile it again in Tile.h
@@ -42,7 +44,7 @@ public:
     void ReleaseGraphics();
     double GetSimulationTime() const { return simulationTime; }
     int GetFrameLimit() const { return !isFocused || mainMenu.Visible() || idleFrame ? glm::min(frameLimit,30) : frameLimit; }
-    bool RunRenderChecks(const std::string& directory, bool uiOnly = false, bool galaxyOnly = false, bool lensingOnly = false, bool wormholeOnly = false);
+    bool RunRenderChecks(const std::string& directory, bool uiOnly = false, bool galaxyOnly = false, bool lensingOnly = false, bool wormholeOnly = false,bool weatherOnly=false);
 
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
     static void MouseCallback(GLFWwindow* window, double xPos, double yPos);
@@ -79,12 +81,16 @@ private:
     void ResetView();
     void ToggleLanding();
     void UpdateObserver(double previousTime, float realSeconds);
+    void UpdateBlackHoleJourney(const glm::dvec3& previousCamera,float realSeconds);
+    void MoveInterior(const glm::dvec3& displacement,float realSeconds);
+    void UpdateWormholeTransit(const glm::dvec3& previousCamera,double previousTime,float realSeconds);
     void InitializeOverlay();
     void ReleaseOverlay();
     void ShowSpeedToast(double speed, bool starSystem);
     void ShowStatusToast(const std::string& text,bool compact=true);
     void ShowZoomToast(bool force=false);
     void SetMagnitudeLimit(float value);
+    void SetGalaxyMagnitudeLimit(float value);
     double CameraMagnification() const;
     float EffectiveMagnitudeLimit() const;
     void SyncCameraMagnitude();
@@ -113,6 +119,9 @@ private:
     void UpdateNavigationAnchor();
     int frameLimit = 30;
     float blackHoleResolution = .5f;
+    bool adaptiveBlackHoleQuality=true;
+    double lastBlackHoleCameraChange=-1e30;
+    float renderedBlackHoleScale=0;
     float lensFlareStrength = .45f;
     bool sceneCacheValid = false;
     bool idleFrame = false;
@@ -128,6 +137,10 @@ private:
     ScenePanel scenePanel;
     StarSystem starSystem;
     StarSystem previewSystem;
+    StarSystem solarPortalSystem;
+    bool solarPortalReady=false;
+    float wormholeCooldown=0;
+    unsigned gargantuaPortalSky=0,solarPortalSky=0;
     QuantumSimulation quantum;
     bool starSystemReady = false;
     bool quantumReady = false;
@@ -150,6 +163,7 @@ private:
     float lensAspect = static_cast<float>(WIDTH) / HEIGHT;
     float exposureEv = 0.0f;
     float limitingMagnitude=7;
+    float galaxyLimitingMagnitude=14;
     float appliedMagnitudeLimit=-100;
     bool hdrMode = true;
     bool landed = false;
@@ -162,6 +176,12 @@ private:
     KerrSpacetime::Observer kerrObserver = {};
     bool kerrObserverValid=false;
     double observerSpin=.8,pendingObserverProper=0;
+    int observerSourceId=0;
+    BlackHoleJourney blackHoleJourney;
+    TesseractScene tesseractScene;
+    bool interiorLanding=false,interiorGrounded=false,interiorDrift=false;
+    double interiorVerticalSpeed=0;
+    glm::dvec3 interiorVelocityAu{0};
 
     GLFWwindow* window;
     BlackHole blackHole;

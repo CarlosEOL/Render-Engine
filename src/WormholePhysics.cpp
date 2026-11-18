@@ -1,10 +1,19 @@
 #include "WormholePhysics.h"
 #include "Astronomy.h"
+#include "InterstellarWorlds.h"
 #include <cmath>
 #include <glm/gtc/constants.hpp>
 #include <glm/trigonometric.hpp>
 
 double WormholePhysics::ThroatRadiusAu() {return ThroatRadiusKm*1000/Astronomy::metresPerAu;}
+glm::dvec3 WormholePhysics::GargantuaPosition(double seconds) {
+    const OrbitalMechanics::Orbit orbit{300.0,.02,.25,1.8,2.3,.4};
+    return InterstellarWorlds::Orientation()*OrbitalMechanics::PositionAtTimeDouble(orbit,Astronomy::gargantuaGravityAu,seconds);
+}
+glm::dmat3 WormholePhysics::SaturnToGargantuaRotation() {
+    const double c=.36,s=std::sqrt(1-c*c);
+    return glm::dmat3(c,0,s,0,1,0,-s,0,c);
+}
 double WormholePhysics::MassLength() {
     const double b=1+Deformation*Deformation;
     return 1/(b+std::sqrt(b*b-Spin*Spin));

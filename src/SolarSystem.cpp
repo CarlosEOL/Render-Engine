@@ -192,6 +192,8 @@ void StarSystem::LoadSolarSystem()
         body.seaLevel = index == 2 ? .03f : -1;
         body.gas = d.gas;
         body.atmosphere = d.atmosphere;
+        body.magneticField=index==0 || index==2 || (index>=4 && index<=7);
+        body.life=index==2;
         body.color = d.color;
         planets.push_back(body);
     }

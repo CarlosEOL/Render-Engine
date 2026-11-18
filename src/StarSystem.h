@@ -3,12 +3,15 @@
 #include "StellarActivity.h"
 #include "SaturnRings.h"
 #include "KerrWormhole.h"
+#include "PlanetVegetation.h"
+#include "WormholeSky.h"
 #include "OrbitalMechanics.h"
 #include <glm/glm.hpp>
 #include <string>
 #include <vector>
 #include <limits>
 #include <cstdint>
+#include <functional>
 
 struct GLFWwindow;
 
@@ -46,6 +49,8 @@ class StarSystem
         int parent = -1;
         Palette palette = Palette::Climate;
         bool wormhole = false;
+        bool metalCore = true,magneticField = false;
+        bool life = false;
     };
 
     static Star DescribeStar(int id, const std::string &name);
@@ -58,8 +63,18 @@ class StarSystem
     void SetStellarCorona(bool enabled) {stellarActivity.SetCoronaEnabled(enabled);}
     void SetEarthClouds(bool enabled){earthCloudsEnabled=enabled;}
     void SetOceanReflections(bool enabled){oceanReflectionsEnabled=enabled;}
+    void SetWeather(float windScale,float stormScale){weatherWindScale=windScale;weatherStormScale=stormScale;}
+    void SetAurorasEnabled(bool enabled){aurorasEnabled=enabled;}
+    void SetVegetationEnabled(bool enabled){vegetationEnabled=enabled;}
+    size_t VisibleTrees() const {return vegetation.LastTrees();}
+    size_t VisibleGrassSprites() const {return vegetation.LastGrass();}
+    PlanetWeather::State WeatherState(int planet,double seconds) const;
+    glm::dmat3 WeatherFrame(int planet,double seconds) const {return RotationDouble(planet,seconds);}
     void SetWormholeEnabled(bool enabled){wormhole.SetEnabled(enabled);}
     void SetWormholeDiagnostic(bool enabled){wormhole.SetDiagnostic(enabled);}
+    static glm::dvec3 SaturnWormholePosition(double seconds);
+    using WormholeBackground=std::function<void(const glm::mat4&,const glm::dvec3&)>;
+    unsigned WormholeSky(double seconds=0,const WormholeBackground& background={});
     void SetWarmStellarColor(bool enabled) { stellarActivity.SetWarmColor(enabled); }
     void TriggerStellarFlare(double seconds) { stellarActivity.Trigger(seconds); }
     void Release();
@@ -67,6 +82,8 @@ class StarSystem
     void Move(GLFWwindow *window, float realSeconds, glm::vec3 &front, glm::vec3 &up);
     void Render(float fieldOfView, float aspect, const glm::vec3 &front, const glm::vec3 &up, double seconds,
                 bool trajectories, bool photonView, bool showSelection = true, unsigned int wormholeSky = 0);
+    void RenderOverlays(float fieldOfView,float aspect,const glm::vec3& front,const glm::vec3& up,
+                        double seconds,bool trajectories,bool showSelection,int lensProfile=0);
     void GoToSelected(double seconds, glm::vec3 &front, glm::vec3 &up);
     void ToggleLanding(double seconds, glm::vec3 &front, glm::vec3 &up);
     void Overview(glm::vec3 &front, glm::vec3 &up);
@@ -131,6 +148,9 @@ class StarSystem
     bool solarSystem = false;
     bool earthCloudsEnabled=true;
     bool oceanReflectionsEnabled=true;
+    float weatherWindScale=1,weatherStormScale=1;
+    bool aurorasEnabled=true;
+    bool vegetationEnabled=true;
     int coreId=-1;
     double GravityFor(int planet) const;
     glm::dvec3 RelativePosition(int planet, double seconds) const;
@@ -161,4 +181,6 @@ class StarSystem
     StellarActivity stellarActivity;
     SaturnRings saturnRings;
     KerrWormhole wormhole;
+    WormholeSkyCache wormholeSkyCache;
+    PlanetVegetation vegetation;
 };

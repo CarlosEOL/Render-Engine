@@ -18,6 +18,7 @@ in vec2 uv;out vec4 color;
 uniform sampler2D scene,sceneDepth;
 uniform samplerCube sky;
 uniform mat4 inverseVP,viewProjection;
+uniform mat3 destinationRotation;
 uniform vec3 mouth;
 uniform float radius;
 uniform bool diagnostic;
@@ -32,8 +33,8 @@ void main(){
     if(along<=0.0 || impact>5.0)return;
     float foregroundDepth=texture(sceneDepth,uv).r;
     if(foregroundDepth<.9999999){
-        vec4 p=inverseVP*vec4(uv*2.0-1.0,foregroundDepth*2.0-1.0,1);
-        if(length(p.xyz/p.w)<max(0.0,along-radius*2.5))return;
+        float distance=(exp2(foregroundDepth*log2(1.0+20000.0*1e12))-1.0)/1e12;
+        if(distance<max(0.0,along-radius*2.5))return;
     }
     // Ecliptic +Y is the metric's spin axis (+Z).
     vec3 camera=-mouth/radius,dir=ray;
@@ -43,9 +44,8 @@ void main(){
     if(side==0){color=vec4(0,0,0,0);return;}
     vec4 result;
     if(side<0){
-        // Authored orientation of the other exterior, using the cached sky.
-        // This is an optical view; camera teleportation is not implied.
-        escaped=mat3(.36,0,.93295,0,1,0,-.93295,0,.36)*escaped;
+        // Shared with camera transport; the return mouth uses its inverse.
+        escaped=destinationRotation*escaped;
         result=vec4(texture(sky,escaped).rgb,0);
     }else{
         vec4 projected=viewProjection*vec4(escaped,0);
@@ -66,7 +66,7 @@ void main(){
     return true;
 }
 
-void KerrWormhole::Render(const glm::mat4& vp,const glm::dvec3& center,double radiusAu,unsigned int skyCube) const {
+void KerrWormhole::Render(const glm::mat4& vp,const glm::dvec3& center,double radiusAu,unsigned int skyCube,bool reverse) const {
     if(!enabled || !program || !skyCube || radiusAu<=0)return;
     int viewport[4];glGetIntegerv(GL_VIEWPORT,viewport);
     const auto clip=vp*glm::vec4(glm::vec3(center),1);
@@ -93,6 +93,8 @@ void KerrWormhole::Render(const glm::mat4& vp,const glm::dvec3& center,double ra
     const auto inverse=glm::inverse(vp);const auto mouth=glm::vec3(center);
     glUniformMatrix4fv(glGetUniformLocation(program,"inverseVP"),1,GL_FALSE,glm::value_ptr(inverse));
     glUniformMatrix4fv(glGetUniformLocation(program,"viewProjection"),1,GL_FALSE,glm::value_ptr(vp));
+    const glm::mat3 rotation(reverse?glm::transpose(WormholePhysics::SaturnToGargantuaRotation()):WormholePhysics::SaturnToGargantuaRotation());
+    glUniformMatrix3fv(glGetUniformLocation(program,"destinationRotation"),1,GL_FALSE,glm::value_ptr(rotation));
     glUniform3fv(glGetUniformLocation(program,"mouth"),1,glm::value_ptr(mouth));
     glUniform1f(glGetUniformLocation(program,"radius"),static_cast<float>(radiusAu));
     glUniform2f(glGetUniformLocation(program,"metricParameters"),static_cast<float>(WormholePhysics::MassLength()),static_cast<float>(WormholePhysics::SpinLength()));

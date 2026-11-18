@@ -7,6 +7,7 @@
 #include <cmath>
 #include <glm/gtc/type_ptr.hpp>
 #include <initializer_list>
+#include <string>
 
 unsigned int compileShaderProgram(const char *, const char *);
 
@@ -48,16 +49,7 @@ const char *CameraOptics::Name(int profile)
 
 float CameraOptics::FieldOfView(int profile, float aspect)
 {
-    if (profile == 0)
-        return 45.0f;
-    if (profile == 1)
-        return glm::degrees(2.0f * std::atan(std::tan(glm::radians(50.0f)) / aspect));
-    // A 36 mm sensor width, vertically cropped to the viewport's aspect ratio.
-    const auto &lens = profiles[profile];
-    const float realFocal =
-        lens.focalLength *
-        (lens.distortionModel == 2 ? 1.0f - lens.distortion.x - lens.distortion.y - lens.distortion.z : 1.0f);
-    return glm::degrees(2.0f * std::atan(18.0f / (realFocal * aspect)));
+    return LensCalibration::FieldOfView(profile,aspect);
 }
 
 glm::vec2 CameraOptics::MapScreen(int profile, const glm::vec2 &screen, float aspect, float fieldOfView)
@@ -85,6 +77,7 @@ in vec2 screenPosition;
 out vec4 fragColor;
 uniform sampler2D scene;
 uniform sampler2D flareSources;
+uniform bool systemScoped;
 uniform sampler2D exposureState;
 uniform bool automaticExposure;
 uniform bool referenceGlare;
@@ -109,7 +102,7 @@ vec3 gradedScene(vec2 uv,float lod){
     // HDR is a deliberate multi-exposure presentation. Compress the resolved
     // host photosphere before bloom so the scene's faint stars remain visible.
     float distance=length((uv-stellarHint.xy)*vec2(texel.y/texel.x,1));
-    if(hdrMode && stellarHint.z>texel.y*2.0 && distance<stellarHint.z*1.25+texel.y*exp2(lod)*2.0){
+    if(hdrMode && source.a<=1.5 && stellarHint.z>texel.y*2.0 && distance<stellarHint.z*1.25+texel.y*exp2(lod)*2.0){
         float coverage=clamp(source.a,0.0,1.0);
         if(lod<.5){
             coverage=source.a>=.99?1.0:0.0;
@@ -218,7 +211,7 @@ void main() {
                 if(earlier.z>0 && length((earlier.xy-emitter.xy)*vec2(texel.y/texel.x,1))
                     <max(.008,earlier.w+emitter.w))duplicate=true;
             }
-            if(duplicate)continue;
+            if(duplicate && !systemScoped)continue;
             vec3 tint=texelFetch(flareSources,ivec2(source*2+1,0),0).rgb;
             vec2 p=(uv-emitter.xy)*vec2(texel.y/texel.x,1);
             float r=length(p);
@@ -227,7 +220,7 @@ void main() {
             float rank=emitter.z*(1.0+min(emitter.w*40.0,2.0));
             // Independent optical centers: weaker sources never move the main
             // star's flare, and their combined ghost energy stays subordinate.
-            if(source!=primary)energy=min(energy*.12*pow(clamp(rank/max(strongest,.0001),0.0,1.0),2.0),primaryEnergy*.08);
+            if(source!=primary && !systemScoped)energy=min(energy*.12*pow(clamp(rank/max(strongest,.0001),0.0,1.0),2.0),primaryEnergy*.08);
             float sourceRadius=emitter.w;
             float coreRadius=.018+sourceRadius*.7;
             float halo=coreRadius*coreRadius/(r*r+coreRadius*coreRadius)*exp(-r/(coreRadius*4.0));
@@ -312,7 +305,7 @@ void main() {
         localGain=max(adaptedGain,.65);
     color = max(color * exposureGain * localGain, vec3(0));
     if (hdrMode) {
-        // Apply the shoulder to peak radiance, preserving highlight hue ratios.
+        // Apply the ordinary HDR shoulder once to the surrounding scene.
         float peak=max(color.r,max(color.g,color.b));
         float mappedPeak=peak/(1.0+peak/.85);
         color*=mappedPeak/max(peak,.000001);
@@ -344,10 +337,13 @@ void main() {
 out vec4 result;
 uniform sampler2D scene;
 uniform vec3 stellarHint;
+uniform vec4 systemSources[8];
+uniform int systemSourceCount;
 // Rank real stellar continua above a green selection crosshair at every mip.
-float brightness(vec4 c){return max(c.r,c.b)*clamp(c.a,0.0,1.0);}
+float eligibility(vec4 c){return clamp(c.a>1.5?c.a-2.0:c.a,0.0,1.0);}
+float brightness(vec4 c){return max(c.r,c.b)*eligibility(c);}
 float stellarBrightness(vec4 c){
-    return brightness(c)*step(.99,c.a)*(1.0-smoothstep(1.15,1.5,c.g/max(max(c.r,c.b),.0001)));
+    return brightness(c)*step(.99,eligibility(c))*(1.0-smoothstep(1.15,1.5,c.g/max(max(c.r,c.b),.0001)));
 }
 float extent(vec2 position,vec2 direction,float threshold,vec2 dimensions) {
     float previous=0;
@@ -365,9 +361,45 @@ void main(){
     vec2 origin=vec2(tile%4,tile/4)/vec2(4,2);
     vec2 tileSize=1.0/vec2(4,2);
     vec2 dimensions=vec2(textureSize(scene,0));
+    if(systemSourceCount>=0){
+        if(tile>=systemSourceCount){result=vec4(0);return;}
+        vec4 hint=systemSources[tile];
+        if(hint.z<=0 || any(lessThan(hint.xy,vec2(0))) || any(greaterThanEqual(hint.xy,vec2(1)))){result=vec4(0);return;}
+        if(hint.w>.5){
+            // Each member owns a slot, even when two stars share a screen tile.
+            // Read real scene radiance at that member, never another sky peak.
+            vec3 sum=vec3(0);float count=0,value=0;
+            if(hint.z*dimensions.y>=2.0){
+                for(int i=0;i<16;++i){
+                    float angle=(float(i)+.37)*6.2831853/16.0;
+                    vec2 uv=hint.xy+vec2(cos(angle)*dimensions.y/dimensions.x,sin(angle))*hint.z*.55;
+                    if(any(lessThan(uv,vec2(0))) || any(greaterThanEqual(uv,vec2(1))))continue;
+                    vec4 sample=textureLod(scene,uv,0);
+                    if(stellarBrightness(sample)>.05){sum+=sample.rgb;count+=1;}
+                }
+                if(count>=3){sum/=count;value=max(sum.r,max(sum.g,sum.b));}
+            }else{
+                vec2 anchor=(floor(hint.xy*dimensions)+.5)/dimensions;
+                for(int y=-3;y<=3;++y)for(int x=-3;x<=3;++x){
+                    vec2 uv=anchor+vec2(x,y)/dimensions;
+                    if(any(lessThan(uv,vec2(0))) || any(greaterThanEqual(uv,vec2(1))))continue;
+                    vec4 sample=textureLod(scene,uv,0);float b=stellarBrightness(sample);
+                    if(b>value){value=b;sum=sample.rgb;}
+                }
+            }
+            float accepted=smoothstep(.70,1.15,value);
+            result=pixel%2==0?vec4(hint.xy,value*accepted,hint.z):vec4(sum/max(max(sum.r,sum.g),max(sum.b,.00001)),value);
+            return;
+        }
+        // Accretion flows may have an off-centre beamed highlight. Search only
+        // their projected emitting area, rather than unrelated sky tiles.
+        vec2 extent=hint.z*vec2(dimensions.y/dimensions.x,1);
+        origin=max(vec2(0),hint.xy-extent);
+        tileSize=min(vec2(1),hint.xy+extent)-origin;
+    }
     // The coarse grid must cover every mip texel, including narrow sources at
     // tile boundaries. Rounding down can skip the central column entirely.
-    float level=max(0.0,ceil(log2(max(dimensions.x/32.0,dimensions.y/16.0))));
+    float level=max(0.0,ceil(log2(max(dimensions.x*tileSize.x/8.0,dimensions.y*tileSize.y/8.0))));
     float best=-1;vec2 position=origin+tileSize*.5;
     for(int y=0;y<8;++y)for(int x=0;x<8;++x){
         vec2 candidate=origin+(vec2(x,y)+.5)*tileSize/8.0;
@@ -384,6 +416,7 @@ void main(){
         best=-1;
         for(int y=-1;y<=1;++y)for(int x=-1;x<=1;++x){
             vec2 candidate=(cell+vec2(x,y)+.5)/mipSize;
+            if(systemSourceCount>=0 && (any(lessThan(candidate,origin)) || any(greaterThan(candidate,origin+tileSize))))continue;
             float b=brightness(textureLod(scene,candidate,float(step)));
             if(b>best){best=b;position=candidate;}
         }
@@ -391,7 +424,7 @@ void main(){
     // A known host provides a search seed, never synthetic radiance. Visibility
     // and brightness still come from the composited image, including occlusion.
     int hintTile=int(stellarHint.x*4.0)+int(stellarHint.y*2.0)*4;
-    if(stellarHint.z>0 && all(greaterThanEqual(stellarHint.xy,vec2(0)))
+    if(systemSourceCount<0 && stellarHint.z>0 && all(greaterThanEqual(stellarHint.xy,vec2(0)))
         && all(lessThan(stellarHint.xy,vec2(1))) && hintTile==tile)
         position=stellarHint.xy;
     // Resolve a real highlight beside a selection crosshair. Suppressing green
@@ -418,10 +451,10 @@ void main(){
     vec2 center=position+vec2(right-left,up-down)*.5/dimensions;
     // The navigation reticle is green; real stellar continua are not green-dominant.
     float rejectReticle=1.0-smoothstep(1.15,1.5,color.g/max(max(color.r,color.b),.0001));
-    float accepted=max(compact,extended)*rejectReticle*step(.99,source.a);
+    float accepted=max(compact,extended)*rejectReticle*step(.99,eligibility(source));
     bool hostVisible=stellarHint.z>0 && all(greaterThanEqual(stellarHint.xy,vec2(0)))
         && all(lessThan(stellarHint.xy,vec2(1)));
-    if(hostVisible) {
+    if(hostVisible && systemSourceCount<0) {
         float distance=length((position-stellarHint.xy)*vec2(dimensions.x/dimensions.y,1));
         if(tile==hintTile) {
             // One disk, one optical center. Read the visible photosphere rather
@@ -465,6 +498,27 @@ void main(){
         Release();
         return false;
     }
+    // Grade at native texels before creating bloom mips. Filtering a disk tag
+    // first gives a dark silhouette surrounded by ungraded bright mip halos.
+    const char* hdrDisk=R"(#version 330 core
+uniform sampler2D scene,exposureState;out vec4 result;
+void main(){
+    vec4 source=texelFetch(scene,ivec2(gl_FragCoord.xy),0);vec3 value=source.rgb;
+    if(source.a>1.5){
+        float peak=max(value.r,max(value.g,value.b));
+        float gain=exp2(texelFetch(exposureState,ivec2(0),0).b);
+        float desired=.84*(1.0-exp(-pow(max(peak*gain,0.0),.65)*1.3));
+        // Invert the final HDR shoulder, so it is applied exactly once.
+        float encoded=desired/max(1.0-desired/.85,.0001);
+        vec3 graded=value*encoded/max(peak,1e-8);
+        value=mix(value,graded,clamp((source.a-2.0)*4.0,0.0,1.0));
+    }
+    result=vec4(value,source.a);
+})";
+    hdrDiskProgram=compileShaderProgram(vertex,hdrDisk);
+    glGetProgramiv(hdrDiskProgram,GL_LINK_STATUS,&linked);
+    if(!linked){Release();return false;}
+    glGenFramebuffers(1,&hdrDiskFramebuffer);glGenTextures(1,&hdrDiskTexture);
     if(!exposureMeter.Initialize()) { Release(); return false; }
     return true;
 }
@@ -483,7 +537,7 @@ void CameraOptics::BeginFrame()
     {
         width = viewport[2];
         height = viewport[3];
-        for (const auto texture : {sceneTexture, sceneColor})
+        for (const auto texture : {sceneTexture, sceneColor,hdrDiskTexture})
         {
             glBindTexture(GL_TEXTURE_2D, texture);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, nullptr);
@@ -502,6 +556,7 @@ void CameraOptics::BeginFrame()
         glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
     }
     glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    hdrDiskValid=false;
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sceneColor, 0);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, sceneDepth);
     frameActive = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
@@ -535,6 +590,26 @@ void CameraOptics::Render(int profile, float fieldOfView, float exposureEv, bool
     int viewport[4];
     glGetIntegerv(GL_VIEWPORT, viewport);
     const bool adaptive=!hdrMode && autoExposure;
+    const glm::vec3 diskHint=blackHoleVisibility?blackHoleHint:glm::vec3(-1,-1,0);
+    if(adaptive || (hdrMode && diskHint.z>0)) exposureMeter.Update(sceneTexture,stellarHint,realSeconds,diskHint);
+    else exposureMeter.Reset();
+    if(hdrMode && diskHint.z>0){
+        if(!reuseScene || !hdrDiskValid){
+            glBindFramebuffer(GL_FRAMEBUFFER,hdrDiskFramebuffer);
+            glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,hdrDiskTexture,0);
+            glViewport(0,0,width,height);glDisable(GL_DEPTH_TEST);glDisable(GL_BLEND);
+            glPolygonMode(GL_FRONT_AND_BACK,GL_FILL);glUseProgram(hdrDiskProgram);
+            glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,sceneTexture);
+            glActiveTexture(GL_TEXTURE2);glBindTexture(GL_TEXTURE_2D,exposureMeter.Texture());
+            glUniform1i(glGetUniformLocation(hdrDiskProgram,"scene"),0);
+            glUniform1i(glGetUniformLocation(hdrDiskProgram,"exposureState"),2);
+            glBindVertexArray(vao);glDrawArrays(GL_TRIANGLES,0,3);
+            glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,hdrDiskTexture);
+            glGenerateMipmap(GL_TEXTURE_2D);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR_MIPMAP_LINEAR);
+            hdrDiskValid=true;glViewport(viewport[0],viewport[1],viewport[2],viewport[3]);
+        }
+        glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,hdrDiskTexture);
+    }else{glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,sceneTexture);}
     if (profile > 0 && flareStrength > 0)
     {
         glBindFramebuffer(GL_FRAMEBUFFER, flareFramebuffer);
@@ -545,13 +620,12 @@ void CameraOptics::Render(int profile, float fieldOfView, float exposureEv, bool
         glUseProgram(flareProgram);
         glUniform1i(glGetUniformLocation(flareProgram, "scene"), 0);
         glUniform3fv(glGetUniformLocation(flareProgram,"stellarHint"),1,glm::value_ptr(stellarHint));
+        glUniform1i(glGetUniformLocation(flareProgram,"systemSourceCount"),systemSourceCount);
+        glUniform4fv(glGetUniformLocation(flareProgram,"systemSources"),8,glm::value_ptr(systemSources[0]));
         glBindVertexArray(vao);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
     }
-    const glm::vec3 diskHint=blackHoleVisibility?blackHoleHint:glm::vec3(-1,-1,0);
-    if(adaptive) exposureMeter.Update(sceneTexture,stellarHint,realSeconds,diskHint);
-    else exposureMeter.Reset();
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glUseProgram(program);
     glUniform3fv(glGetUniformLocation(program,"blackHoleHint"),1,glm::value_ptr(diskHint));
@@ -561,6 +635,7 @@ void CameraOptics::Render(int profile, float fieldOfView, float exposureEv, bool
     glBindTexture(GL_TEXTURE_2D, flareTexture);
     glActiveTexture(GL_TEXTURE0);
     glUniform1i(glGetUniformLocation(program, "flareSources"), 1);
+    glUniform1i(glGetUniformLocation(program,"systemScoped"),systemSourceCount>=0);
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D,exposureMeter.Texture());
     glUniform1i(glGetUniformLocation(program,"exposureState"),2);
@@ -598,6 +673,10 @@ void CameraOptics::Render(int profile, float fieldOfView, float exposureEv, bool
 
 void CameraOptics::Release()
 {
+    if(hdrDiskProgram)glDeleteProgram(hdrDiskProgram);
+    if(hdrDiskFramebuffer)glDeleteFramebuffers(1,&hdrDiskFramebuffer);
+    if(hdrDiskTexture)glDeleteTextures(1,&hdrDiskTexture);
+    hdrDiskProgram=hdrDiskFramebuffer=hdrDiskTexture=0;hdrDiskValid=false;
     exposureMeter.Release();
     if (flareProgram)
         glDeleteProgram(flareProgram);
