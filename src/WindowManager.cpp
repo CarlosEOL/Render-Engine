@@ -722,7 +722,7 @@ void WindowManager::UpdateObserver(double previousTime, float realSeconds) {
     for(int step=0;step<512 && pendingObserverProper>0;++step){
         const double radius=KerrSpacetime::Radius(kerrObserver.state.position,rs,spin);
         if(radius<=horizon)horizonReached=true;
-        if(source==0 && radius<=horizon*.55)break;
+        if(source==0 && radius<=horizon*BlackHoleJourney::furnishedRadiusFraction)break;
         if(radius<=innerLimit){
             observerGravity=false;pendingObserverProper=0;
             simulationPlaying=false;
@@ -768,7 +768,8 @@ void WindowManager::UpdateBlackHoleJourney(const glm::dvec3& previousCamera,floa
             ShowStatusToast("Event horizon crossed");
         }
     }
-    blackHoleJourney.Advance(core?activeSystemTarget:0,metricRadius(position)<=horizon*1.00001,realSeconds,metricRadius(position)/horizon);
+    const double radius=metricRadius(position);
+    blackHoleJourney.Advance(core?activeSystemTarget:0,radius<=horizon*1.00001,realSeconds,radius,horizon);
     const double innerLimit=std::max(rs*.03,rs*.5*(1-std::sqrt(1-spin*spin))*1.05);
     if(core && blackHoleJourney.inside && metricRadius(position)<=innerLimit*1.001)blackHoleJourney.atLimit=true;
     if(!blackHoleJourney.inside){interiorLanding=interiorGrounded=interiorDrift=false;interiorVerticalSpeed=0;}
@@ -1546,7 +1547,13 @@ void WindowManager::ProcessCamera(GLFWwindow* window, const float& deltaTime) {
             }
         }
         const double boost=glfwGetKey(window,GLFW_KEY_LEFT_SHIFT)==GLFW_PRESS?5.:1.;
-        manager.MoveInterior(movement*(manager.cameraSpeed*static_cast<double>(deltaTime)*boost),deltaTime);return;
+        double speedAu=manager.cameraSpeed*boost;
+        if(manager.interiorLanding && manager.blackHoleJourney.interiorBlend>=1){
+            const double walkingSpeed=boost>1?3.8:2.0;
+            speedAu=std::min(speedAu,walkingSpeed*TesseractSpace::Scale(BlackHole::HorizonRadius()));
+            if(glm::length(movement)>1)movement=glm::normalize(movement);
+        }
+        manager.MoveInterior(movement*(speedAu*static_cast<double>(deltaTime)),deltaTime);return;
     }
     if(manager.blackHoleJourney.atLimit)return;
     if(manager.interiorVehicle)return; // Seated look-around keeps the cockpit's up axis.
@@ -2105,7 +2112,7 @@ void WindowManager::Update(float& dT) {
         static_cast<double>(selectedTarget),static_cast<double>(starSystem.Selected()),static_cast<double>(trajectories),
         static_cast<double>(photonView),static_cast<double>(observerGravity),static_cast<double>(horizonReached),blackHoleResolution,static_cast<double>(interiorVehicle)};
     if(blackHoleReady)blackHole.ObserveSkyCamera(inStarSystem?systemOriginAu+starSystem.camera:cameraPos,dT,fieldOfView,fullHeight);
-    const bool blackHoleView=blackHoleJourney.interiorBlend<1 && ((showBlackHole && !inStarSystem) || (inStarSystem && starSystem.IsCore()));
+    const bool blackHoleView=blackHoleJourney.gridBlend<1 && ((showBlackHole && !inStarSystem) || (inStarSystem && starSystem.IsCore()));
     bool sameCamera=sceneCacheValid && signature[10]==lastSceneSignature[10];
     for(int i=0;i<9;++i)if(signature[i]!=lastSceneSignature[i])sameCamera=false;
     if(!sameCamera)lastBlackHoleCameraChange=glfwGetTime();
@@ -2177,7 +2184,7 @@ void WindowManager::Update(float& dT) {
         if(pendingSystemTarget>=10 && pendingSystemTarget!=activeSystemTarget)
             blackHole.RenderCatalogueSelection(projection*glm::lookAt(glm::vec3(0),cameraFront,cameraUp),
                 systemOriginAu+starSystem.camera,pendingSystemTarget,simulationTime);
-    } else if (showBlackHole && blackHoleReady && blackHoleJourney.interiorBlend<1) {
+    } else if (showBlackHole && blackHoleReady && blackHoleJourney.gridBlend<1) {
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
         const bool physicalObserver=kerrObserverValid && observerSpin==blackHole.Spin() && (observerGravity || horizonReached) && !interiorVehicle
             && glm::length(cameraPos-InterstellarWorlds::Orientation()*kerrObserver.state.position)<1e-9;
@@ -2188,7 +2195,7 @@ void WindowManager::Update(float& dT) {
         if(interiorVehicle)vehicleInterior.Render(projection*view,glm::mat3(lastCabinRotation),interiorVehicle>=2,
             static_cast<float>(blackHole.SpacecraftFuelSeconds()/InterstellarWorlds::FuelSeconds));
         glPolygonMode(GL_FRONT_AND_BACK, showWireframe ? GL_LINE : GL_FILL);
-    } else if(blackHoleJourney.interiorBlend<1) {
+    } else if(blackHoleJourney.gridBlend<1) {
         //Apply Lighting When Out of Wireframe Mode
         if (!showWireframe)
         {
@@ -2223,12 +2230,13 @@ void WindowManager::Update(float& dT) {
         glBindVertexArray(0);
     }
     
-    if(blackHoleJourney.interiorBlend>0){
+    if(blackHoleJourney.tesseract){
         optics.SetBlackHoleHint({-1,-1,0});optics.SetStellarHint({-1,-1,0});optics.SetSystemSources({},0);
         const auto inverse=glm::transpose(InterstellarWorlds::Orientation());
         tesseractScene.Render(inverse*cameraPos/TesseractSpace::Scale(BlackHole::HorizonRadius()),
             glm::vec3(inverse*glm::dvec3(cameraFront)),glm::vec3(inverse*glm::dvec3(cameraUp)),aspectRatio,fieldOfView,
-            glfwGetTime(),static_cast<float>(blackHoleJourney.interiorBlend));
+            glfwGetTime(),static_cast<float>(blackHoleJourney.gridBlend),static_cast<float>(blackHoleJourney.gridApproach),
+            static_cast<float>(blackHoleJourney.interiorBlend));
     }
     glViewport(0,0,sceneWidth,fullHeight);
     optics.Render(visionProfile, fieldOfView, exposureEv, hdrMode,lensFlareStrength,false,dT);

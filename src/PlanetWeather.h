@@ -25,9 +25,12 @@ struct State {
     std::array<glm::vec4,3> shapes{}; // angular radius, hemisphere, phase, life
     std::array<glm::vec4,4> spectrum{}; // periodic wave vector (rad/m), amplitude
     glm::vec4 phases{};
+    glm::vec4 ripplePhases{};
+    float foamPhase=0;
     glm::vec4 auroraAxis{},auroraMotion{};
 };
 inline float Unit(unsigned value){value^=value>>16;value*=0x7feb352du;value^=value>>15;value*=0x846ca68bu;value^=value>>16;return (value&0xffffffu)/16777215.f;}
+inline constexpr glm::vec4 rippleFrequencies{8,21,55,144};
 inline bool Ocean(const Profile& p,const glm::vec3& n){
     return p.oceanOnly || PlanetTerrain::SurfaceElevation(n,p.seed,0,p.seaLevel,1,0)<=p.seaLevel+1e-6f;
 }
@@ -89,7 +92,13 @@ inline State Make(const Profile& p,double seconds,float windScale=1,float stormS
         const auto k=glm::round(direction*count)*(glm::two_pi<float>()/4096.f);
         s.spectrum[i]={k,height[i]};
         const double omega=std::sqrt(9.81*glm::length(k));
-        s.phases[i]=static_cast<float>(std::remainder(-seconds*omega+i*1.618,glm::two_pi<double>()));
+        const double phase=-seconds*omega+i*1.618;
+        const auto wrap=[](double angle){return static_cast<float>(std::remainder(angle,glm::two_pi<double>()));};
+        s.phases[i]=wrap(phase);
+        // Scale the continuous phase first. Scaling a wrapped angle by a
+        // fractional factor makes its sine or cosine jump at each base cycle.
+        s.ripplePhases[i]=wrap(phase*std::sqrt(static_cast<double>(rippleFrequencies[i])));
+        if(i==0)s.foamPhase=wrap(phase*.3);
     }
     return s;
 }
@@ -119,6 +128,9 @@ inline void Upload(unsigned program,const State& s){
     glUniform4fv(glGetUniformLocation(program,"weatherShapes"),3,glm::value_ptr(s.shapes[0]));
     glUniform4fv(glGetUniformLocation(program,"weatherSpectrum"),4,glm::value_ptr(s.spectrum[0]));
     glUniform4fv(glGetUniformLocation(program,"weatherPhases"),1,glm::value_ptr(s.phases));
+    glUniform4fv(glGetUniformLocation(program,"weatherRipplePhases"),1,glm::value_ptr(s.ripplePhases));
+    glUniform4fv(glGetUniformLocation(program,"weatherRippleFrequencies"),1,glm::value_ptr(rippleFrequencies));
+    glUniform1f(glGetUniformLocation(program,"weatherFoamPhase"),s.foamPhase);
     glUniform4fv(glGetUniformLocation(program,"auroraAxis"),1,glm::value_ptr(s.auroraAxis));
     glUniform4fv(glGetUniformLocation(program,"auroraMotion"),1,glm::value_ptr(s.auroraMotion));
 }
@@ -149,6 +161,8 @@ float weatherWaveHeight(vec3 metres,vec3 n){
 }
 )";}
 inline const char* SurfaceShaderFunctions(){return R"(
+uniform vec4 weatherRipplePhases,weatherRippleFrequencies;
+uniform float weatherFoamPhase;
 vec3 weatherWaveGradient(vec3 metres,vec3 n,bool filtering){
     vec3 gradient=vec3(0),p=mod(metres,4096.0);float wind=weatherWind(n);
     for(int i=0;i<4;++i){
@@ -158,8 +172,7 @@ vec3 weatherWaveGradient(vec3 metres,vec3 n,bool filtering){
         gradient+=amplitude*k*(cos(a)+2.0*steepness*sin(2.0*a))*visible;
         // Fine capillary/wind detail remains in the material, not coarse mesh
         // displacement. Integer frequency multiples retain coordinate wrapping.
-        float frequency=i==0?8.0:i==1?21.0:i==2?55.0:144.0;
-        vec3 rippleK=k*frequency;float ripple=dot(p,rippleK)+weatherPhases[i]*sqrt(frequency);
+        vec3 rippleK=k*weatherRippleFrequencies[i];float ripple=dot(p,rippleK)+weatherRipplePhases[i];
         float rippleVisible=filtering?1.0-smoothstep(.7,3.0,fwidth(dot(metres,rippleK))):1.0;
         gradient+=normalize(rippleK)*(.025+.025*float(i))*smoothstep(0.0,14.0,wind)*cos(ripple)*rippleVisible;
     }
@@ -172,7 +185,10 @@ float weatherOceanFoam(vec3 metres,vec3 n){
         float visible=1.0-smoothstep(.8,3.0,fwidth(dot(metres,k)));
         compression+=weatherWaveAmplitude(i,wind)*length(k)*pow(max(sin(a),0.0),3.0)*visible;
     }
-    float breakup=.65+.35*sin(dot(p,vec3(.73,.29,.53))+weatherPhases.x*.3)*sin(dot(p,vec3(-.31,.61,.23)));
+    // Whole cycles per spatial tile keep the breakup continuous at its edges.
+    const float tileFrequency=6.283185307179586/4096.0;
+    float breakup=.65+.35*sin(dot(p,vec3(476,189,346)*tileFrequency)+weatherFoamPhase)
+        *sin(dot(p,vec3(-202,398,150)*tileFrequency));
     return smoothstep(.09,.34,compression)*smoothstep(7.0,22.0,wind)*breakup;
 }
 )";}

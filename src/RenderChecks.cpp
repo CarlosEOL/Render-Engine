@@ -315,24 +315,61 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,boo
         GLint target,viewport[4];glGetIntegerv(GL_FRAMEBUFFER_BINDING,&target);glGetIntegerv(GL_VIEWPORT,viewport);
         const char* vertex=R"(#version 330 core
 void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.0-1.0,0,1);})";
-        const auto fragment=std::string("#version 330 core\n")+PlanetWeather::ShaderFunctions()+R"(
+        const auto fragment=std::string("#version 330 core\n")+PlanetWeather::ShaderFunctions()+PlanetWeather::SurfaceShaderFunctions()+R"(
 uniform vec3 windNormal;
+uniform float tileOffset;
+uniform bool probeSurface;
 out vec4 result;
-void main(){float i=gl_FragCoord.x-.5;vec3 p=vec3(i*3.25,10,21);result=vec4(weatherWaveHeight(p,windNormal),weatherWind(windNormal),0,1);})";
+void main(){
+    float i=gl_FragCoord.x-.5;
+    vec3 p=vec3(i*3.25+tileOffset,10,21);
+    if(probeSurface)result=vec4(weatherWaveGradient(p,windNormal,false),weatherOceanFoam(p,windNormal));
+    else result=vec4(weatherWaveHeight(p,windNormal),weatherWind(windNormal),0,1);
+})";
         const auto program=compileShaderProgram(vertex,fragment.c_str());unsigned texture,fbo,vao;
         glGenTextures(1,&texture);glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,texture);
         glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA32F,128,1,0,GL_RGBA,GL_FLOAT,nullptr);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
         glGenFramebuffers(1,&fbo);glBindFramebuffer(GL_FRAMEBUFFER,fbo);glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,texture,0);
         glGenVertexArrays(1,&vao);glBindVertexArray(vao);glViewport(0,0,128,1);glDisable(GL_DEPTH_TEST);glDisable(GL_BLEND);
+        const auto profile=PlanetWeather::Miller();
+        const auto probeNormal=glm::normalize(glm::vec3(.3,.4,.7));
+        glUseProgram(program);
+        glUniform3fv(glGetUniformLocation(program,"windNormal"),1,glm::value_ptr(probeNormal));
+        const auto probe=[&](const PlanetWeather::State& state,float tileOffset){
+            PlanetWeather::Upload(program,state);
+            glUniform1f(glGetUniformLocation(program,"tileOffset"),tileOffset);
+            glDrawArrays(GL_TRIANGLES,0,3);glBindTexture(GL_TEXTURE_2D,texture);
+            std::array<float,512> values{};
+            glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_FLOAT,values.data());
+            return values;
+        };
         double maximumError=0;
         for(float wind:{0.f,1.f,3.f}){
-            const auto state=PlanetWeather::Make(PlanetWeather::Miller(),4321,wind,1);glUseProgram(program);PlanetWeather::Upload(program,state);
-            const auto normal=glm::normalize(glm::vec3(.3,.4,.7));glUniform3fv(glGetUniformLocation(program,"windNormal"),1,glm::value_ptr(normal));
-            glDrawArrays(GL_TRIANGLES,0,3);glBindTexture(GL_TEXTURE_2D,texture);std::array<float,512> values{};glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_FLOAT,values.data());
-            for(int i=0;i<128;++i){maximumError=std::max(maximumError,std::abs(values[i*4]-PlanetWeather::WaveHeight(state,{i*3.25,10,21},normal)));
-                if(std::abs(values[i*4+1]-PlanetWeather::WindSpeed(state,normal))>.01)fail();}
+            const auto state=PlanetWeather::Make(profile,4321,wind,1);
+            const auto values=probe(state,0);
+            for(int i=0;i<128;++i){maximumError=std::max(maximumError,std::abs(values[i*4]-PlanetWeather::WaveHeight(state,{i*3.25,10,21},probeNormal)));
+                if(std::abs(values[i*4+1]-PlanetWeather::WindSpeed(state,probeNormal))>.01)fail();}
         }
         std::cout<<"CPU/GPU wind-wave maximum height error="<<maximumError<<" metres\n";if(maximumError>.002)fail();
+        glUniform1i(glGetUniformLocation(program,"probeSurface"),1);
+        const auto windy=PlanetWeather::Make(profile,0,3,0);
+        const auto maxChange=[](const auto& a,const auto& b){
+            float change=0;
+            for(size_t i=0;i<a.size();++i)change=std::max(change,std::abs(a[i]-b[i]));
+            return change;
+        };
+        float largestPhaseStep=0;
+        for(int band=0;band<4;++band){
+            const double omega=std::sqrt(9.81*glm::length(glm::vec3(windy.spectrum[band])));
+            const double wrapTime=(band*1.618+glm::pi<double>())/omega;
+            const auto before=PlanetWeather::Make(profile,wrapTime-.00005,3,0);
+            const auto after=PlanetWeather::Make(profile,wrapTime+.00005,3,0);
+            if(before.phases[band]>-3.f || after.phases[band]<3.f)fail();
+            largestPhaseStep=std::max(largestPhaseStep,maxChange(probe(before,0),probe(after,0)));
+        }
+        const float tileStep=maxChange(probe(windy,0),probe(windy,4096));
+        std::cout<<"Ocean shader continuity: max ripple/foam phase step="<<largestPhaseStep<<", max tile change="<<tileStep<<"\n";
+        if(largestPhaseStep>.002f || tileStep>.0005f){std::cerr<<"Ocean highlights jumped at a phase or tile wrap\n";fail();}
         glBindFramebuffer(GL_FRAMEBUFFER,target);glViewport(viewport[0],viewport[1],viewport[2],viewport[3]);glEnable(GL_DEPTH_TEST);glBindVertexArray(0);
         glDeleteProgram(program);glDeleteTextures(1,&texture);glDeleteFramebuffers(1,&fbo);glDeleteVertexArrays(1,&vao);
         const auto weather=starSystem.WeatherState(2,0);const auto earth=starSystem.Position(2,0);
@@ -963,14 +1000,24 @@ void main(){float i=gl_FragCoord.x-.5;vec3 p=vec3(i*3.25,10,21);result=vec4(weat
         }
         StartGargantua();trajectories=false;selectedTarget=-1;const auto frame=InterstellarWorlds::Orientation();
         const double horizon=KerrSpacetime::Horizon(BlackHole::HorizonRadius(),blackHole.Spin());
-        cameraPos=frame*glm::dvec3(0,0,horizon*.98);cameraFront=glm::normalize(glm::vec3(-cameraPos));cameraUp=glm::vec3(frame[1]);
+        const double kmToAu=1000/Astronomy::metresPerAu;
+        cameraPos=frame*glm::dvec3(0,0,horizon-999*kmToAu);cameraFront=glm::normalize(glm::vec3(-cameraPos));cameraUp=glm::vec3(frame[1]);
         const auto originalFront=cameraFront,originalUp=cameraUp;fieldOfView=63;cameraSpeed=.013;
         UpdateBlackHoleJourney(frame*glm::dvec3(0,0,horizon*1.1),.25f);
         if(!blackHoleJourney.inside || observerGravity)fail();
         capture("gargantua-event-horizon-interior",false,{},true);
         for(int step=0;step<64;++step)UpdateBlackHoleJourney(cameraPos,.25f);
-        if(blackHoleJourney.tesseract){std::cerr<<"Stationary camera still entered the tesseract on a timer\n";fail();}
-        for(double depth:{.91,.80,.70,.54}){
+        if(blackHoleJourney.tesseract){std::cerr<<"Tesseract is visible less than 1,000 km below the horizon\n";fail();}
+        cameraPos=frame*glm::dvec3(0,0,horizon-1001*kmToAu);
+        UpdateBlackHoleJourney(cameraPos,.016f);
+        if(!blackHoleJourney.tesseract || blackHoleJourney.gridBlend>=1 || blackHoleJourney.interiorBlend!=0){
+            std::cerr<<"Tesseract did not begin a distant reveal just past 1,000 km\n";fail();
+        }
+        cameraPos=frame*glm::dvec3(0,0,horizon-6500*kmToAu);
+        UpdateBlackHoleJourney(cameraPos,.016f);
+        if(blackHoleJourney.gridBlend!=1 || blackHoleJourney.interiorBlend!=0)fail();
+        sceneCacheValid=false;capture("gargantua-tesseract-distant-grid");
+        for(double depth:{.91,.80,.65,.54}){
             cameraPos=frame*glm::dvec3(0,0,horizon*depth);const auto position=cameraPos;
             simulationPlaying=true;
             const double time=simulationTime;const bool playback=simulationPlaying;
@@ -978,11 +1025,13 @@ void main(){float i=gl_FragCoord.x-.5;vec3 p=vec3(i*3.25,10,21);result=vec4(weat
             if(cameraPos!=position || cameraFront!=originalFront || cameraUp!=originalUp || fieldOfView!=63 || cameraSpeed!=.013
                 || simulationTime!=time || simulationPlaying!=playback){std::cerr<<"Spatial reveal reset the observer pose or controls\n";fail();}
             simulationPlaying=false;
+            if((depth>=.80 && blackHoleJourney.interiorBlend!=0) || (depth==.65 && !(blackHoleJourney.interiorBlend>0 && blackHoleJourney.interiorBlend<1)))fail();
             sceneCacheValid=false;capture(("gargantua-descent-depth-"+std::to_string(int(depth*100))).c_str(),false,{},true);
         }
         if(blackHoleJourney.interiorBlend!=1 || observerGravity || blackHoleJourney.atLimit)fail();
         const double scale=TesseractSpace::Scale(BlackHole::HorizonRadius());
-        cameraPos=frame*glm::dvec3(0,2,0)*scale;cameraFront=glm::vec3(frame*glm::dvec3(0,0,-1));cameraUp=glm::vec3(frame[1]);
+        cameraPos=frame*glm::dvec3(0,2,1.48)*scale;
+        cameraFront=glm::normalize(glm::vec3(frame*glm::dvec3(0,-.26,-1)));cameraUp=glm::vec3(frame[1]);fieldOfView=78;
         UpdateBlackHoleJourney(cameraPos,.016f);const auto landingStart=cameraPos;
         ToggleLanding();if(cameraPos!=landingStart || !interiorLanding)fail();
         double maximumStep=0;
@@ -991,16 +1040,17 @@ void main(){float i=gl_FragCoord.x-.5;vec3 p=vec3(i*3.25,10,21);result=vec4(weat
         if(!interiorGrounded || std::abs(foot.y-TesseractSpace::deckTop-TesseractSpace::eyeHeight)>1e-8 || maximumStep>.8){std::cerr<<"Interior landing snapped or missed its deck\n";fail();}
         const auto grounded=cameraPos;MoveInterior(frame*glm::dvec3(.5,0,0)*scale,.016f);
         if(!interiorGrounded || glm::length(cameraPos-grounded)<scale*.49)fail();
-        sceneCacheValid=false;capture("gargantua-tesseract-landed-deck");
+        sceneCacheValid=false;capture("gargantua-tesseract-bedroom-landed");
         const auto liftoff=cameraPos;ToggleLanding();if(cameraPos!=liftoff || interiorLanding)fail();
         MoveInterior(frame*glm::dvec3(0,2,1)*scale,.016f);
         if(glm::length(cameraPos-liftoff-frame*glm::dvec3(0,2,1)*scale)>1e-12)fail();
-        sceneCacheValid=false;capture("gargantua-tesseract-bookshelves");
+        sceneCacheValid=false;capture("gargantua-tesseract-bedroom-freecam");
         observerGravity=true;kerrObserverValid=false;interiorDrift=false;const auto fallingStart=cameraPos;
         UpdateObserver(simulationTime,.1f);
         if(glm::length(cameraPos-fallingStart)<=0 || glm::length(cameraPos-fallingStart)>scale*.01 || !observerGravity){std::cerr<<"Continuous interior free fall failed\n";fail();}
         observerGravity=false;
-        cameraFront=glm::normalize(glm::vec3(frame*glm::dvec3(1,.2,-.8)));sceneCacheValid=false;capture("gargantua-tesseract-lattice");
+        cameraPos=frame*glm::dvec3(3.5,4.1,4.3)*scale;
+        cameraFront=glm::normalize(glm::vec3(frame*glm::dvec3(-.58,-.38,-1)));sceneCacheValid=false;capture("gargantua-tesseract-bedroom-lattice");
         std::cout<<"Seamless interior: unchanged pose/FOV/speed/time at four depths; freecam, gradual landing, walking and liftoff passed\n";
         KeyCallback(window,GLFW_KEY_HOME,0,GLFW_PRESS,0);if(blackHoleJourney.inside || blackHoleJourney.tesseract)fail();
         std::cout<<"Nature and interior journey checks "<<(success?"PASSED":"FAILED")<<"\n";
@@ -1803,17 +1853,26 @@ if(length(uv-vec2(.75,.75))<.08){color=vec4(vec3(brightness),uv.x<.75?1.0:0.0);g
     kerrObserverValid=true;observerGravity=false;horizonReached=true;
     const double outerHorizon=KerrSpacetime::Horizon(infallRs,observerSpin);
     std::vector<unsigned char> beforeHorizon;
-    for(double fraction:{1.02,1.001,.999,.98,.85}){
-        for(int step=0;step<100000 && KerrSpacetime::Radius(kerrObserver.state.position,infallRs,observerSpin)>outerHorizon*fraction;++step)
-            KerrSpacetime::AdvanceObserver(kerrObserver,infallRs,observerSpin,.1,Astronomy::lightSpeedAu);
+    const double acrossHorizon=500000/Astronomy::metresPerAu/outerHorizon;
+    const double outside=1+acrossHorizon,inside=1-acrossHorizon;
+    for(double fraction:{1.02,outside,inside,.98,.85}){
+        const double targetRadius=outerHorizon*fraction;
+        for(int step=0;step<100000;++step){
+            const double remaining=KerrSpacetime::Radius(kerrObserver.state.position,infallRs,observerSpin)-targetRadius;
+            if(remaining<=0)break;
+            // Keep the comparison on the two sides of the horizon and
+            // inside the 1,000 km gap before the tesseract can appear.
+            const double interval=std::clamp(remaining/Astronomy::lightSpeedAu*.25,1e-6,.1);
+            KerrSpacetime::AdvanceObserver(kerrObserver,infallRs,observerSpin,interval,Astronomy::lightSpeedAu);
+        }
         cameraPos=InterstellarWorlds::Orientation()*kerrObserver.state.position;
         observer.position=cameraPos;
         observer.velocity=InterstellarWorlds::Orientation()*KerrSpacetime::ObserverCoordinateVelocity(kerrObserver,infallRs,observerSpin)*Astronomy::lightSpeedAu;
         cameraFront=glm::normalize(glm::vec3(cameraPos));cameraUp=glm::vec3(InterstellarWorlds::Orientation()*glm::dvec3(0,0,1));
         sceneCacheValid=false;
         const auto view=capture((std::string("kerr-infall-horizon-")+std::to_string(fraction)).c_str());
-        if(fraction==1.001)beforeHorizon=view;
-        if(fraction==.999){
+        if(fraction==outside)beforeHorizon=view;
+        if(fraction==inside){
             double change=0;for(size_t i=0;i<view.size();++i)change+=std::abs(int(view[i])-int(beforeHorizon[i]));change/=view.size();
             std::cout<<"Horizon-crossing mean display change: "<<change<<" / 255\n";
             if(change>12){std::cerr<<"Horizon crossing introduced a display discontinuity\n";fail();}

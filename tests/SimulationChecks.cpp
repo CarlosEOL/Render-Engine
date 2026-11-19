@@ -443,15 +443,21 @@ int main()
     }
     {
         BlackHoleJourney journey;
-        for(int frame=0;frame<480;++frame)journey.Advance(0,true,.25,.98);
+        const double horizon=KerrSpacetime::Horizon(Astronomy::gargantuaHorizonAu,.8);
+        const double kmToAu=1000/Astronomy::metresPerAu;
+        for(int frame=0;frame<480;++frame)journey.Advance(0,true,.25,horizon-999*kmToAu,horizon);
         Require(!journey.tesseract,"A stationary camera reached the interior through a timer");
+        journey.Advance(0,true,.016,horizon-1001*kmToAu,horizon);
+        Require(journey.gridBlend>0 && journey.gridBlend<1 && journey.interiorBlend==0,"Grid did not start just beyond 1,000 km");
         double lastBlend=0;
-        for(int i=0;i<=500;++i){journey.Advance(0,true,.016,1-i*.001);
-            Require(journey.interiorBlend>=lastBlend && journey.interiorBlend-lastBlend<.005,"Interior reveal is discontinuous with depth");lastBlend=journey.interiorBlend;}
+        for(int i=0;i<=500;++i){journey.Advance(0,true,.016,horizon*(1-i*.001),horizon);
+            Require(journey.interiorBlend>=lastBlend && journey.interiorBlend-lastBlend<.010,"Interior reveal is discontinuous with depth");lastBlend=journey.interiorBlend;}
         Require(journey.tesseract && journey.interiorBlend==1,"Gargantua spatial interior did not appear");
-        journey.Advance(0,false,.25);Require(!journey.inside && !journey.tesseract && journey.insideSeconds==0,"Leaving the horizon retained the interior scene");
+        journey.Advance(0,true,.016,horizon-999*kmToAu,horizon);
+        Require(!journey.tesseract && journey.interiorBlend==0,"Outward flight retained the grid inside the cutoff");
+        journey.Advance(0,false,.25,horizon,horizon);Require(!journey.inside && !journey.tesseract && journey.insideSeconds==0,"Leaving the horizon retained the interior scene");
         for(int id=GalacticCores::firstId;id<GalacticCores::firstId+GalacticCores::count;++id){
-            for(int frame=0;frame<80;++frame)journey.Advance(id,true,.25,.1);
+            for(int frame=0;frame<80;++frame)journey.Advance(id,true,.25,.1,horizon);
             Require(journey.inside && !journey.tesseract,"A non-Gargantua black hole acquired a tesseract");
         }
         const double r=WormholePhysics::ThroatRadiusAu();const auto rotation=WormholePhysics::SaturnToGargantuaRotation();

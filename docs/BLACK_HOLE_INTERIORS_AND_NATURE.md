@@ -1,27 +1,29 @@
 # Black-hole interiors and living terrain
 
-All black-hole scenes allow horizon entry. The camera can fly across a horizon, or begin physical free fall with **H**. Gargantua retains free-camera control across its horizon; H toggles falling. Each galactic core uses its own radius, spin and local frame, including the physical observer used by the lens renderer. **Home** returns to an exterior view.
+All black-hole scenes allow horizon entry. Fly across a horizon or press **H** for physical free fall. Gargantua retains free-camera control across its horizon. Each galactic core uses its own radius, spin and local frame, including the physical observer used by the lens renderer. **Home** returns to an exterior view.
 
-The Kerr integrator retains its numerical inner limit for ordinary black holes, which end in a dark interior. Gargantua instead reveals an original bookshelf-and-light lattice continuously with descent, from 92% to 55% of its horizon radius. Remaining stationary does not activate it. The same world camera, orientation, field of view, speed and playback state continue throughout. Geometry uses a fixed chart at Gargantua's origin; periodic rendering repeats the lattice without rebasing or teleporting the observer. This is a fictional interior, separate from the physical solver.
+Ordinary black holes end in a dark interior at the Kerr integrator's numerical limit. Gargantua begins revealing the tesseract after the camera moves 1,000 km inward from its Kerr event-horizon radius. The distant view projects a procedural 192 × 192 × 192 lattice as dim windows. As the camera travels deeper, the nearest visible grid layers approach and give way to furnished rooms. Room geometry fades in between 71% and 55% of the horizon radius. Each room measures 4.4 by 3.6 metres with a 2.65-metre ceiling. It contains a child’s bed, quilt, stuffed bear, desk, chair and bookcase. Cutaway walls and ceilings let you see neighboring copies. The same world camera, orientation, field of view, speed and playback state continue throughout. Geometry uses a fixed chart at Gargantua's origin, with periodic rendering to repeat the rooms.
 
-The ordinary look controls and WASD work throughout; R/F provides vertical free flight and the wheel adjusts the existing flight speed. **L** arms interior landing without changing the camera pose. Once the interior is fully revealed, gravity lowers the observer onto a deck, with swept floor collision and walking across its surface. L again releases landing in place. Empty gaps remain passable. H free fall continues from the incoming world velocity into the fictional interior instead of stopping at a numerical boundary. No timer, scene-spawn pose or reference-video camera path is imposed.
+WASD and the ordinary look controls work throughout. R/F provides vertical free flight, and the wheel adjusts flight speed. **L** arms interior landing. Once the interior is fully revealed, gravity lowers the observer onto a room floor. Walking speed is capped for navigating the smaller rooms, and **L** releases landing in place. The gaps between rooms remain passable. **H** free fall continues from the incoming world velocity into the fictional interior.
 
-The supplied video was used only for its visual direction: warm white inner emission, amber filaments and deep surrounding darkness. No movie frames or models were imported. Other black-hole presets retain their own emission colours.
+The bedroom uses original geometry and takes its taller bookcases, metal bed frame and side window with radiator from Sohaib Ahmad’s visual reference. [Sketchfab bedroom](https://sketchfab.com/3d-models/murphs-bedroom-interstellar-bedroom-c417fa89eefa4e1a847912d3ef89e421)
+
+The fall previews and supplied stills guided the progression from sparse, cool points of light to warmer architectural detail. [Gargantua descent clip](https://www.youtube.com/watch?v=SYoR_aRRhAs)
 
 Living terrain is described in [Planet vegetation](PLANET_VEGETATION.md). Nearby land receives deterministic broadleaf, conifer or palm models, with distant silhouette cards and bounded instanced grass sprites. Lifeless worlds remain bare. The DX12 bridge supports the same instance step rates and depth comparison state as OpenGL.
 
-Ocean waves now use seeded three-dimensional wave vectors, wind-dependent amplitudes with steepness limits, deep-water dispersion and a second harmonic that sharpens crests. Fine wind ripples affect surface normals without adding geometry; screen derivatives filter unresolved ripples. Windy crests receive broken whitecaps, reducing mirror reflection where foam scatters light. Displacement, normals and reflected weather share the same wave phases. This is a bounded visual wave model rather than a fluid solver.
+Ocean waves use seeded three-dimensional wave vectors, wind-dependent amplitudes with steepness limits, deep-water dispersion and a second harmonic that sharpens crests. Fine wind ripples affect surface normals without adding geometry. Screen derivatives filter unresolved ripples. Windy crests receive broken whitecaps, reducing mirror reflection where foam scatters light. Displacement, normals and reflected weather share the same wave phases.
 
-The continuous-descent Release checks passed 351 OpenGL scene captures and 360 DX12 scene captures, plus 14 interface captures each. Both reported zero assertion failures; DX12 also reported zero scene validation errors. Four descent depths verify unchanged position, view, FOV, speed, world time and playback state. Further checks cover a stationary observer, gradual deck landing, walking, release into free flight and uninterrupted falling. The wider suite covers the paired wormholes, other black-hole horizons, living terrain and wind-driven oceans. All 365 OpenGL and 374 DX12 PNGs were compared against every raw RGB pixel.
+The tesseract approach Release checks passed 352 OpenGL scene captures and 361 DX12 scene captures, plus 14 interface captures each. Both reported zero assertion failures, and DX12 reported zero scene validation errors. The descent checks sampled 999 km and 1,001 km below the horizon to verify the cutoff. They also checked camera pose and playback continuity at four depths, plus room-floor landing, walking and release into free flight. Capture PNGs were checked against their raw RGB pixels.
 
-The standalone simulation utility compiled but could not launch in this session (Windows returned “Access is denied”). The new continuity and landing checks executed successfully inside both application render suites; standalone launch logs are retained with the build history.
+The standalone simulation utility could not launch during the preceding continuous-descent validation. Windows returned “Access is denied,” and the launch logs are in the build history. The descent and landing checks ran inside both application render suites.
 
-Both current application launchers passed eleven further interface checks and pixel-validated captures after promotion. Superseded application builds and duplicate captures were removed, retaining both renderer variants, source/assets, current incremental caches and useful text logs.
+![The first distant reveal](../assets/screenshots/gargantua-tesseract-distant-grid.png)
 
-![Original tesseract lattice](../assets/screenshots/gargantua-tesseract.png)
+![The bedroom repeated through the tesseract](../assets/screenshots/gargantua-tesseract.png)
 
 ![Continuous reveal during descent](../assets/screenshots/gargantua-continuous-descent.png)
 
-![Interior deck landing](../assets/screenshots/gargantua-tesseract-landing.png)
+![Eye level after landing in the bedroom](../assets/screenshots/gargantua-tesseract-landing.png)
 
 ![Living terrain with tree and grass instances](../assets/screenshots/living-planet-vegetation.png)
