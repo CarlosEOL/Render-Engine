@@ -20,7 +20,9 @@ struct BlackHoleJourney {
         if(!belowHorizon)return;
         inside=true;
         if(std::isfinite(seconds))insideSeconds+=std::clamp(seconds,0.0,.25);
-        if(id!=0)return;
+        // Once the rooms are reached, exploring them can cross the radius
+        // that revealed them without reverting to the distant grid.
+        if(id!=0 || interiorBlend>=1)return;
         const double depthKm=(horizonAu-radiusAu)*(Astronomy::metresPerAu/1000.0);
         const double inward=1-radiusAu/horizonAu;
         const auto smooth=[](double fraction){

@@ -1188,19 +1188,31 @@ void BlackHole::RenderCatalogueSelection(const glm::mat4& vp,const glm::dvec3& c
 }
 
 glm::mat4 BlackHole::PlanetRotation(double seconds,int planet) {
+    return glm::mat4(glm::mat3(PlanetRotationDouble(seconds,planet)));
+}
+
+glm::dmat3 BlackHole::PlanetRotationDouble(double seconds,int planet) {
     if(planet==0){
-        const auto position=PlanetPosition(seconds,0);
-        const auto velocity=InterstellarWorlds::Orientation()*glm::dvec3(OrbitalMechanics::VelocityAtTime(bodies[0].orbit,gravitationalParameter,seconds));
-        const auto toward=glm::normalize(-position),up=glm::normalize(glm::cross(position,velocity));
-        return glm::mat4(glm::mat3(glm::dmat3(glm::normalize(glm::cross(up,toward)),up,toward)));
+        const auto& orbit=bodies[0].orbit;
+        const double tilt=std::sin(orbit.inclination),node=orbit.ascendingNode;
+        // A synchronous planet has a fixed pole given by its orbital plane.
+        const auto up=InterstellarWorlds::Orientation()*glm::dvec3(tilt*std::sin(node),-tilt*std::cos(node),std::cos(orbit.inclination));
+        const auto toward=glm::normalize(-PlanetPosition(seconds,0));
+        return glm::dmat3(glm::normalize(glm::cross(up,toward)),up,toward);
     }
     const double day=(planet==1?30.0:28.0)*3600;
-    return glm::rotate(glm::rotate(glm::mat4(1),planet==1?.14f:.4f,glm::vec3(1,0,0)),
-        static_cast<float>(std::remainder(seconds/day,1.0)*glm::two_pi<double>()),glm::vec3(0,1,0));
+    return glm::dmat3(glm::rotate(glm::rotate(glm::dmat4(1),planet==1?.14:.4,glm::dvec3(1,0,0)),
+        std::remainder(seconds/day,1.0)*glm::two_pi<double>(),glm::dvec3(0,1,0)));
+}
+
+double BlackHole::PlanetLandingRadius(const glm::dvec3& direction,int planet) {
+    // Miller's landing frame stays at mean sea level while the ocean moves.
+    const float elevation=planet==0?0:InterstellarWorlds::Elevation(glm::vec3(direction),planet,0);
+    return bodies[planet].radius*(1.0+elevation)+Astronomy::observerClearanceAu;
 }
 
 double BlackHole::PlanetSurfaceRadius(const glm::vec3& worldDirection, double seconds, int planet) const {
-    const auto direction = glm::vec3(glm::transpose(PlanetRotation(seconds,planet)) * glm::vec4(worldDirection, 0.0f));
+    const auto direction=glm::vec3(glm::transpose(PlanetRotationDouble(seconds,planet))*glm::dvec3(worldDirection));
     const float phase = static_cast<float>(std::remainder(seconds, glm::two_pi<double>()));
     if(planet==0){const auto weather=PlanetWeather::Make(PlanetWeather::Miller(),seconds,weatherWindScale,weatherStormScale);
         return bodies[planet].radius*(1.0+PlanetWeather::WaveHeight(weather,glm::dvec3(direction)*static_cast<double>(weather.parameters.w),direction)/weather.parameters.w);}
@@ -1264,7 +1276,7 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
         glUniform1i(glGetUniformLocation(program,"patchEnabled"),patch);
         glUniform1i(glGetUniformLocation(program,"patchDrawing"),false);
         if(patch) {
-            const auto rotation=glm::dmat3(PlanetRotation(seconds,planet));
+            const auto rotation=PlanetRotationDouble(seconds,planet);
             const auto direction=glm::normalize(glm::transpose(rotation)*(cameraPosition-center));
             const double metres=radius*Astronomy::metresPerAu;
             if(!waterPatch.vertexCount || waterPatchRadiusMetres!=metres) {

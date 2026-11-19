@@ -247,6 +247,40 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,boo
             fail();
         return pixels;
     };
+    const auto checkLandingPlayback=[&](const char* name,bool catalogue,int planet){
+        const double start=simulationTime;
+        const auto pose=[&](){
+            const auto centre=catalogue?starSystem.Position(planet,simulationTime):BlackHole::PlanetPosition(simulationTime,planet);
+            const auto rotation=catalogue?starSystem.WeatherFrame(planet,simulationTime):BlackHole::PlanetRotationDouble(simulationTime,planet);
+            const auto inverse=glm::transpose(rotation);
+            return std::array<glm::dvec3,3>{inverse*((catalogue?starSystem.camera:cameraPos)-centre),
+                inverse*glm::dvec3(cameraFront),inverse*glm::dvec3(cameraUp)};
+        };
+        const auto advance=[&](double seconds){
+            const double previous=simulationTime;
+            simulationTime=seconds;
+            if(catalogue)starSystem.Update(seconds,cameraFront,cameraUp);
+            else UpdateObserver(previous,.016f);
+        };
+        const auto origin=pose();
+        simulationPlaying=true;
+        capture(name);
+        if(simulationTime<=start || !(catalogue?starSystem.IsLanded():landed))fail();
+        double drift=0,aimError=0;
+        const auto measure=[&](){
+            const auto current=pose();
+            drift=std::max(drift,glm::length(current[0]-origin[0])*Astronomy::metresPerAu);
+            for(int axis:{1,2})aimError=std::max(aimError,glm::length(current[axis]-origin[axis]));
+        };
+        measure();
+        for(int i=0;i<360;++i){
+            advance(simulationTime+(i%3==0?.008:i%3==1?.016:.033));
+            measure();
+        }
+        simulationPlaying=false;advance(start);measure();sceneCacheValid=false;
+        std::cout<<name<<": stationary drift="<<drift<<" m; aim error="<<aimError<<"\n";
+        if(drift>.005 || aimError>2e-6)fail();
+    };
     const auto checkOceanWeather=[&](){
         StartSolarSystem();starSystem.SelectPlanet(2);simulationPlaying=false;
         const auto cloudEarth=starSystem.Position(2,simulationTime),cloudRadial=glm::normalize(-cloudEarth);
@@ -303,6 +337,7 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,boo
             starSystem.SetWeather(0,0);sceneCacheValid=false;const auto calm=capture("earth-ocean-calm-wind");
             starSystem.SetWeather(3,1);sceneCacheValid=false;const auto windy=capture("earth-ocean-strong-wind");
             if(calm==windy){std::cerr<<"Wind speed made no visible change to water/reflections\n";fail();}
+            checkLandingPlayback("earth-ocean-landing-playback",true,2);
             starSystem.SetWeather(1,1);
         }
         starSystem.SetOceanReflections(true);starSystem.SetEarthClouds(true);
@@ -1044,7 +1079,21 @@ void main(){
         const auto originalFront=cameraFront,originalUp=cameraUp;fieldOfView=63;cameraSpeed=.013;
         UpdateBlackHoleJourney(frame*glm::dvec3(0,0,horizon*1.1),.25f);
         if(!blackHoleJourney.inside || observerGravity)fail();
-        capture("gargantua-event-horizon-interior",false,{},true);
+        const auto horizonView=capture("gargantua-event-horizon-interior",false,{},true);
+        const auto horizonPosition=cameraPos;
+        const bool focusBefore=isFocused,captureBefore=mouseCaptured;
+        isFocused=true;SetMouseCaptured(true);
+        KeyCallback(window,GLFW_KEY_H,0,GLFW_PRESS,0);
+        if(!observerGravity || cameraUp!=originalUp || !mouseCaptured)fail();
+        MouseCallback(window,100,100);MouseCallback(window,160,135);
+        const auto aimedFront=cameraFront,aimedUp=cameraUp;
+        UpdateObserver(simulationTime,.016f);
+        if(aimedFront==originalFront || aimedUp==originalUp || cameraFront!=aimedFront || cameraUp!=aimedUp)
+            {std::cerr<<"Mouse look was lost during the horizon fall\n";fail();}
+        SetMouseCaptured(captureBefore);isFocused=focusBefore;
+        if(capture("gargantua-event-horizon-look-around",false,{},true)==horizonView)fail();
+        observerGravity=kerrObserverValid=false;horizonReached=true;pendingObserverProper=0;
+        cameraPos=horizonPosition;cameraFront=originalFront;cameraUp=originalUp;
         for(int step=0;step<64;++step)UpdateBlackHoleJourney(cameraPos,.25f);
         if(blackHoleJourney.tesseract){std::cerr<<"Tesseract is visible less than 1,000 km below the horizon\n";fail();}
         cameraPos=frame*glm::dvec3(0,0,horizon-1001*kmToAu);
@@ -1069,6 +1118,11 @@ void main(){
         }
         if(blackHoleJourney.interiorBlend!=1 || observerGravity || blackHoleJourney.atLimit)fail();
         const double scale=TesseractSpace::Scale(BlackHole::HorizonRadius());
+        cameraFront=glm::vec3(frame[2]);cameraUp=glm::vec3(frame[1]);
+        const auto transitionStart=cameraPos;
+        for(int i=0;i<10;++i){MoveThroughInterior({0,0,1},.1f,false);UpdateBlackHoleJourney(transitionStart,.1f);}
+        if(!InTesseractRoom() || KerrSpacetime::Radius(glm::transpose(frame)*cameraPos,BlackHole::HorizonRadius(),blackHole.Spin())<=
+            horizon*BlackHoleJourney::furnishedRadiusFraction)fail();
         cameraPos=frame*glm::dvec3(0,2,1.48)*scale;
         cameraFront=glm::normalize(glm::vec3(frame*glm::dvec3(0,-.26,-1)));cameraUp=glm::vec3(frame[1]);fieldOfView=78;
         UpdateBlackHoleJourney(cameraPos,.016f);const auto landingStart=cameraPos;
@@ -1077,20 +1131,34 @@ void main(){
         for(int step=0;step<100;++step){const auto before=cameraPos;MoveInterior({},.05f);maximumStep=std::max(maximumStep,glm::length(cameraPos-before)/scale);}
         const auto foot=glm::transpose(frame)*cameraPos/scale;
         if(!interiorGrounded || std::abs(foot.y-TesseractSpace::deckTop-TesseractSpace::eyeHeight)>1e-8 || maximumStep>.8){std::cerr<<"Interior landing snapped or missed its deck\n";fail();}
-        const auto grounded=cameraPos;MoveInterior(frame*glm::dvec3(.5,0,0)*scale,.016f);
-        if(!interiorGrounded || glm::length(cameraPos-grounded)<scale*.49)fail();
+        const auto grounded=cameraPos;MoveThroughInterior({1,0,0},.05f,false);
+        if(!interiorGrounded || std::abs(glm::length(cameraPos-grounded)/scale-.1)>1e-5)fail();
         sceneCacheValid=false;capture("gargantua-tesseract-bedroom-landed");
         const auto liftoff=cameraPos;ToggleLanding();if(cameraPos!=liftoff || interiorLanding)fail();
-        MoveInterior(frame*glm::dvec3(0,2,1)*scale,.016f);
-        if(glm::length(cameraPos-liftoff-frame*glm::dvec3(0,2,1)*scale)>1e-12)fail();
+        const double exteriorSpeed=.13*Astronomy::lightSpeedAu;
+        cameraSpeed=exteriorSpeed;
+        KeyCallback(window,GLFW_KEY_LEFT_BRACKET,0,GLFW_PRESS,0);
+        if(cameraSpeed!=exteriorSpeed || TesseractSpeed()!=TesseractSpace::defaultFlightSpeed*.5)fail();
+        KeyCallback(window,GLFW_KEY_RIGHT_BRACKET,0,GLFW_PRESS,0);
+        cameraPos=frame*glm::dvec3(-2.1,1.65,1.48)*scale;
+        const auto startFlight=cameraPos;
+        observerGravity=true;
+        for(int i=0;i<12;++i)MoveThroughInterior({1,0,0},.1f,false);
+        const auto travel=glm::transpose(frame)*(cameraPos-startFlight)/scale;
+        if(observerGravity || glm::length(travel-glm::dvec3(4.2,0,0))>1e-5 || cameraSpeed!=exteriorSpeed)
+            {std::cerr<<"Bedroom flight did not use its own metre-scale speed\n";fail();}
+        cameraFront=glm::normalize(glm::vec3(frame*glm::dvec3(-.48,-.26,-1)));
         sceneCacheValid=false;capture("gargantua-tesseract-bedroom-freecam");
         observerGravity=true;kerrObserverValid=false;interiorDrift=false;const auto fallingStart=cameraPos;
+        const int savedTimeRate=timeRateIndex;timeRateIndex=3;
         UpdateObserver(simulationTime,.1f);
+        timeRateIndex=savedTimeRate;
         if(glm::length(cameraPos-fallingStart)<=0 || glm::length(cameraPos-fallingStart)>scale*.01 || !observerGravity){std::cerr<<"Continuous interior free fall failed\n";fail();}
         observerGravity=false;
         cameraPos=frame*glm::dvec3(3.5,4.1,4.3)*scale;
         cameraFront=glm::normalize(glm::vec3(frame*glm::dvec3(-.58,-.38,-1)));sceneCacheValid=false;capture("gargantua-tesseract-bedroom-lattice");
-        std::cout<<"Seamless interior: unchanged pose/FOV/speed/time at four depths; freecam, gradual landing, walking and liftoff passed\n";
+        std::cout<<"Seamless interior: mouse look during free fall, stable reveal, gradual landing, and "
+            <<travel.x<<" m bedroom flight in 1.2 seconds\n";
         KeyCallback(window,GLFW_KEY_HOME,0,GLFW_PRESS,0);if(blackHoleJourney.inside || blackHoleJourney.tesseract)fail();
         std::cout<<"Nature and interior journey checks "<<(success?"PASSED":"FAILED")<<"\n";
     };
@@ -1432,6 +1500,7 @@ Connections: {
     ToggleLanding();
     fieldOfView = 80;
     capture("miller-surface");
+    checkLandingPlayback("miller-landing-playback",false,0);
     // Grazing, near-ground view: both the bright lensed disk and its reflected
     // direction fit on screen. SSR must affect the ocean, never the sky.
     const auto reflectionCenter=BlackHole::PlanetPosition(simulationTime);

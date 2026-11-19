@@ -90,6 +90,8 @@ public:
     int PickCatalogueStar(const glm::dvec3& origin,const glm::vec3& direction,double angularTolerance,int exclude=-1) const;
     void RenderCatalogueSelection(const glm::mat4& vp,const glm::dvec3& camera,int selected,double seconds) const;
     static glm::mat4 PlanetRotation(double seconds,int planet=0);
+    static glm::dmat3 PlanetRotationDouble(double seconds,int planet);
+    static double PlanetLandingRadius(const glm::dvec3& direction,int planet);
     static double GravityParameter() { return Astronomy::gargantuaGravityAu; }
     static float HorizonRadius() { return static_cast<float>(Astronomy::gargantuaHorizonAu); }
     void Update(double seconds);

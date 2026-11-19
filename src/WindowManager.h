@@ -9,6 +9,7 @@
 #include <array>
 #include "BlackHole.h"
 #include "CameraOptics.h"
+#include "CameraMotion.h"
 #include "StarSystem.h"
 #include "ScenePanel.h"
 #include "AppMenu.h"
@@ -82,6 +83,10 @@ private:
     void ToggleLanding();
     void UpdateObserver(double previousTime, float realSeconds);
     void UpdateBlackHoleJourney(const glm::dvec3& previousCamera,float realSeconds);
+    bool InTesseractRoom() const;
+    double TesseractSpeed(bool boost=false) const;
+    void AdjustTesseractSpeed(double factor);
+    void MoveThroughInterior(const glm::dvec3& input,float realSeconds,bool boost);
     void MoveInterior(const glm::dvec3& displacement,float realSeconds);
     void UpdateWormholeTransit(const glm::dvec3& previousCamera,double previousTime,float realSeconds);
     void InitializeOverlay();
@@ -98,7 +103,6 @@ private:
     void ApplyVisionProfile(int profile);
     void LookAtPlanet();
     void SetVehicleView(int vehicle);
-    void AlignCameraUp(const glm::vec3& up);
     void HandleInterfaceCommand(int id, int notification);
     void OpenMainMenu();
     void StartSolarSystem();
@@ -167,6 +171,7 @@ private:
     float appliedMagnitudeLimit=-100;
     bool hdrMode = true;
     bool landed = false;
+    CameraMotion::SurfaceAnchor planetLanding;
     bool observerGravity = false;
     bool horizonReached = false;
     int landedPlanet = 0;
@@ -180,6 +185,7 @@ private:
     BlackHoleJourney blackHoleJourney;
     TesseractScene tesseractScene;
     bool interiorLanding=false,interiorGrounded=false,interiorDrift=false;
+    double tesseractSpeedMetres=TesseractSpace::defaultFlightSpeed;
     double interiorVerticalSpeed=0;
     glm::dvec3 interiorVelocityAu{0};
 

@@ -270,6 +270,9 @@ void WindowManager::ScrollCallback(GLFWwindow* window, double, double yOffset) {
     if (manager.inStarSystem) {
         manager.starSystem.speedAu = FlightUnits::Step(manager.starSystem.speedAu,yOffset);
         manager.ShowSpeedToast(manager.starSystem.speedAu, true);
+    } else if(manager.InTesseractRoom()){
+        manager.AdjustTesseractSpeed(factor);
+        manager.ShowSpeedToast(manager.cameraSpeed,false);
     } else {
         manager.cameraSpeed = glm::clamp(manager.cameraSpeed * factor, manager.showBlackHole?FlightUnits::minimumAu:.001, manager.showBlackHole?FlightUnits::maximumAu:100000.0);
         manager.ShowSpeedToast(manager.cameraSpeed, false);
@@ -510,7 +513,6 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
         manager.horizonReached = false;
         manager.observer = {manager.inStarSystem?manager.starSystem.camera:cameraPos, glm::dvec3(0.0)};
         manager.kerrObserverValid=false;manager.pendingObserverProper=0;
-        cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
     } else if (key == GLFW_KEY_F6 && manager.blackHoleReady) {
         manager.showBlackHole = !manager.inStarSystem;
         manager.photonView = !manager.photonView;
@@ -529,10 +531,12 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
     } else if (key == GLFW_KEY_HOME) {
         manager.ResetView();
     } else if (key == GLFW_KEY_LEFT_BRACKET) {
-        manager.cameraSpeed = glm::max(manager.showBlackHole?FlightUnits::minimumAu:.005, manager.cameraSpeed * .5);
+        if(manager.InTesseractRoom())manager.AdjustTesseractSpeed(.5);
+        else manager.cameraSpeed = glm::max(manager.showBlackHole?FlightUnits::minimumAu:.005, manager.cameraSpeed * .5);
         manager.ShowSpeedToast(manager.cameraSpeed, false);
     } else if (key == GLFW_KEY_RIGHT_BRACKET) {
-        manager.cameraSpeed = glm::min(manager.showBlackHole?FlightUnits::maximumAu:100000.0, manager.cameraSpeed * 2);
+        if(manager.InTesseractRoom())manager.AdjustTesseractSpeed(2);
+        else manager.cameraSpeed = glm::min(manager.showBlackHole?FlightUnits::maximumAu:100000.0, manager.cameraSpeed * 2);
         manager.ShowSpeedToast(manager.cameraSpeed, false);
     } else if (key == GLFW_KEY_COMMA) {
         manager.timeRateIndex = glm::max(0, manager.timeRateIndex - 1);
@@ -553,6 +557,7 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
 void WindowManager::ResetView() {
     blackHoleJourney.Reset();kerrObserverValid=false;pendingObserverProper=0;
     interiorLanding=interiorGrounded=interiorDrift=false;interiorVerticalSpeed=0;interiorVelocityAu={0,0,0};
+    tesseractSpeedMetres=TesseractSpace::defaultFlightSpeed;
     interiorVehicle=0;
     followSelected = false;
     landed = false;
@@ -640,7 +645,7 @@ void WindowManager::ToggleLanding() {
         interiorLanding=!interiorLanding;interiorGrounded=false;
         if(interiorLanding){
             const auto axis=InterstellarWorlds::Orientation()[1];
-            interiorVerticalSpeed=observerGravity?glm::dot(observer.velocity,axis)/TesseractSpace::Scale(BlackHole::HorizonRadius()):0;
+            interiorVerticalSpeed=observerGravity?glm::clamp(glm::dot(observer.velocity,axis)/TesseractSpace::Scale(BlackHole::HorizonRadius()),-4.0,4.0):0;
             observerGravity=false;interiorDrift=false;pendingObserverProper=0;
         }
         ShowStatusToast(interiorLanding?"Tesseract landing on":"Tesseract free camera");return;
@@ -654,13 +659,14 @@ void WindowManager::ToggleLanding() {
     followSpacecraft = false;
     if (landed) {
         landedPlanet = BlackHole::NearestPlanet(cameraPos, simulationTime);
-        lastPlanetPosition = BlackHole::PlanetPosition(simulationTime, landedPlanet);
-        cameraUp = glm::normalize(cameraPos - lastPlanetPosition);
-        cameraPos = lastPlanetPosition + glm::dvec3(cameraUp)
-            * (blackHole.PlanetSurfaceRadius(cameraUp, simulationTime, landedPlanet) + Astronomy::observerClearanceAu);
+        const auto centre=BlackHole::PlanetPosition(simulationTime,landedPlanet);
+        const auto rotation=BlackHole::PlanetRotationDouble(simulationTime,landedPlanet);
+        planetLanding.Set(rotation,cameraPos-centre,cameraFront);
+        planetLanding.radiusAu=BlackHole::PlanetLandingRadius(planetLanding.direction,landedPlanet);
+        cameraUp=glm::vec3(rotation*planetLanding.direction);
         auto tangent = cameraFront - cameraUp * glm::dot(cameraFront, cameraUp);
         if (glm::length(tangent) < 0.01f) {
-            const auto sun = glm::normalize(glm::vec3(-lastPlanetPosition));
+            const auto sun = glm::normalize(glm::vec3(-centre));
             tangent = sun - cameraUp * glm::dot(sun, cameraUp);
         }
         if (glm::length(tangent) < 0.01f) {
@@ -669,6 +675,8 @@ void WindowManager::ToggleLanding() {
             tangent = glm::cross(cameraUp, axis);
         }
         cameraFront = glm::normalize(tangent);
+        planetLanding.CaptureLook(rotation,cameraFront);
+        planetLanding.Place(rotation,centre,cameraPos,cameraFront,cameraUp);
         cameraSpeed = static_cast<float>(2.0/Astronomy::metresPerAu);
         ShowSpeedToast(cameraSpeed, false);
     } else {
@@ -683,24 +691,24 @@ void WindowManager::ToggleLanding() {
 void WindowManager::UpdateObserver(double previousTime, float realSeconds) {
     const bool core=inStarSystem && starSystem.IsCore();
     if(inStarSystem && !core)return;
-    if(!core && blackHoleJourney.interiorBlend>=1 && observerGravity){
+    if(InTesseractRoom() && observerGravity){
         // Continue the incoming velocity in the same world coordinates beyond
         // the physical model. Never replace the observer pose with a scene pose.
-        const double seconds=std::max(0.0,static_cast<double>(realSeconds))*timeRates[timeRateIndex];
+        const double seconds=std::clamp(static_cast<double>(realSeconds),0.0,.1);
         if(!interiorDrift){interiorVelocityAu=kerrObserverValid?observer.velocity:glm::dvec3(0);interiorDrift=true;}
-        const auto acceleration=-InterstellarWorlds::Orientation()[1]*TesseractSpace::Scale(BlackHole::HorizonRadius())*.8;
-        cameraPos+=interiorVelocityAu*seconds+acceleration*(.5*seconds*seconds);
-        interiorVelocityAu+=acceleration*seconds;observer.position=cameraPos;observer.velocity=interiorVelocityAu;
+        const double scale=TesseractSpace::Scale(BlackHole::HorizonRadius());
+        const auto acceleration=-InterstellarWorlds::Orientation()[1]*(scale*.8);
+        const auto limit=[scale](const glm::dvec3& velocity){return velocity*(4*scale/std::max(glm::length(velocity),4*scale));};
+        interiorVelocityAu=limit(interiorVelocityAu);
+        const auto next=limit(interiorVelocityAu+acceleration*seconds);
+        cameraPos+=(interiorVelocityAu+next)*(.5*seconds);
+        interiorVelocityAu=next;observer.position=cameraPos;observer.velocity=interiorVelocityAu;
         localTime+=seconds;pendingObserverProper=0;return;
     }
     if (landed && !core) {
         const auto center = BlackHole::PlanetPosition(simulationTime, landedPlanet);
-        const auto rotation = BlackHole::PlanetRotation(simulationTime,landedPlanet)
-            * glm::transpose(BlackHole::PlanetRotation(previousTime,landedPlanet));
-        cameraPos = center + glm::dmat3(rotation)*(cameraPos-lastPlanetPosition);
-        cameraFront = glm::normalize(glm::vec3(rotation * glm::vec4(cameraFront, 0.0f)));
-        cameraUp = glm::normalize(glm::vec3(rotation * glm::vec4(cameraUp, 0.0f)));
-        lastPlanetPosition = center;
+        planetLanding.CaptureLook(BlackHole::PlanetRotationDouble(previousTime,landedPlanet),cameraFront);
+        planetLanding.Place(BlackHole::PlanetRotationDouble(simulationTime,landedPlanet),center,cameraPos,cameraFront,cameraUp);
     }
     if (!observerGravity)
         return;
@@ -773,6 +781,44 @@ void WindowManager::UpdateBlackHoleJourney(const glm::dvec3& previousCamera,floa
     const double innerLimit=std::max(rs*.03,rs*.5*(1-std::sqrt(1-spin*spin))*1.05);
     if(core && blackHoleJourney.inside && metricRadius(position)<=innerLimit*1.001)blackHoleJourney.atLimit=true;
     if(!blackHoleJourney.inside){interiorLanding=interiorGrounded=interiorDrift=false;interiorVerticalSpeed=0;}
+}
+
+bool WindowManager::InTesseractRoom() const {
+    return !inStarSystem && showBlackHole && blackHoleJourney.interiorBlend>=1;
+}
+
+double WindowManager::TesseractSpeed(bool boost) const {
+    if(interiorLanding)return std::min(tesseractSpeedMetres*(boost?2.0:1.0),boost?3.8:2.0);
+    return tesseractSpeedMetres*(boost?2.0:1.0);
+}
+
+void WindowManager::AdjustTesseractSpeed(double factor) {
+    tesseractSpeedMetres=glm::clamp(tesseractSpeedMetres*factor,.15,12.0);
+}
+
+void WindowManager::MoveThroughInterior(const glm::dvec3& input,float realSeconds,bool boost){
+    const bool room=InTesseractRoom();
+    const bool walking=room && interiorLanding;
+    if(observerGravity){
+        if(!room || input==glm::dvec3(0))return;
+        // Manual flight takes over at the current position without restarting the descent.
+        observerGravity=false;interiorDrift=false;pendingObserverProper=0;
+    }
+    const auto deckUp=glm::vec3(InterstellarWorlds::Orientation()[1]);
+    auto forward=cameraFront;
+    if(walking){
+        forward-=deckUp*glm::dot(forward,deckUp);
+        if(glm::length(forward)<.001f)forward=glm::vec3(InterstellarWorlds::Orientation()[2]);
+        forward=glm::normalize(forward);
+    }
+    const auto up=walking?deckUp:cameraUp;
+    const auto right=glm::normalize(glm::cross(forward,up));
+    auto direction=input.x*glm::dvec3(right)+input.z*glm::dvec3(forward);
+    if(!interiorLanding)direction+=input.y*glm::dvec3(up);
+    if(room)direction/=std::max(1.0,glm::length(direction));
+    const double speed=room?TesseractSpeed(boost)*TesseractSpace::Scale(BlackHole::HorizonRadius()):cameraSpeed*(boost?5.0:1.0);
+    const float step=room?glm::clamp(realSeconds,0.f,.1f):realSeconds;
+    MoveInterior(direction*(speed*step),step);
 }
 
 void WindowManager::MoveInterior(const glm::dvec3& displacement,float realSeconds){
@@ -1284,28 +1330,14 @@ void WindowManager::UpdateTitle() {
           << " | World " << std::setw(2) << worldSeconds / 3600
           << ':' << std::setw(2) << worldSeconds / 60 % 60 << ':' << std::setw(2) << worldSeconds % 60
           << std::setfill(' ') << " | " << timeRates[timeRateIndex] << "x time"
-          << " | Speed " << _UTILITY_::SpeedLabel(inStarSystem?starSystem.speedAu:cameraSpeed,inStarSystem || showBlackHole)
+          << " | Speed " << _UTILITY_::SpeedLabel(InTesseractRoom()?TesseractSpeed()/Astronomy::metresPerAu:
+              inStarSystem?starSystem.speedAu:cameraSpeed,inStarSystem || showBlackHole)
           << " | Mag limit "<<std::fixed<<std::setprecision(2)<<EffectiveMagnitudeLimit()
           << (showBlackHole ? std::string(" | Craft ") + blackHole.SpacecraftStatus() : "")
           << (showBlackHole ? " | Light age " + std::to_string(
               blackHole.SpacecraftLightAge(cameraPos, simulationTime)) + " s" : "")
           << " | Wheel speed | Shift+RMB zoom | MMB reset | Esc cursor";
     SetApplicationTitle(window, title.str());
-}
-
-void WindowManager::AlignCameraUp(const glm::vec3& up) {
-    const auto target = glm::normalize(up);
-    const auto axis = glm::cross(cameraUp, target);
-    const float sine = glm::length(axis);
-    const float cosine = glm::clamp(glm::dot(cameraUp, target), -1.0f, 1.0f);
-    if (sine > 0.000001f) {
-        cameraFront = glm::normalize(glm::vec3(glm::rotate(glm::mat4(1),
-            std::atan2(sine, cosine), axis / sine) * glm::vec4(cameraFront, 0)));
-    } else if (cosine < 0.0f) {
-        const auto right = glm::normalize(glm::cross(cameraFront, cameraUp));
-        cameraFront = glm::vec3(glm::rotate(glm::mat4(1), glm::pi<float>(), right) * glm::vec4(cameraFront, 0));
-    }
-    cameraUp = target;
 }
 
 void WindowManager::SetMouseCaptured(bool captured) {
@@ -1431,6 +1463,7 @@ void WindowManager::MouseCallback(GLFWwindow* window, double xpos, double ypos) 
     xoffset *= sensitivity;
     yoffset *= sensitivity;
 
+    // The falling observer owns position and velocity. Mouse look owns the view throughout the fall.
     CameraMotion::Look(cameraFront,cameraUp,glm::radians(-xoffset),glm::radians(yoffset),
         manager.interiorVehicle || manager.landed || (manager.inStarSystem && manager.starSystem.IsLanded()));
 }
@@ -1527,42 +1560,22 @@ void WindowManager::ProcessCamera(GLFWwindow* window, const float& deltaTime) {
         return;
     auto& manager = *static_cast<WindowManager*>(glfwGetWindowUserPointer(window));
     double speed = manager.cameraSpeed * deltaTime;
+    const bool grounded=manager.landed || (manager.inStarSystem && manager.starSystem.IsLanded())
+        || (manager.InTesseractRoom() && manager.interiorLanding);
+    if (!grounded && !manager.interiorVehicle && !manager.blackHoleJourney.atLimit) {
+        const float bank=(glfwGetKey(window,GLFW_KEY_E)==GLFW_PRESS?1.0f:0.0f)
+            -(glfwGetKey(window,GLFW_KEY_Q)==GLFW_PRESS?1.0f:0.0f);
+        if(bank!=0)CameraMotion::Roll(cameraFront,cameraUp,glm::radians(60.0f)*bank*deltaTime);
+    }
     if(!manager.inStarSystem && manager.showBlackHole && manager.blackHoleJourney.inside){
-        const auto axis=glm::vec3(InterstellarWorlds::Orientation()[1]);
-        auto forward=cameraFront;
-        if(manager.interiorLanding && manager.blackHoleJourney.interiorBlend>=1){
-            forward-=axis*glm::dot(forward,axis);
-            if(glm::length(forward)<.001f)forward=glm::vec3(InterstellarWorlds::Orientation()[2]);
-            forward=glm::normalize(forward);
-        }
-        const auto right=glm::normalize(glm::cross(forward,manager.interiorLanding?axis:cameraUp));glm::dvec3 movement(0);
-        if(!manager.observerGravity){
-            if(glfwGetKey(window,GLFW_KEY_W)==GLFW_PRESS)movement+=glm::dvec3(forward);
-            if(glfwGetKey(window,GLFW_KEY_S)==GLFW_PRESS)movement-=glm::dvec3(forward);
-            if(glfwGetKey(window,GLFW_KEY_A)==GLFW_PRESS)movement-=glm::dvec3(right);
-            if(glfwGetKey(window,GLFW_KEY_D)==GLFW_PRESS)movement+=glm::dvec3(right);
-            if(!manager.interiorLanding){
-                if(glfwGetKey(window,GLFW_KEY_R)==GLFW_PRESS)movement+=glm::dvec3(cameraUp);
-                if(glfwGetKey(window,GLFW_KEY_F)==GLFW_PRESS)movement-=glm::dvec3(cameraUp);
-            }
-        }
-        const double boost=glfwGetKey(window,GLFW_KEY_LEFT_SHIFT)==GLFW_PRESS?5.:1.;
-        double speedAu=manager.cameraSpeed*boost;
-        if(manager.interiorLanding && manager.blackHoleJourney.interiorBlend>=1){
-            const double walkingSpeed=boost>1?3.8:2.0;
-            speedAu=std::min(speedAu,walkingSpeed*TesseractSpace::Scale(BlackHole::HorizonRadius()));
-            if(glm::length(movement)>1)movement=glm::normalize(movement);
-        }
-        manager.MoveInterior(movement*(speedAu*static_cast<double>(deltaTime)),deltaTime);return;
+        const auto pressed=[&](int key){return glfwGetKey(window,key)==GLFW_PRESS?1.0:0.0;};
+        const glm::dvec3 input(pressed(GLFW_KEY_D)-pressed(GLFW_KEY_A),pressed(GLFW_KEY_R)-pressed(GLFW_KEY_F),
+            pressed(GLFW_KEY_W)-pressed(GLFW_KEY_S));
+        manager.MoveThroughInterior(input,deltaTime,pressed(GLFW_KEY_LEFT_SHIFT)>0 || pressed(GLFW_KEY_RIGHT_SHIFT)>0);
+        return;
     }
     if(manager.blackHoleJourney.atLimit)return;
     if(manager.interiorVehicle)return; // Seated look-around keeps the cockpit's up axis.
-    const bool grounded=manager.landed || (manager.inStarSystem && manager.starSystem.IsLanded());
-    if (!grounded) {
-        const float bank=(glfwGetKey(window,GLFW_KEY_E)==GLFW_PRESS?1.0f:0.0f)
-            -(glfwGetKey(window,GLFW_KEY_Q)==GLFW_PRESS?1.0f:0.0f);
-        CameraMotion::Roll(cameraFront,cameraUp,glm::radians(60.0f)*bank*deltaTime);
-    }
     if (manager.inStarSystem) {
         if(!manager.observerGravity)manager.starSystem.Move(window,deltaTime,cameraFront,cameraUp);
         return;
@@ -1572,32 +1585,41 @@ void WindowManager::ProcessCamera(GLFWwindow* window, const float& deltaTime) {
     if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS)
         speed *= 5.0f;
 
+    glm::dvec3 displacement(0);
     // During a free fall gravity owns the trajectory; the mouse still aims the view.
     if (!manager.observerGravity) {
         if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-            cameraPos += speed * glm::dvec3(cameraFront);
+            displacement += speed * glm::dvec3(cameraFront);
         if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-            cameraPos -= speed * glm::dvec3(cameraFront);
+            displacement -= speed * glm::dvec3(cameraFront);
         if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-            cameraPos -= glm::dvec3(right) * speed;
+            displacement -= glm::dvec3(right) * speed;
         if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-            cameraPos += glm::dvec3(right) * speed;
+            displacement += glm::dvec3(right) * speed;
         const bool modifiers=glfwGetKey(window,GLFW_KEY_LEFT_SHIFT)==GLFW_PRESS
             || glfwGetKey(window,GLFW_KEY_RIGHT_SHIFT)==GLFW_PRESS
             || glfwGetKey(window,GLFW_KEY_LEFT_CONTROL)==GLFW_PRESS
             || glfwGetKey(window,GLFW_KEY_RIGHT_CONTROL)==GLFW_PRESS;
-        if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS && !modifiers)
-            cameraPos -= glm::dvec3(cameraUp) * speed;
-        if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS && !modifiers)
-            cameraPos += glm::dvec3(cameraUp) * speed;
+        if (!manager.landed && glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS && !modifiers)
+            displacement -= glm::dvec3(cameraUp) * speed;
+        if (!manager.landed && glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS && !modifiers)
+            displacement += glm::dvec3(cameraUp) * speed;
     }
 
-    // The redshift observer model uses static exterior Schwarzschild observers.
     if (manager.landed) {
-        const auto center = BlackHole::PlanetPosition(manager.simulationTime, manager.landedPlanet);
-        manager.AlignCameraUp(cameraPos - center);
-        cameraPos = center + glm::dvec3(cameraUp) * (manager.blackHole.PlanetSurfaceRadius(cameraUp, manager.simulationTime, manager.landedPlanet) + Astronomy::observerClearanceAu);
-    } else if (manager.showBlackHole) {
+        if(displacement!=glm::dvec3(0)){
+            const auto centre=BlackHole::PlanetPosition(manager.simulationTime,manager.landedPlanet);
+            const auto rotation=BlackHole::PlanetRotationDouble(manager.simulationTime,manager.landedPlanet);
+            auto& anchor=manager.planetLanding;
+            anchor.CaptureLook(rotation,cameraFront);
+            anchor.Walk(rotation,displacement);
+            anchor.radiusAu=BlackHole::PlanetLandingRadius(anchor.direction,manager.landedPlanet);
+            anchor.Place(rotation,centre,cameraPos,cameraFront,cameraUp);
+        }
+        return;
+    }
+    cameraPos+=displacement;
+    if (manager.showBlackHole) {
         const int planet = BlackHole::NearestPlanet(cameraPos, manager.simulationTime);
         const auto planetCenter = BlackHole::PlanetPosition(manager.simulationTime, planet);
         const auto offset = cameraPos - planetCenter;
@@ -1844,7 +1866,9 @@ void WindowManager::ReleaseOverlay() {
 }
 
 void WindowManager::ShowSpeedToast(double speed, bool starSystem) {
-    ShowStatusToast("Flight speed "+FlightUnits::Label(speed,starSystem || showBlackHole),false);
+    if(InTesseractRoom())ShowStatusToast(std::string(interiorLanding?"Walk speed ":"Flight speed ")
+        +FlightUnits::Label(TesseractSpeed()/Astronomy::metresPerAu),false);
+    else ShowStatusToast("Flight speed "+FlightUnits::Label(speed,starSystem || showBlackHole),false);
 }
 
 void WindowManager::ShowStatusToast(const std::string& text,bool compact){
@@ -2003,10 +2027,8 @@ void WindowManager::Update(float& dT) {
             if(interiorVehicle)velocity=blackHole.CockpitPose(interiorVehicle,simulationTime).velocity;
             else if(landed){
                 velocity=(BlackHole::PlanetPosition(simulationTime+.5,landedPlanet)-BlackHole::PlanetPosition(simulationTime-.5,landedPlanet));
-                const auto local=glm::transpose(glm::dmat3(BlackHole::PlanetRotation(simulationTime,landedPlanet)))
-                    *(cameraPos-BlackHole::PlanetPosition(simulationTime,landedPlanet));
-                velocity+=(glm::dmat3(BlackHole::PlanetRotation(simulationTime+.5,landedPlanet))
-                    -glm::dmat3(BlackHole::PlanetRotation(simulationTime-.5,landedPlanet)))*local;
+                velocity+=(BlackHole::PlanetRotationDouble(simulationTime+.5,landedPlanet)
+                    -BlackHole::PlanetRotationDouble(simulationTime-.5,landedPlanet))*(planetLanding.direction*planetLanding.radiusAu);
             }else if(followSpacecraft || (followSelected && followingTarget==9)){
                 // Close following shares the craft's physical coordinate velocity.
                 velocity=blackHole.SpacecraftVelocity();
@@ -2116,7 +2138,7 @@ void WindowManager::Update(float& dT) {
     bool sameCamera=sceneCacheValid && signature[10]==lastSceneSignature[10];
     for(int i=0;i<9;++i)if(signature[i]!=lastSceneSignature[i])sameCamera=false;
     if(!sameCamera)lastBlackHoleCameraChange=glfwGetTime();
-    const float blackHoleScale=adaptiveBlackHoleQuality && blackHoleView && !simulationPlaying
+    const float blackHoleScale=adaptiveBlackHoleQuality && blackHoleView && !landed && !simulationPlaying
         && glfwGetTime()-lastBlackHoleCameraChange>=.25?1.f:blackHoleResolution;
     idleFrame=sceneCacheValid && !simulationPlaying && !observerGravity && (showBlackHole || inStarSystem) && signature==lastSceneSignature;
     if(blackHoleJourney.inside)idleFrame=false;

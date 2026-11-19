@@ -31,15 +31,6 @@ double Random(std::mt19937_64 &engine, double lower, double upper)
     return std::uniform_real_distribution<double>(lower, upper)(engine);
 }
 
-void AlignUp(glm::vec3 &front, glm::vec3 &up, const glm::vec3 &nextUp)
-{
-    const auto axis = glm::cross(up, nextUp);
-    const float sine = glm::length(axis);
-    if (sine > 0.000001f)
-        front = glm::normalize(glm::vec3(
-            glm::rotate(glm::mat4(1), std::atan2(sine, glm::dot(up, nextUp)), axis / sine) * glm::vec4(front, 0)));
-    up = nextUp;
-}
 } // namespace
 
 StarSystem::Star StarSystem::DescribeStar(int id, const std::string &name)
@@ -313,8 +304,7 @@ PlanetWeather::State StarSystem::WeatherState(int planet,double seconds) const {
 double StarSystem::SurfaceRadius(int planet, const glm::dvec3 &direction, double seconds) const
 {
     const auto &body = planets[planet];
-    const auto local =
-        glm::normalize(glm::vec3(glm::transpose(Rotation(planet, seconds)) * glm::vec4(glm::vec3(direction), 0)));
+    const auto local=glm::vec3(glm::normalize(glm::transpose(RotationDouble(planet,seconds))*direction));
     const double radius = body.radiusEarth * Astronomy::earthRadiusAu;
     if (body.gas || body.wormhole)
         return radius;
@@ -324,27 +314,19 @@ double StarSystem::SurfaceRadius(int planet, const glm::dvec3 &direction, double
                         body.seaLevel, 0.003f, static_cast<float>(2.0 / (body.radiusEarth * 6371000.0)),false,&weather));
 }
 
-void StarSystem::ConstrainSurface(double seconds, glm::vec3 &front, glm::vec3 &up)
+void StarSystem::UpdateLandingRadius()
 {
-    if (landedPlanet < 0)
-        return;
-    const auto center = Position(landedPlanet, seconds);
-    const auto radial = glm::normalize(camera - center);
-    AlignUp(front, up, glm::vec3(radial));
-    camera = center + radial * (SurfaceRadius(landedPlanet, radial, seconds) + Astronomy::observerClearanceAu);
+    const auto& body=planets[landedPlanet];
+    const float elevation=PlanetTerrain::SurfaceElevation(glm::vec3(landing.direction),body.seed,0,body.seaLevel,.003f,0);
+    landing.radiusAu=body.radiusEarth*Astronomy::earthRadiusAu*(1.0+elevation)+Astronomy::observerClearanceAu;
 }
 
 void StarSystem::Update(double seconds, glm::vec3 &front, glm::vec3 &up)
 {
     if (landed)
     {
-        const auto centerBefore = Position(landedPlanet, lastTime);
-        const auto rotation = Rotation(landedPlanet, seconds) * glm::transpose(Rotation(landedPlanet, lastTime));
-        camera =
-            Position(landedPlanet, seconds) + glm::dvec3(rotation * glm::vec4(glm::vec3(camera - centerBefore), 0));
-        front = glm::normalize(glm::vec3(rotation * glm::vec4(front, 0)));
-        up = glm::normalize(glm::vec3(rotation * glm::vec4(up, 0)));
-        ConstrainSurface(seconds, front, up);
+        landing.CaptureLook(RotationDouble(landedPlanet,lastTime),front);
+        landing.Place(RotationDouble(landedPlanet,seconds),Position(landedPlanet,seconds),camera,front,up);
     }
     else if (following)
     {
@@ -374,23 +356,29 @@ void StarSystem::Move(GLFWwindow *window, float realSeconds, glm::vec3 &front, g
         movement += glm::dvec3(right);
     if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
         movement -= glm::dvec3(right);
-    if (!landed)
+    if(landed)
     {
-        const bool shift=glfwGetKey(window,GLFW_KEY_LEFT_SHIFT)==GLFW_PRESS || glfwGetKey(window,GLFW_KEY_RIGHT_SHIFT)==GLFW_PRESS
-            || glfwGetKey(window,GLFW_KEY_LEFT_CONTROL)==GLFW_PRESS || glfwGetKey(window,GLFW_KEY_RIGHT_CONTROL)==GLFW_PRESS;
-        if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS && !shift)
-            movement += glm::dvec3(up);
-        if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS && !shift)
-            movement -= glm::dvec3(up);
+        if(distance!=0 && movement!=glm::dvec3(0)){
+            const auto rotation=RotationDouble(landedPlanet,lastTime);
+            landing.CaptureLook(rotation,front);
+            landing.Walk(rotation,distance*movement);
+            UpdateLandingRadius();
+            landing.Place(rotation,Position(landedPlanet,lastTime),camera,front,up);
+        }
+        return;
     }
+    const bool shift=glfwGetKey(window,GLFW_KEY_LEFT_SHIFT)==GLFW_PRESS || glfwGetKey(window,GLFW_KEY_RIGHT_SHIFT)==GLFW_PRESS
+        || glfwGetKey(window,GLFW_KEY_LEFT_CONTROL)==GLFW_PRESS || glfwGetKey(window,GLFW_KEY_RIGHT_CONTROL)==GLFW_PRESS;
+    if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS && !shift)
+        movement += glm::dvec3(up);
+    if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS && !shift)
+        movement -= glm::dvec3(up);
     camera += distance * movement;
     const double hostRadius=star.radiusSolar*Astronomy::solarRadiusAu;
-    if (!IsCore() && !landed && glm::length(camera)<hostRadius+Astronomy::observerClearanceAu)
+    if (!IsCore() && glm::length(camera)<hostRadius+Astronomy::observerClearanceAu)
         camera=(glm::length(camera)>0?glm::normalize(camera):glm::dvec3(0,0,1))
             *(hostRadius+Astronomy::observerClearanceAu);
-    if (landed)
-        ConstrainSurface(lastTime, front, up);
-    else if(InDetailRange())
+    if(InDetailRange())
     {
         for (int planet = 0; planet < static_cast<int>(planets.size()); ++planet)
         {
@@ -458,12 +446,18 @@ void StarSystem::ToggleLanding(double seconds, glm::vec3 &front, glm::vec3 &up)
     landedPlanet = selected;
     landed = true;
     following = false;
-    ConstrainSurface(seconds, front, up);
-    auto horizon = glm::vec3(-Position(selected, seconds));
+    const auto centre=Position(landedPlanet,seconds);
+    const auto rotation=RotationDouble(landedPlanet,seconds);
+    landing.Set(rotation,camera-centre,front);
+    UpdateLandingRadius();
+    up=glm::vec3(rotation*landing.direction);
+    auto horizon = glm::vec3(-centre);
     horizon -= up * glm::dot(horizon, up);
     if (glm::length(horizon) < .000001f)
         horizon = glm::cross(up, std::abs(up.y) < .9f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0));
     front = glm::normalize(horizon);
+    landing.CaptureLook(rotation,front);
+    landing.Place(rotation,centre,camera,front,up);
     speedAu = 2.0 / Astronomy::metresPerAu;
     lastTime = seconds;
 }

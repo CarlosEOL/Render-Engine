@@ -33,3 +33,35 @@ void CameraMotion::Carry(glm::dvec3 &position, glm::vec3 &front, glm::vec3 &up, 
     front = glm::normalize(glm::vec3(rotationDelta * glm::dvec3(front)));
     up = glm::normalize(glm::vec3(rotationDelta * glm::dvec3(up)));
 }
+
+void CameraMotion::SurfaceAnchor::Set(const glm::dmat3& rotation,const glm::dvec3& offset,const glm::vec3& front) {
+    const auto inverse=glm::transpose(rotation);
+    direction=glm::length(offset)>0?glm::normalize(inverse*offset):glm::dvec3(0,0,1);
+    localFront=glm::normalize(inverse*glm::dvec3(front));
+    lastWorldFront=front;
+}
+
+void CameraMotion::SurfaceAnchor::CaptureLook(const glm::dmat3& rotation,const glm::vec3& front) {
+    if(front!=lastWorldFront)localFront=glm::normalize(glm::transpose(rotation)*glm::dvec3(front));
+}
+
+void CameraMotion::SurfaceAnchor::Walk(const glm::dmat3& rotation,const glm::dvec3& displacement) {
+    const auto local=glm::transpose(rotation)*displacement;
+    const auto tangent=local-direction*glm::dot(direction,local);
+    const auto next=glm::normalize(direction*radiusAu+tangent);
+    const auto axis=glm::cross(direction,next);
+    const double sine=glm::length(axis);
+    if(sine>1e-14){
+        const auto transport=glm::rotate(glm::dmat4(1),std::atan2(sine,glm::dot(direction,next)),axis/sine);
+        localFront=glm::normalize(glm::dvec3(transport*glm::dvec4(localFront,0)));
+    }
+    direction=next;
+}
+
+void CameraMotion::SurfaceAnchor::Place(const glm::dmat3& rotation,const glm::dvec3& centre,
+    glm::dvec3& position,glm::vec3& front,glm::vec3& up) {
+    const auto radial=rotation*direction;
+    position=centre+radiusAu*radial;
+    up=glm::vec3(radial);
+    lastWorldFront=front=glm::vec3(rotation*localFront);
+}

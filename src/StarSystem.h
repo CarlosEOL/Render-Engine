@@ -4,6 +4,7 @@
 #include "SaturnRings.h"
 #include "KerrWormhole.h"
 #include "PlanetVegetation.h"
+#include "CameraMotion.h"
 #include "WormholeSky.h"
 #include "OrbitalMechanics.h"
 #include <glm/glm.hpp>
@@ -140,7 +141,7 @@ class StarSystem
     glm::mat4 Rotation(int planet, double seconds) const;
     glm::dmat3 RotationDouble(int planet, double seconds) const;
     double SurfaceRadius(int planet, const glm::dvec3 &direction, double seconds) const;
-    void ConstrainSurface(double seconds, glm::vec3 &front, glm::vec3 &up);
+    void UpdateLandingRadius();
     void UpdatePatch(const glm::dvec3 &direction,double radiusMetres);
     Star star;
     std::vector<Planet> planets;
@@ -163,6 +164,7 @@ class StarSystem
     double cachedAsteroidTime = std::numeric_limits<double>::quiet_NaN();
     int selected = -1;
     int landedPlanet = -1;
+    CameraMotion::SurfaceAnchor landing;
     bool landed = false;
     bool following = false;
     bool followingRotation = false;

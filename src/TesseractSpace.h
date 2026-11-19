@@ -10,6 +10,7 @@ inline constexpr glm::dvec3 roomPitch(6.5,4.6,5.5);
 inline constexpr glm::dvec2 roomHalfSize(2.2,1.8);
 inline constexpr double ceilingHeight=2.65;
 inline constexpr double deckTop=0,eyeHeight=1.65;
+inline constexpr double defaultFlightSpeed=3.5;
 inline double Periodic(double value,double period){return value-period*std::floor((value+period*.5)/period);}
 inline bool OnDeck(double x,double z){
     return std::abs(Periodic(x,roomPitch.x))<=roomHalfSize.x
