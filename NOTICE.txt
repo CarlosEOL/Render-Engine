@@ -1,0 +1,34 @@
+Render-Engine project notice
+
+Render-Engine is an independent hobby project made for fun, learning, and
+experimentation. The Gargantua scenario is an unofficial fan interpretation
+inspired by Christopher Nolan's film Interstellar (2014). Render-Engine has no
+affiliation with the film or its rights holders and claims no endorsement or
+sponsorship. The film and associated intellectual property remain with their
+respective rights holders.
+
+Please keep the complete fan build noncommercial. Please refrain from selling
+it, bundling it with a paid product, or monetizing its distribution. This is a
+request about how the fan build is used. The MIT license permits commercial use
+of the software it covers under its terms. See LICENSE in the source repository
+or LICENSE-Render-Engine.txt beside the application. Third-party assets and
+dependencies remain subject to their own rights and license terms.
+
+Canadian legal references
+
+Section 3 of the Copyright Act sets out rights held by copyright owners.
+Section 29.21 provides a conditional exception for certain noncommercial
+user-generated works. Its conditions include crediting the source where
+reasonable, having reasonable grounds to believe the source is lawful, and
+avoiding a substantial adverse effect on the original work or its market.
+Whether the exception applies depends on the facts of the particular use.
+https://laws-lois.justice.gc.ca/eng/acts/C-42/section-3.html
+https://laws-lois.justice.gc.ca/eng/acts/C-42/section-29.21.html
+
+Section 7 of the Trademarks Act addresses practices including passing off and
+public representations likely to cause confusion about the source of goods,
+services, or a business in Canada.
+https://laws-lois.justice.gc.ca/eng/acts/T-13/section-7.html
+
+Film reference
+https://www.paramountmovies.com/movies/interstellar

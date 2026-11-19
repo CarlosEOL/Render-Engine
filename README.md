@@ -1,6 +1,12 @@
 # Render-Engine
 3D Render Engine with GLFW, GLAD, GLEW & glm
 
+## Independent hobby project
+
+Render-Engine is made for fun, learning, and experimentation. The Gargantua scenario is an unofficial fan interpretation inspired by Christopher Nolan’s *Interstellar* (2014). The project has no affiliation with the film or its rights holders and claims no endorsement or sponsorship.
+
+Please keep the complete fan build noncommercial. The MIT license permits commercial use of the software it covers under its terms. Film material and other third-party content are subject to their respective rights and licenses. [Project notice and legal references](NOTICE.txt) · [MIT license](LICENSE) · [Third-party notices](third_party/README.md)
+
 ## Native DX12 and OpenGL builds
 
 The `build/dx12` branch runs the complete Planetorium and Quantum application through native DirectX 12. Run `Build-DX12.cmd Debug` or `Build-DX12.cmd Release`, then `build\dx12\Debug\bin\Render-Engine-DX12.exe` (or `Release`). The separate `build/opengl` branch preserves the OpenGL build. Both share the same scene controls and simulations.

@@ -260,6 +260,10 @@ copy /Y "$(ProjectDir)..\External_Lib\lib\assimp-vc143-mtd.dll" "$(TargetDir)ass
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Target Name="DeployProjectNotice" AfterTargets="Build">
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\NOTICE.txt" DestinationFolder="$(OutDir)" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\LICENSE" DestinationFiles="$(OutDir)LICENSE-Render-Engine.txt" />
+  </Target>
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>
