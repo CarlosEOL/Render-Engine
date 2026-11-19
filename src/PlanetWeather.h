@@ -103,14 +103,33 @@ inline State Make(const Profile& p,double seconds,float windScale=1,float stormS
     return s;
 }
 inline Profile Miller(){return {731,6371000,.035f,288,14,true,true,true,true,true};}
+inline float StormWind(const State& s,int index,const glm::vec3& n){
+    const auto& storm=s.storms[index];
+    if(storm.w<=0)return 0;
+    const float r=std::acos(glm::clamp(glm::dot(n,glm::vec3(storm)),-1.f,1.f))/s.shapes[index].x;
+    return storm.w*glm::smoothstep(.05f,.20f,r)*std::exp(-r*r*3.f);
+}
 inline float WindSpeed(const State& s,const glm::vec3& direction){
     if(s.parameters.w<=0)return 0;
     const auto n=glm::normalize(direction);float wind=s.parameters.x*(.72f+.28f*std::cos(n.y*6));
-    for(int i=0;i<3;++i){if(s.storms[i].w<=0)continue;
-        const float r=std::acos(glm::clamp(glm::dot(n,glm::vec3(s.storms[i])),-1.f,1.f))/s.shapes[i].x;
-        wind+=s.storms[i].w*glm::smoothstep(.05f,.20f,r)*std::exp(-r*r*3.f);
-    }
+    for(int i=0;i<3;++i)wind+=StormWind(s,i,n);
     return std::min(wind,85.f);
+}
+// Planet-fixed wind in m/s, tangent to the surface. The prevailing flow
+// follows the primary swell, with circulation from each local storm.
+inline glm::vec3 SurfaceWind(const State& s,const glm::vec3& n){
+    if(s.parameters.w<=0 || s.parameters.x<=0)return glm::vec3(0);
+    const auto prevailing=glm::vec3(s.spectrum[0]);
+    const auto tangent=prevailing-n*glm::dot(n,prevailing);
+    const float ambient=s.parameters.x*(.72f+.28f*std::cos(n.y*6));
+    auto wind=tangent*(ambient/std::max(glm::length(tangent),.002f));
+    for(int i=0;i<3;++i){
+        const float speed=StormWind(s,i,n);
+        if(speed<=0)continue;
+        const auto around=glm::cross(glm::vec3(s.storms[i]),n);
+        wind+=around*(speed*s.shapes[i].y/std::max(glm::length(around),1e-6f));
+    }
+    return wind*(85.f/std::max(glm::length(wind),85.f));
 }
 inline double WaveHeight(const State& s,const glm::dvec3& metres,const glm::vec3& n){
     const float wind=WindSpeed(s,n);double height=0;

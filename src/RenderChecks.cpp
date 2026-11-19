@@ -969,12 +969,16 @@ void main(){
         trajectories=false;lensFlareStrength=0;fieldOfView=75;visionProfile=0;exposureEv=0;KeyCallback(window,1200,0,GLFW_PRESS,0);
         const auto earth=starSystem.Position(2,0);const auto rotation=starSystem.WeatherFrame(2,0);const auto& body=starSystem.Planets()[2];
         const PlanetVegetation::Profile profile{body.seed,body.radiusEarth*Astronomy::earthRadiusAu*Astronomy::metresPerAu,body.temperature,body.seaLevel,body.life};
+        const double nightTime=body.daySeconds*.5;
+        const auto nightEarth=starSystem.Position(2,nightTime);
+        const auto nightRotation=starSystem.WeatherFrame(2,nightTime);
         std::array<bool,3> seen{};
         for(int i=0;i<24000 && !std::all_of(seen.begin(),seen.end(),[](bool b){return b;});++i){
             const double y=1-2*(i+.5)/24000,angle=i*2.399963229728653;
             const glm::dvec3 n(std::sqrt(1-y*y)*std::cos(angle),y,std::sqrt(1-y*y)*std::sin(angle));
             const auto habitat=PlanetVegetation::Sample(profile,n);
             if(!habitat.suitable || habitat.grass<.4 || habitat.forest<.08 || seen[habitat.species] || glm::dot(rotation*n,glm::normalize(-earth))<.2)continue;
+            if(habitat.species==2 && glm::dot(nightRotation*n,glm::normalize(-nightEarth))>-.2)continue;
             const auto radial=rotation*n;const auto east=glm::normalize(glm::cross(glm::dvec3(0,1,0),radial));
             starSystem.camera=earth+radial*((profile.radiusMetres*(1+habitat.elevation)+3)/Astronomy::metresPerAu);
             cameraUp=glm::vec3(radial);cameraFront=glm::normalize(glm::vec3(east)-cameraUp*.06f);
@@ -986,6 +990,41 @@ void main(){
             size_t change=0;for(size_t p=0;p<on.size();p+=3)if(std::abs(int(on[p])-off[p])+std::abs(int(on[p+1])-off[p+1])+std::abs(int(on[p+2])-off[p+2])>5)++change;
             std::cout<<name<<": trees="<<trees<<" grass="<<grass<<" changed="<<change<<" pixels\n";
             if(change<50 || trees>2000 || grass>6000)fail();seen[habitat.species]=true;starSystem.SetVegetationEnabled(true);
+            if(habitat.species==2){
+                const auto groundView=[&](double time){
+                    simulationTime=time;
+                    const auto frame=starSystem.WeatherFrame(2,time);
+                    starSystem.camera=starSystem.Position(2,time)+frame*n*((profile.radiusMetres*(1+habitat.elevation)+3)/Astronomy::metresPerAu);
+                    cameraUp=glm::vec3(frame*n);
+                    cameraFront=glm::normalize(glm::vec3(frame*glm::transpose(rotation)*east)-cameraUp*.06f);
+                    sceneCacheValid=false;
+                };
+                starSystem.SetEarthClouds(false);
+                starSystem.SetWeather(0,0);groundView(0);
+                const auto calm=capture("life-foliage-calm");
+                starSystem.SetVegetationEnabled(false);sceneCacheValid=false;
+                const auto calmGround=capture("life-foliage-calm-ground");
+                starSystem.SetWeather(3,0);sceneCacheValid=false;
+                const auto windyGround=capture("life-foliage-windy-ground");
+                starSystem.SetVegetationEnabled(true);sceneCacheValid=false;
+                const auto windy=capture("life-foliage-windy");
+                if(starSystem.VisibleTrees()!=trees || starSystem.VisibleGrassSprites()!=grass)fail();
+                starSystem.SetWeather(0,0);groundView(nightTime);
+                const auto night=capture("life-foliage-night");
+                size_t windPixels=0;double dayLight=0,nightLight=0;
+                for(size_t p=0;p<calm.size();p+=3){
+                    int foliage=0,motion=0;
+                    for(int c=0;c<3;++c){
+                        foliage+=std::abs(int(calm[p+c])-calmGround[p+c]);
+                        motion+=std::abs((int(windy[p+c])-windyGround[p+c])-(int(calm[p+c])-calmGround[p+c]));
+                    }
+                    if(motion>8)++windPixels;
+                    if(foliage>12){dayLight+=calm[p+1];nightLight+=night[p+1];}
+                }
+                std::cout<<"Foliage response: wind changed "<<windPixels<<" pixels; night/day luminance="<<nightLight/std::max(dayLight,1.)<<"\n";
+                if(windPixels<250 || dayLight<1000 || nightLight>dayLight*.55)fail();
+                starSystem.SetWeather(1,1);starSystem.SetEarthClouds(true);groundView(0);
+            }
         }
         if(!std::all_of(seen.begin(),seen.end(),[](bool b){return b;})){std::cerr<<"Missing visible living-planet tree species / grass\n";fail();}
         for(int id=GalacticCores::firstId;id<GalacticCores::firstId+GalacticCores::count;++id){

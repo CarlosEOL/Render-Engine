@@ -915,9 +915,10 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
     }
     if(livingPlanet>=0){
         const auto& body=planets[livingPlanet];
-        vegetation.SetSunlight(glm::normalize(glm::vec3(-Position(livingPlanet,seconds))));
+        const auto centre=Position(livingPlanet,seconds);
+        vegetation.SetSunlight(glm::normalize(glm::vec3(-centre)));
         vegetation.Render({body.seed,body.radiusEarth*Astronomy::earthRadiusAu*Astronomy::metresPerAu,body.temperature,body.seaLevel,body.life},
-            RotationDouble(livingPlanet,seconds),Position(livingPlanet,seconds)-camera,vp,front,seconds);
+            RotationDouble(livingPlanet,seconds),centre-camera,vp,front,seconds,WeatherState(livingPlanet,seconds));
     }
     for (int planet = 0; planet < static_cast<int>(planets.size()); ++planet)
     {
