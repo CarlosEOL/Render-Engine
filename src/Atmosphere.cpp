@@ -29,6 +29,7 @@ uniform vec3 planetCenter;
 uniform vec3 lightPosition;
 uniform float planetRadius;
 uniform bool earthClouds;
+uniform bool thinPolarClouds;
 uniform float cloudTime;
 uniform mat3 cloudFrame;
 uniform bool oceanReflections;
@@ -66,6 +67,13 @@ float weather(vec3 p){
  // Long, broken fronts in the westerlies; small scattered cumulus in trades.
  float front=.5+.5*sin(n.y*34.0+macro*11.0+banks*3.0);
  coverage=max(coverage,fronts*smoothstep(.55,.85,front)*smoothstep(.35,.65,banks)*.78);
+ if(thinPolarClouds){
+  // Break up the high-latitude sheets so the ocean remains visible from orbit.
+  float polar=smoothstep(.67,.93,latitude);
+  float stream=cloudNoise(vec3(n.x*12.0,n.y*110.0,n.z*12.0)+seed+57.0);
+  float wisps=smoothstep(.49,.79,stream)*smoothstep(.28,.72,banks);
+  coverage=mix(coverage,.04*coverage+.055*wisps,polar);
+ }
  for(int i=0;i<3;++i){
   if(weatherStorms[i].w<=0.0)continue;
   vec3 centre=weatherStorms[i].xyz;float cosine=clamp(dot(radial,centre),-1.0,1.0);
@@ -112,6 +120,36 @@ vec2 sphereInterval(vec3 origin, vec3 direction, float radius) {
 }
 
 float depthDistance(float z){return (exp2(z*log2(1.0+20000.0*1e12))-1.0)/1e12;}
+
+vec4 marchClouds(vec3 origin,vec3 direction,float begin,float end){
+    if(end<=begin)return vec4(0,0,0,1);
+    // Keep the weather sampling separate from the fine density samples.
+    vec4 coverageKnots;
+    for(int k=0;k<4;++k)coverageKnots[k]=weather(origin+direction*mix(begin,end,float(k)/4.0));
+    float lastCoverage=weather(origin+direction*end);
+    int steps=int(clamp(ceil((end-begin)*149597870.7/.65),24.0,128.0));
+    float step=(end-begin)/float(steps);
+    vec4 result=vec4(0,0,0,1);
+    for(int i=0;i<128;++i){
+        if(i>=steps)break;
+        vec3 p=origin+direction*(begin+(float(i)+.5)*step);
+        float knot=(float(i)+.5)*4.0/float(steps);
+        int index=min(3,int(knot));
+        float coverage=mix(coverageKnots[index],index<3?coverageKnots[min(index+1,3)]:lastCoverage,fract(knot));
+        float density=cloudDensity(p,coverage);if(density<.001)continue;
+        vec3 sun=normalize(lightPosition-planetCenter-p);
+        float shadow=cloudDensity(p+sun*(3500.0/149597870700.0),coverage)*4.0;
+        float daylight=smoothstep(-.12,.10,dot(normalize(p),sun));
+        float phase=.25+.65*pow(max(dot(direction,sun),0.0),8.0);
+        vec3 lighting=vec3(.12,.17,.25)*(.08+.92*daylight)
+            +vec3(1.0,.96,.88)*daylight*exp(-shadow)*(.55+phase);
+        float passing=exp(-density*step*149597870.7);
+        result.rgb+=result.a*(1.0-passing)*lighting;
+        result.a*=passing;
+        // Complete the interval so bright background emission has no opacity floor.
+    }
+    return result;
+}
 
 vec3 auroralLight(vec3 origin,vec3 direction,float finish){
     if(auroraAxis.w<=0.0)return vec3(0);
@@ -216,6 +254,7 @@ vec3 oceanReflection(vec3 background,vec3 origin,vec3 direction,float z){
     return max(background-vec3(analyticSpecular*confidence),vec3(0))+reflectedLight*fresnel*confidence;
 }
 
+)" + R"(
 void main() {
     vec4 source = texture(scene, screenPosition * 0.5 + 0.5);
     vec3 background = source.rgb;
@@ -258,53 +297,61 @@ void main() {
         vec2 cloudShell=sphereInterval(origin,direction,planetRadius+12000.0/149597870700.0);
         vec2 cloudBase=sphereInterval(origin,direction,planetRadius+2000.0/149597870700.0);
         float cloudBegin=max(0.0,cloudShell.x),cloudEnd=min(finish,cloudShell.y);
-        if(cloudBase.x>cloudBegin)cloudEnd=min(cloudEnd,cloudBase.x);
-        // From below the clouds, skip the empty cavity before entering the base.
-        if(length(origin)<planetRadius+2000.0/149597870700.0)cloudBegin=max(cloudBegin,cloudBase.y);
         vec2 sheet=sphereInterval(origin,direction,planetRadius+5500.0/149597870700.0);
         float sheetDistance=sheet.x>0.0?sheet.x:sheet.y;
-        float sheetT=1.0;vec3 sheetLight=vec3(0);
+        float sheetOpticalDepth=0.0;vec3 sheetSource=vec3(0);
         if(sheetDistance>=start && sheetDistance<finish){
             vec3 p=origin+direction*sheetDistance;
             float grazing=max(.10,abs(dot(normalize(p),direction)));
-            sheetT=exp(-weather(p)*2.8/grazing);
+            float coverage=weather(p);
+            if(thinPolarClouds){
+                // Keep the orbital cloud layer translucent across the ocean.
+                vec3 n=cloudCoordinates(normalize(cloudFrame*p));
+                float windBands=cloudNoise(vec3(n.x*12.0,n.y*85.0,n.z*12.0)+weatherParameters.z+83.0);
+                coverage*=mix(.14,.40,smoothstep(.40,.77,windBands));
+            }
+            sheetOpticalDepth=coverage*2.8/grazing;
             vec3 sun=normalize(lightPosition-planetCenter-p);
             float illumination=smoothstep(-.12,.12,dot(normalize(p),sun));
-            sheetLight=vec3(.83,.87,.94)*(.025+.975*illumination)*(1.0-sheetT);
+            sheetSource=vec3(.83,.87,.94)*(.025+.975*illumination);
         }
-        vec3 volumeLight=vec3(0);float volumeT=1.0;
+        float sheetT=exp(-sheetOpticalDepth);
+        vec3 sheetLight=sheetSource*(1.0-sheetT);
+        vec4 volume=vec4(0,0,0,1);
         if(volumeWeight>0.0 && cloudEnd>cloudBegin){
-            cloudEnd=min(cloudEnd,cloudBegin+200000.0/149597870700.0);
-            // Interpolate coarse weather independently of the finer erosion
-            // samples, keeping coverage continuous as the ray interval changes.
-            vec4 coverageKnots;
-            for(int k=0;k<4;++k)coverageKnots[k]=weather(origin+direction*mix(cloudBegin,cloudEnd,float(k)/4.0));
-            float lastCoverage=weather(origin+direction*cloudEnd);
-            int cloudSteps=int(clamp(ceil((cloudEnd-cloudBegin)*149597870.7/.65),24.0,128.0));
-            float step=(cloudEnd-cloudBegin)/float(cloudSteps);
-            for(int i=0;i<128;++i){
-                if(i>=cloudSteps)break;
-                vec3 p=origin+direction*(cloudBegin+(float(i)+.5)*step);
-                float knot=(float(i)+.5)*4.0/float(cloudSteps);
-                int index=min(3,int(knot));
-                float coverage=mix(coverageKnots[index],index<3?coverageKnots[min(index+1,3)]:lastCoverage,fract(knot));
-                float density=cloudDensity(p,coverage);if(density<.001)continue;
-                vec3 sun=normalize(lightPosition-planetCenter-p);
-                float shadow=cloudDensity(p+sun*(3500.0/149597870700.0),coverage)*4.0;
-                float daylight=smoothstep(-.12,.10,dot(normalize(p),sun));
-                float phase=.25+.65*pow(max(dot(direction,sun),0.0),8.0);
-                vec3 lighting=vec3(.12,.17,.25)*(.08+.92*daylight)
-                    +vec3(1.0,.96,.88)*daylight*exp(-shadow)*(.55+phase);
-                float passing=exp(-density*step*149597870.7);
-                volumeLight+=volumeT*(1.0-passing)*lighting;volumeT*=passing;
-                // Even one percent of an HDR disk can dominate the image.
-                // Integrate extinction through the complete interval: stopping
-                // at a fixed opacity floor reveals the last sample as a stripe.
+            // Subtract the clear cavity from the outer cloud shell. A grazing
+            // ray can leave the first bank and meet another before the disk.
+            const float marchLimit=200000.0/149597870700.0;
+            bool intersectsBase=cloudBase.y>cloudBase.x;
+            float nearEnd=intersectsBase?min(cloudEnd,cloudBase.x):cloudEnd;
+            nearEnd=min(nearEnd,cloudBegin+marchLimit);
+            float farBegin=intersectsBase?max(cloudBegin,cloudBase.y):cloudEnd;
+            float farEnd=min(cloudEnd,farBegin+marchLimit);
+            bool hasBack=farEnd>farBegin;
+            bool sheetInBack=hasBack && sheetDistance>=farBegin;
+            // Keep the distant approximation on the correct side of the
+            // back interval, and fade it in beyond the traced distance.
+            float tracedEnd=sheetInBack?farEnd:nearEnd;
+            float distantWeight=smoothstep(0.0,40.0,(sheetDistance-tracedEnd)*149597870.7);
+            float distantT=exp(-sheetOpticalDepth*distantWeight);
+            vec3 distantLight=sheetSource*(1.0-distantT);
+            volume=marchClouds(origin,direction,cloudBegin,nearEnd);
+            if(!sheetInBack){
+                volume.rgb+=volume.a*distantLight;
+                volume.a*=distantT;
             }
-            if(sheetDistance>cloudEnd){volumeLight+=volumeT*sheetLight;volumeT*=sheetT;}
+            if(hasBack){
+                vec4 back=marchClouds(origin,direction,farBegin,farEnd);
+                if(sheetInBack){
+                    back.rgb+=back.a*distantLight;
+                    back.a*=distantT;
+                }
+                volume.rgb+=volume.a*back.rgb;
+                volume.a*=back.a;
+            }
         }
-        float cloudT=mix(sheetT,volumeT,volumeWeight);
-        background=background*cloudT+mix(sheetLight,volumeLight,volumeWeight);
+        float cloudT=mix(sheetT,volume.a,volumeWeight);
+        background=background*cloudT+mix(sheetLight,volume.rgb,volumeWeight);
         if(!waterReceiver)sourceEligibility*=cloudT;
     }
     const int samples = 12;

@@ -17,6 +17,8 @@ struct Profile {
     float radiusMetres=6371000,seaLevel=.035f,temperature=288,wind=8;
     bool oceanOnly=false,enabled=true;
     bool metalCore=false,magneticField=false,atmosphere=false;
+    bool thinPolarClouds=false;
+    bool mappedEarth=false;
 };
 struct State {
     glm::vec4 parameters{}; // ambient wind m/s, humidity, seed offset, radius m
@@ -28,16 +30,18 @@ struct State {
     glm::vec4 ripplePhases{};
     float foamPhase=0;
     glm::vec4 auroraAxis{},auroraMotion{};
+    bool thinPolarClouds=false;
 };
 inline float Unit(unsigned value){value^=value>>16;value*=0x7feb352du;value^=value>>15;value*=0x846ca68bu;value^=value>>16;return (value&0xffffffu)/16777215.f;}
 inline constexpr glm::vec4 rippleFrequencies{8,21,55,144};
 inline bool Ocean(const Profile& p,const glm::vec3& n){
+    if(p.mappedEarth && PlanetTerrain::HasEarthMap())return PlanetTerrain::EarthGeography(n).y>.95f;
     return p.oceanOnly || PlanetTerrain::SurfaceElevation(n,p.seed,0,p.seaLevel,1,0)<=p.seaLevel+1e-6f;
 }
 inline std::array<glm::vec3,3> Centres(const Profile& p){
-    struct Entry{unsigned seed;float sea;bool ocean;std::array<glm::vec3,3> centres;};
+    struct Entry{unsigned seed;float sea;bool ocean,earth;std::array<glm::vec3,3> centres;};
     static std::deque<Entry> cache;
-    for(const auto& entry:cache)if(entry.seed==p.seed && entry.sea==p.seaLevel && entry.ocean==p.oceanOnly)return entry.centres;
+    for(const auto& entry:cache)if(entry.seed==p.seed && entry.sea==p.seaLevel && entry.ocean==p.oceanOnly && entry.earth==p.mappedEarth)return entry.centres;
     std::array<glm::vec3,3> centres{};
     for(unsigned i=0;i<3;++i)for(unsigned attempt=0;attempt<48;++attempt){
         const unsigned h=p.seed+i*1337+attempt*7907;
@@ -47,10 +51,11 @@ inline std::array<glm::vec3,3> Centres(const Profile& p){
         bool separate=true;for(unsigned j=0;j<i;++j)if(glm::dot(n,centres[j])>.92f)separate=false;
         if(separate){centres[i]=n;break;}
     }
-    if(cache.size()==32)cache.pop_front();cache.push_back({p.seed,p.seaLevel,p.oceanOnly,centres});return centres;
+    if(cache.size()==32)cache.pop_front();cache.push_back({p.seed,p.seaLevel,p.oceanOnly,p.mappedEarth,centres});return centres;
 }
 inline State Make(const Profile& p,double seconds,float windScale=1,float stormScale=1){
     State s;
+    s.thinPolarClouds=p.thinPolarClouds;
     if(!std::isfinite(seconds))seconds=0;
     if(p.metalCore && p.magneticField && p.atmosphere){
         const float tilt=.12f+.12f*Unit(p.seed+907),longitude=Unit(p.seed+1009)*glm::two_pi<float>();
@@ -102,7 +107,11 @@ inline State Make(const Profile& p,double seconds,float windScale=1,float stormS
     }
     return s;
 }
-inline Profile Miller(){return {731,6371000,.035f,288,14,true,true,true,true,true};}
+inline Profile Miller(){
+    Profile profile{731,6371000,.035f,288,14,true,true,true,true,true};
+    profile.thinPolarClouds=true;
+    return profile;
+}
 inline float StormWind(const State& s,int index,const glm::vec3& n){
     const auto& storm=s.storms[index];
     if(storm.w<=0)return 0;
@@ -152,6 +161,7 @@ inline void Upload(unsigned program,const State& s){
     glUniform1f(glGetUniformLocation(program,"weatherFoamPhase"),s.foamPhase);
     glUniform4fv(glGetUniformLocation(program,"auroraAxis"),1,glm::value_ptr(s.auroraAxis));
     glUniform4fv(glGetUniformLocation(program,"auroraMotion"),1,glm::value_ptr(s.auroraMotion));
+    glUniform1i(glGetUniformLocation(program,"thinPolarClouds"),s.thinPolarClouds);
 }
 inline const char* ShaderFunctions(){return R"(
 uniform vec4 weatherParameters,weatherPhases;

@@ -16,7 +16,7 @@ const InterstellarWorlds::Planet &InterstellarWorlds::Get(int index) {
   // choices. No precise canonical ephemeris exists for these fictional worlds.
   static const Planet planets[] = {
       {"Miller's planet",
-       "Ocean world",
+       "Ice-free ocean world",
        {Astronomy::millerOrbitAu, 0, .20, .2, .8},
        1,
        1.3,

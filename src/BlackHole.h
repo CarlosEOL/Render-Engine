@@ -39,10 +39,12 @@ public:
     void SetLensingDiagnostic(bool value) { lensingDiagnostic=value; }
     void SetHotFlowDiagnostic(bool value) { hotFlowDiagnostic=value; }
     void SetAccretionCloudsEnabled(bool value) { accretionCloudsEnabled=value; }
+    void SetAccretionPlaneEnabled(bool value) { accretionPlaneEnabled=value; }
     void SetAtmospheresEnabled(bool enabled) { atmospheresEnabled=enabled; }
     void SetWeatherCloudsEnabled(bool enabled) { weatherCloudsEnabled=enabled; }
     void SetOceanReflectionsEnabled(bool enabled) { oceanReflectionsEnabled=enabled; }
     void SetWeather(float windScale,float stormScale){weatherWindScale=windScale;weatherStormScale=stormScale;}
+    void SetWeatherEnabled(bool enabled){weatherEnabled=enabled;}
     void SetGalaxyAutoExposure(bool enabled){if(galaxies.SetAutoExposure(enabled))skyCubeDirty=true;}
     unsigned int LensingSourceDepthTexture() const { return sourceDepth; }
     unsigned int WormholeSky(double seconds=0) const;
@@ -134,8 +136,11 @@ private:
     bool lensingDiagnostic=false;
     bool hotFlowDiagnostic=false;
     bool accretionCloudsEnabled=true;
+    bool accretionPlaneEnabled=true;
     bool atmospheresEnabled=true;
     bool weatherCloudsEnabled=true;
+    bool weatherEnabled=true;
+    PlanetWeather::State MillerWeather(double seconds) const;
     std::array<glm::vec2,6> diskAppearance{};
     bool oceanReflectionsEnabled=true;
     float weatherWindScale=1,weatherStormScale=1;

@@ -7,6 +7,8 @@ Render-Engine is made for fun, learning, and experimentation. The Gargantua scen
 
 Please keep the complete fan build noncommercial. The MIT license permits commercial use of the software it covers under its terms. Film material and other third-party content are subject to their respective rights and licenses. [Project notice and legal references](NOTICE.txt) · [MIT license](LICENSE) · [Third-party notices](third_party/README.md)
 
+> Do not copy this project and claim it as your own, I mean damn it just make make your own, don't you think it's more impressive that way?
+
 ## Native DX12 and OpenGL builds
 
 The `build/dx12` branch runs the complete Planetorium and Quantum application through native DirectX 12. Run `Build-DX12.cmd Debug` or `Build-DX12.cmd Release`, then `build\dx12\Debug\bin\Render-Engine-DX12.exe` (or `Release`). The separate `build/opengl` branch preserves the OpenGL build. Both share the same scene controls and simulations.

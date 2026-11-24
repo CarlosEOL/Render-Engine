@@ -113,6 +113,7 @@ struct Program {
   Com<ID3DBlob> gs;
   std::vector<D3D12_INPUT_ELEMENT_DESC> inputs;
   std::vector<SamplerBinding> samplers;
+  std::vector<SamplerBinding> vertexSamplers;
   std::vector<std::string> uniformNames;
   std::map<std::string, GLint> locations;
   std::map<std::string, UniformValue> values;
@@ -406,7 +407,7 @@ public:
   void Draw(GLenum mode, GLint first, GLsizei count, GLsizei instances);
   D3D12_GPU_VIRTUAL_ADDRESS Constants(const ShaderStage &stage,
                                       const Program &program);
-  D3D12_GPU_DESCRIPTOR_HANDLE BindTextures(const Program &program);
+  D3D12_GPU_DESCRIPTOR_HANDLE BindTextures(const Program &program, bool vertex=false);
   Com<ID3D12PipelineState> Pipeline(Program &program, GLenum mode);
   std::vector<unsigned char> Read(Texture &texture, UINT level, UINT layer,
                                   UINT &pitch);
@@ -451,7 +452,7 @@ void SceneBridge::Initialize(HWND hwnd) {
       makeHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 65536, true, srvs);
   samplerStride =
       makeHeap(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, 2048, true, samplers);
-  D3D12_ROOT_PARAMETER p[5]{};
+  D3D12_ROOT_PARAMETER p[7]{};
   for (UINT i = 0; i < 3; ++i) {
     p[i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     p[i].Descriptor.ShaderRegister = i == 2 ? 3 : 0;
@@ -464,13 +465,13 @@ void SceneBridge::Initialize(HWND hwnd) {
   ranges[0].NumDescriptors = 8;
   ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
   ranges[1].NumDescriptors = 8;
-  for (UINT i = 0; i < 2; ++i) {
+  for (UINT i = 0; i < 4; ++i) {
     p[3 + i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-    p[3 + i].DescriptorTable = {1, &ranges[i]};
-    p[3 + i].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    p[3 + i].DescriptorTable = {1, &ranges[i % 2]};
+    p[3 + i].ShaderVisibility = i<2?D3D12_SHADER_VISIBILITY_PIXEL:D3D12_SHADER_VISIBILITY_VERTEX;
   }
   D3D12_ROOT_SIGNATURE_DESC desc{};
-  desc.NumParameters = 5;
+  desc.NumParameters = static_cast<UINT>(std::size(p));
   desc.pParameters = p;
   desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
   Com<ID3DBlob> signature, error;
@@ -901,21 +902,25 @@ void SceneBridge::Link(Program &program) {
                                 formats[components], parameter.SemanticIndex, 0,
                                 D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
     }
+    const auto reflectTextures=[&](std::vector<SamplerBinding>& bindings){
+      reflection->GetDesc(&desc);
+      for (UINT i = 0; i < desc.BoundResources; ++i) {
+        D3D11_SHADER_INPUT_BIND_DESC binding{};
+        reflection->GetResourceBindingDesc(i, &binding);
+        if (binding.Type != D3D_SIT_TEXTURE)
+          continue;
+        std::string name = binding.Name;
+        if (name.starts_with("tex_"))
+          name.erase(0, 4);
+        bindings.push_back({name, binding.BindPoint, binding.Dimension});
+      }
+    };
+    reflectTextures(program.vertexSamplers);
     Check(D3DReflect(program.ps.code->GetBufferPointer(),
                      program.ps.code->GetBufferSize(),
                      IID_PPV_ARGS(&reflection)),
           "Reflect scene textures");
-    reflection->GetDesc(&desc);
-    for (UINT i = 0; i < desc.BoundResources; ++i) {
-      D3D11_SHADER_INPUT_BIND_DESC binding{};
-      reflection->GetResourceBindingDesc(i, &binding);
-      if (binding.Type != D3D_SIT_TEXTURE)
-        continue;
-      std::string name = binding.Name;
-      if (name.starts_with("tex_"))
-        name.erase(0, 4);
-      program.samplers.push_back({name, binding.BindPoint, binding.Dimension});
-    }
+    reflectTextures(program.samplers);
     if (program.points) {
       const auto begin = program.vertexHlsl.find("struct SPIRV_Cross_Output"),
                  end = program.vertexHlsl.find("};", begin);
@@ -1008,7 +1013,7 @@ D3D12_GPU_VIRTUAL_ADDRESS SceneBridge::Constants(const ShaderStage &stage,
   return memory.second;
 }
 
-D3D12_GPU_DESCRIPTOR_HANDLE SceneBridge::BindTextures(const Program &program) {
+D3D12_GPU_DESCRIPTOR_HANDLE SceneBridge::BindTextures(const Program &program, bool vertex) {
   if (srvCursor + 8 > (gpu.frameIndex + 1) * 32768)
     throw std::runtime_error("Scene descriptor budget exceeded");
   const UINT first = srvCursor;
@@ -1021,7 +1026,7 @@ D3D12_GPU_DESCRIPTOR_HANDLE SceneBridge::BindTextures(const Program &program) {
     view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
     view.Texture2D.MipLevels = 1;
     Texture *texture = nullptr;
-    for (const auto &binding : program.samplers)
+    for (const auto &binding : vertex?program.vertexSamplers:program.samplers)
       if (binding.binding == slot) {
         int unit = 0;
         const auto value = program.values.find(binding.name);
@@ -1055,8 +1060,9 @@ D3D12_GPU_DESCRIPTOR_HANDLE SceneBridge::BindTextures(const Program &program) {
       for (UINT layer = 0; layer < texture->layers; ++layer)
         for (UINT level = 0; level < (texture->mips ? texture->levels : 1);
              ++level)
-          State(*texture, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, level,
-                layer);
+          State(*texture, vertex?(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE |
+                                 D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
+                                :D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, level, layer);
       sampler.Filter =
           texture->minFilter == GL_NEAREST && texture->magFilter == GL_NEAREST
               ? D3D12_FILTER_MIN_MAG_MIP_POINT
@@ -1091,7 +1097,7 @@ D3D12_GPU_DESCRIPTOR_HANDLE SceneBridge::BindTextures(const Program &program) {
     handle.ptr += static_cast<UINT64>(index) * samplerStride;
     table = samplerTables.emplace(std::move(key), handle).first;
   }
-  gpu.commands->SetGraphicsRootDescriptorTable(4, table->second);
+  gpu.commands->SetGraphicsRootDescriptorTable(vertex?6:4, table->second);
   return Srv(first);
 }
 namespace {
@@ -1207,6 +1213,8 @@ void SceneBridge::Draw(GLenum mode, GLint first, GLsizei count,
   std::memcpy(point.first, pointValues, sizeof(pointValues));
   gpu.commands->SetGraphicsRootConstantBufferView(2, point.second);
   gpu.commands->SetGraphicsRootDescriptorTable(3, BindTextures(program));
+  if(!program.vertexSamplers.empty())
+    gpu.commands->SetGraphicsRootDescriptorTable(5, BindTextures(program,true));
   gpu.commands->SetPipelineState(Pipeline(program, mode).Get());
   const D3D12_VIEWPORT vp{static_cast<float>(viewport[0]),
                           static_cast<float>(viewport[1]),

@@ -161,6 +161,9 @@ private:
     glm::dmat3 lastCabinRotation=glm::dmat3(1);
     int quantumRateIndex = 2;
     void* nativeMenu = nullptr;
+    void* nativeViewMenu = nullptr;
+    static constexpr int WeatherMenuCommand = 1380;
+    bool weatherEnabled = true;
     CameraOptics optics;
     bool opticsReady = false;
     int visionProfile = 0;

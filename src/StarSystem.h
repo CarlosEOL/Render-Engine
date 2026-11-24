@@ -52,6 +52,7 @@ class StarSystem
         bool wormhole = false;
         bool metalCore = true,magneticField = false;
         bool life = false;
+        bool earthPoles = false;
     };
 
     static Star DescribeStar(int id, const std::string &name);
@@ -65,6 +66,7 @@ class StarSystem
     void SetEarthClouds(bool enabled){earthCloudsEnabled=enabled;}
     void SetOceanReflections(bool enabled){oceanReflectionsEnabled=enabled;}
     void SetWeather(float windScale,float stormScale){weatherWindScale=windScale;weatherStormScale=stormScale;}
+    void SetWeatherEnabled(bool enabled){weatherEnabled=enabled;}
     void SetAurorasEnabled(bool enabled){aurorasEnabled=enabled;}
     void SetVegetationEnabled(bool enabled){vegetationEnabled=enabled;}
     size_t VisibleTrees() const {return vegetation.LastTrees();}
@@ -143,11 +145,15 @@ class StarSystem
     double SurfaceRadius(int planet, const glm::dvec3 &direction, double seconds) const;
     void UpdateLandingRadius();
     void UpdatePatch(const glm::dvec3 &direction,double radiusMetres);
+    void BindEarthMaps() const;
     Star star;
     std::vector<Planet> planets;
     std::vector<OrbitalMechanics::Orbit> asteroids;
     bool solarSystem = false;
     bool earthCloudsEnabled=true;
+    bool earthMapsLoaded=false;
+    unsigned earthReliefTexture=0,earthColorTexture=0;
+    bool weatherEnabled=true;
     bool oceanReflectionsEnabled=true;
     float weatherWindScale=1,weatherStormScale=1;
     bool aurorasEnabled=true;

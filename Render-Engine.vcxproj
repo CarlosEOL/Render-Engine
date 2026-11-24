@@ -256,6 +256,10 @@ copy /Y "$(ProjectDir)assets\ui\laboratories.png" "$(TargetDir)assets\ui\laborat
 if not exist "$(TargetDir)assets\galactic" mkdir "$(TargetDir)assets\galactic"
 copy /Y "$(ProjectDir)assets\galactic\milky-way-nasa.jpg" "$(TargetDir)assets\galactic\milky-way-nasa.jpg"
 copy /Y "$(ProjectDir)assets\galactic\CREDITS.md" "$(TargetDir)assets\galactic\CREDITS.md"
+if not exist "$(TargetDir)assets\earth" mkdir "$(TargetDir)assets\earth"
+copy /Y "$(ProjectDir)assets\earth\earth-relief.png" "$(TargetDir)assets\earth\earth-relief.png"
+copy /Y "$(ProjectDir)assets\earth\earth-color.jpg" "$(TargetDir)assets\earth\earth-color.jpg"
+copy /Y "$(ProjectDir)assets\earth\CREDITS.md" "$(TargetDir)assets\earth\CREDITS.md"
 copy /Y "$(ProjectDir)..\External_Lib\lib\assimp-vc143-mtd.dll" "$(TargetDir)assimp-vc143-mtd.dll"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>

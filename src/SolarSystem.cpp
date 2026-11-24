@@ -1,5 +1,6 @@
 #include "Astronomy.h"
 #include "StarSystem.h"
+#include "PlanetTerrain.h"
 #include "WormholePhysics.h"
 #include <cmath>
 #include <glm/gtc/constants.hpp>
@@ -194,6 +195,8 @@ void StarSystem::LoadSolarSystem()
         body.atmosphere = d.atmosphere;
         body.magneticField=index==0 || index==2 || (index>=4 && index<=7);
         body.life=index==2;
+        body.earthPoles=index==2;
+        if(body.earthPoles && PlanetTerrain::HasEarthMap())body.seaLevel=0;
         body.color = d.color;
         planets.push_back(body);
     }

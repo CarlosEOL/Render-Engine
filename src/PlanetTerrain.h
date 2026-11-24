@@ -1,14 +1,22 @@
 #pragma once
 #include <glm/vec3.hpp>
 #include <glm/mat3x3.hpp>
+#include <filesystem>
 #include <vector>
 namespace PlanetWeather {struct State;}
 
 namespace PlanetTerrain {
     const char* ShaderFunctions();
     const char* SurfaceDetailShaderFunctions();
+    std::filesystem::path EarthAssetPath(const char* filename);
+    bool HasEarthMap();
+    glm::vec3 EarthGeography(const glm::vec3& direction);
+    unsigned LoadEarthReliefTexture();
+    float ArcticWinter(double seconds);
+    float WaterCoverage(const glm::vec3& direction,unsigned seed,float height,float seaLevel,bool earth,float arcticWinter);
     float SurfaceElevation(const glm::vec3& direction, unsigned int seed, float phase,
-        float seaLevel, float relief, float waves, bool oceanOnly=false,const PlanetWeather::State* weather=nullptr);
+        float seaLevel, float relief, float waves, bool oceanOnly=false,const PlanetWeather::State* weather=nullptr,
+        bool earth=false,float arcticWinter=0);
     std::vector<glm::vec3> SurfaceLodVertices(double radiusMetres);
     void ConfigureSurfacePatch(unsigned int program,const glm::dvec3& anchor,
         const glm::dmat3& rotation,const glm::dvec3& centerRelativeAu,double radiusMetres,float elevation);

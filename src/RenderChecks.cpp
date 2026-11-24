@@ -32,6 +32,7 @@
 #include <source_location>
 #include <chrono>
 #include <functional>
+#include <tuple>
 unsigned int compileShaderProgram(const char*,const char*);
 
 // Optional hidden-window GPU smoke checks; normal application startup never runs this.
@@ -350,12 +351,18 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,boo
         GLint target,viewport[4];glGetIntegerv(GL_FRAMEBUFFER_BINDING,&target);glGetIntegerv(GL_VIEWPORT,viewport);
         const char* vertex=R"(#version 330 core
 void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.0-1.0,0,1);})";
-        const auto fragment=std::string("#version 330 core\n")+PlanetWeather::ShaderFunctions()+PlanetWeather::SurfaceShaderFunctions()+R"(
+        const auto fragment=std::string("#version 330 core\n")+PlanetTerrain::ShaderFunctions()+PlanetWeather::SurfaceShaderFunctions()+R"(
 uniform vec3 windNormal;
 uniform float tileOffset;
 uniform bool probeSurface;
+uniform bool probeEarth;
 out vec4 result;
 void main(){
+    if(probeEarth){
+        float height=terrainHeight(windNormal);
+        result=vec4(height,liquidCoverage(windNormal,height),0,1);
+        return;
+    }
     float i=gl_FragCoord.x-.5;
     vec3 p=vec3(i*3.25+tileOffset,10,21);
     if(probeSurface)result=vec4(weatherWaveGradient(p,windNormal,false),weatherOceanFoam(p,windNormal));
@@ -369,6 +376,7 @@ void main(){
         const auto profile=PlanetWeather::Miller();
         const auto probeNormal=glm::normalize(glm::vec3(.3,.4,.7));
         glUseProgram(program);
+        glUniform1i(glGetUniformLocation(program,"earthReliefMap"),4);
         glUniform3fv(glGetUniformLocation(program,"windNormal"),1,glm::value_ptr(probeNormal));
         const auto probe=[&](const PlanetWeather::State& state,float tileOffset){
             PlanetWeather::Upload(program,state);
@@ -405,8 +413,78 @@ void main(){
         const float tileStep=maxChange(probe(windy,0),probe(windy,4096));
         std::cout<<"Ocean shader continuity: max ripple/foam phase step="<<largestPhaseStep<<", max tile change="<<tileStep<<"\n";
         if(largestPhaseStep>.002f || tileStep>.0005f){std::cerr<<"Ocean highlights jumped at a phase or tile wrap\n";fail();}
+        const auto& polarEarth=starSystem.Planets()[2];
+        const double year=365.2422*Astronomy::secondsPerDay;
+        glUniform1i(glGetUniformLocation(program,"probeEarth"),1);
+        glUniform1i(glGetUniformLocation(program,"earthPoles"),1);
+        glActiveTexture(GL_TEXTURE4);
+        const auto earthRelief=PlanetTerrain::LoadEarthReliefTexture();
+        glUniform1i(glGetUniformLocation(program,"earthMapped"),earthRelief!=0);
+        glActiveTexture(GL_TEXTURE0);
+        if(!earthRelief)fail();
+        glUniform1f(glGetUniformLocation(program,"terrainSeed"),static_cast<float>(polarEarth.seed));
+        glUniform1f(glGetUniformLocation(program,"seaLevel"),polarEarth.seaLevel);
+        const auto samplePolar=[&](const glm::vec3& normal,double date){
+            const float winter=PlanetTerrain::ArcticWinter(date);
+            glUniform3fv(glGetUniformLocation(program,"windNormal"),1,glm::value_ptr(normal));
+            glUniform1f(glGetUniformLocation(program,"arcticWinter"),winter);
+            const auto values=probe({},0);
+            const float cpuHeight=PlanetTerrain::SurfaceElevation(normal,polarEarth.seed,0,polarEarth.seaLevel,1,0,
+                false,nullptr,true,winter);
+            const float cpuWater=PlanetTerrain::WaterCoverage(normal,polarEarth.seed,values[0],polarEarth.seaLevel,true,winter);
+            if(std::abs(values[0]-cpuHeight)>.0001f || std::abs(values[1]-cpuWater)>.002f){
+                std::cerr<<"Earth terrain CPU/GPU mismatch at "<<normal.x<<','<<normal.y<<','<<normal.z
+                    <<"; height "<<cpuHeight<<'/'<<values[0]<<"; liquid "<<cpuWater<<'/'<<values[1]<<"\n";
+                fail();
+            }
+            return glm::vec2(values[0],values[1]);
+        };
+        const auto antarctica=samplePolar({0,-1,0},year*.20);
+        const auto arctic=samplePolar({0,1,0},year*.70);
+        const auto margin=glm::normalize(glm::vec3(-.26f,.96f,.025f));
+        const auto winterMargin=samplePolar(margin,year*.20),summerMargin=samplePolar(margin,year*.70);
+        if(antarctica.x<.12f || antarctica.y>.01f ||
+            std::abs(arctic.x)>.0001f || arctic.y>.01f || summerMargin.y-winterMargin.y<.25f){
+            std::cerr<<"Earth polar terrain or seasonal sea ice failed\n";fail();
+        }
+        const auto geographicDirection=[](double latitude,double longitude){
+            latitude=glm::radians(latitude);longitude=glm::radians(longitude);
+            return glm::dvec3(std::cos(latitude)*std::cos(longitude),std::sin(latitude),-std::cos(latitude)*std::sin(longitude));
+        };
+        for(const auto& site:std::array{
+            std::tuple{"Himalayas",27.988,86.925,4100.f,false},
+            std::tuple{"Rockies",39.74,-104.99,900.f,false},
+            std::tuple{"Iceland",65.0,-18.0,300.f,false},
+            std::tuple{"Pacific",0.0,-145.0,0.f,true},
+            std::tuple{"Lake Michigan",44.0,-87.0,0.f,true}}){
+            const auto& [name,latitude,longitude,minimum,water]=site;
+            const auto n=glm::vec3(geographicDirection(latitude,longitude));
+            const auto sample=samplePolar(n,0);
+            const float elevation=sample.x*.003f*6371008.4f;
+            std::cout<<"Earth map "<<name<<": elevation="<<elevation<<" m, liquid coverage="<<sample.y<<"\n";
+            if(elevation<minimum || (water?sample.y<.95f:sample.y>.05f))fail();
+        }
         glBindFramebuffer(GL_FRAMEBUFFER,target);glViewport(viewport[0],viewport[1],viewport[2],viewport[3]);glEnable(GL_DEPTH_TEST);glBindVertexArray(0);
-        glDeleteProgram(program);glDeleteTextures(1,&texture);glDeleteFramebuffers(1,&fbo);glDeleteVertexArrays(1,&vao);
+        glDeleteProgram(program);glDeleteTextures(1,&earthRelief);glDeleteTextures(1,&texture);glDeleteFramebuffers(1,&fbo);glDeleteVertexArrays(1,&vao);
+        starSystem.SetEarthClouds(false);
+        for(const auto& [name,n]:std::array{
+            std::pair{"earth-geography-americas",geographicDirection(18,-93)},
+            std::pair{"earth-geography-africa-europe",geographicDirection(21,24)},
+            std::pair{"earth-geography-asia-pacific",geographicDirection(20,115)}}){
+            double bestAlignment=-2,bestTime=0;
+            for(int hour=0;hour<24;++hour){const double date=hour*3600.;
+                const double alignment=glm::dot(starSystem.WeatherFrame(2,date)*n,glm::normalize(-starSystem.Position(2,date)));
+                if(alignment>bestAlignment){bestAlignment=alignment;bestTime=date;}
+            }
+            simulationTime=bestTime;
+            const auto frame=starSystem.WeatherFrame(2,bestTime);
+            const auto radial=frame*n;
+            starSystem.camera=starSystem.Position(2,bestTime)+radial*(Astronomy::earthRadiusAu*3.4);
+            cameraFront=glm::vec3(-radial);cameraUp=glm::vec3(frame[1]);
+            sceneCacheValid=false;capture(name);
+        }
+        starSystem.SetEarthClouds(true);
+        simulationTime=0;
         const auto weather=starSystem.WeatherState(2,0);const auto earth=starSystem.Position(2,0);
         int active=-1;double illumination=-2;
         for(int i=0;i<3;++i)if(weather.storms[i].w>0){const double day=glm::dot(starSystem.WeatherFrame(2,0)*glm::dvec3(weather.storms[i]),glm::normalize(-earth));if(day>illumination){active=i;illumination=day;}}
@@ -419,28 +497,62 @@ void main(){
         starSystem.SetWeather(1,0);sceneCacheValid=false;const auto quiet=capture("weather-earth-cloud-distribution");
         starSystem.SetWeather(1,1);sceneCacheValid=false;const auto storm=capture("weather-earth-typhoon-eye-and-bands");
         if(quiet==storm){std::cerr<<"Cyclone winds/clouds made no visible contribution\n";fail();}
+        KeyCallback(window,WeatherMenuCommand,0,GLFW_PRESS,0);
+        const auto weatherOff=starSystem.WeatherState(2,0);
+        const auto clearWeather=capture("weather-earth-menu-off");
+        if(weatherEnabled || clearWeather==storm || weatherOff.parameters.x!=0 ||
+            weatherOff.storms[active].w!=0 || weatherOff.auroraAxis!=weather.auroraAxis)fail();
+#ifdef _WIN32
+        if(GetMenuState(static_cast<HMENU>(nativeViewMenu),WeatherMenuCommand,MF_BYCOMMAND)!=MF_UNCHECKED)fail();
+#endif
+        KeyCallback(window,WeatherMenuCommand,0,GLFW_PRESS,0);
+#ifdef _WIN32
+        if(GetMenuState(static_cast<HMENU>(nativeViewMenu),WeatherMenuCommand,MF_BYCOMMAND)!=MF_CHECKED)fail();
+#endif
         sceneCacheValid=false;const auto paused=capture("weather-earth-storm-paused");if(paused!=storm)fail();
         simulationTime=3600;const auto nextEarth=starSystem.Position(2,simulationTime);
         const auto nextRadial=starSystem.WeatherFrame(2,simulationTime)*normal;
         starSystem.camera=nextEarth+nextRadial*(Astronomy::earthRadiusAu*4);cameraFront=glm::vec3(-nextRadial);cameraUp=glm::vec3(starSystem.WeatherFrame(2,simulationTime)[1]);
         sceneCacheValid=false;if(capture("weather-earth-storm-one-hour")==storm)fail();
         starSystem.SetWeather(1,1);simulationTime=0;
-        {
+        for(int hemisphere:{1,-1}){
             const auto pole=glm::dvec3(starSystem.WeatherState(2,0).auroraAxis);
             const auto east=glm::normalize(glm::cross(glm::dvec3(0,0,1),pole)),north=glm::cross(pole,east);
             glm::dvec3 oval{};double darkest=2;
-            for(int hemisphere:{-1,1})for(int i=0;i<16;++i){
+            double darkDate=0,brightDate=0,bestSun=-2;
+            for(int month=0;month<12;++month){
+              const double date=year*month/12;
+              const auto polarFrame=starSystem.WeatherFrame(2,date);
+              const auto sun=glm::normalize(-starSystem.Position(2,date));
+              const double polarDay=glm::dot(polarFrame[1]*double(hemisphere),sun);
+              if(polarDay>bestSun){bestSun=polarDay;brightDate=date;}
+              for(int i=0;i<16;++i){
                 const double angle=i*glm::two_pi<double>()/16;
                 const auto n=pole*(hemisphere*std::cos(.32))+(east*std::cos(angle)+north*std::sin(angle))*std::sin(.32);
-                const double day=glm::dot(orientation*n,glm::normalize(-earth));if(day<darkest){darkest=day;oval=n;}
+                const double day=glm::dot(polarFrame*n,sun);
+                if(day<darkest){darkest=day;oval=n;darkDate=date;}
+              }
             }
-            const auto radial=orientation*oval;starSystem.camera=earth+radial*(Astronomy::earthRadiusAu*2.2);
-            cameraFront=glm::vec3(-radial);cameraUp=glm::vec3(orientation*east);
-            starSystem.SetAurorasEnabled(false);sceneCacheValid=false;const auto off=capture("earth-polar-aurora-off");
-            starSystem.SetAurorasEnabled(true);sceneCacheValid=false;const auto on=capture("earth-polar-aurora-night");
+            const auto results=navigationCatalog.Find(hemisphere>0?"Artic":"Antarctica",brightDate);
+            if(results.empty() || results.front().kind!=NavigationEntry::Kind::SurfaceRegion ||
+                results.front().surfaceNormal.y!=hemisphere){fail();continue;}
+            starSystem.SetEarthClouds(false);simulationTime=brightDate;
+            GoToNavigation(results.front());
+            const auto brightFrame=starSystem.WeatherFrame(2,brightDate);
+            const auto offset=starSystem.camera-starSystem.Position(2,brightDate);
+            if(glm::dot(glm::normalize(offset),brightFrame[1]*double(hemisphere))<.999)fail();
+            capture(hemisphere>0?"earth-arctic-pack-ice":"earth-antarctica-ice-sheet");
+            starSystem.SetEarthClouds(true);simulationTime=darkDate;
+            const auto darkFrame=starSystem.WeatherFrame(2,darkDate);
+            const auto radial=darkFrame*oval;
+            starSystem.camera=starSystem.Position(2,darkDate)+radial*(Astronomy::earthRadiusAu*2.2);
+            cameraFront=glm::vec3(-radial);cameraUp=glm::vec3(darkFrame*east);
+            const std::string name=hemisphere>0?"earth-aurora-borealis":"earth-aurora-australis";
+            starSystem.SetAurorasEnabled(false);sceneCacheValid=false;const auto off=capture((name+"-off").c_str());
+            starSystem.SetAurorasEnabled(true);sceneCacheValid=false;const auto on=capture(name.c_str());
             size_t green=0;for(size_t p=0;p<on.size();p+=3)if(on[p+1]>off[p+1]+3 && on[p+1]>on[p]*1.2)++green;
-            std::cout<<"Night-side polar aurora green emission pixels="<<green<<"\n";
-            if(green<40){std::cerr<<"Eligible magnetic planet has no polar auroral emission\n";fail();}
+            std::cout<<name<<" green emission pixels="<<green<<"\n";
+            if(green<40){std::cerr<<"Earth is missing a night-side auroral oval\n";fail();}
         }
         StartGargantua();scenePanel.SetVisible(false);ResizeInterface();selectedTarget=-1;trajectories=false;simulationPlaying=false;
         blackHoleResolution=1;blackHole.SetWeather(1,1);blackHole.SetAtmospheresEnabled(true);
@@ -458,19 +570,62 @@ void main(){
             cameraPos=centre+radial*(blackHole.PlanetSurfaceRadius(glm::vec3(radial),0)+2/Astronomy::metresPerAu);
             cameraUp=glm::vec3(radial);cameraFront=glm::vec3(toward);
             KeyCallback(window,1200,0,GLFW_PRESS,0);sceneCacheValid=false;capture(sunset?"miller-sunset-gargantua-hdr":"miller-daylight-gargantua-hdr");
+            const auto throughCloud=readLinearScene();
+            blackHole.SetWeatherCloudsEnabled(false);sceneCacheValid=false;
+            capture(sunset?"miller-sunset-disc-clear-air":"miller-disc-clear-air");
+            const auto clearAir=readLinearScene();
+            size_t extinguished=0,partial=0,gained=0;
+            for(size_t p=0;p<clearAir.size();p+=4){
+                const float clearSignal=clearAir[p+3]-2.f,cloudSignal=throughCloud[p+3]-2.f;
+                if(clearSignal<.9f || std::max({clearAir[p],clearAir[p+1],clearAir[p+2]})<=1.f)continue;
+                extinguished+=cloudSignal>=0 && cloudSignal<.0005f;
+                partial+=cloudSignal>.01f && cloudSignal<clearSignal-.035f;
+                gained+=cloudSignal>clearSignal+.005f;
+            }
+            std::cout<<"Kerr disk through Miller clouds ("<<(sunset?"sunset":"daylight")
+                <<"): "<<partial<<" partially attenuated, "<<extinguished<<" extinguished, "<<gained<<" gained emission\n";
+            // The daylight view is under a dense bank. The sunset view
+            // crosses its thinner edge and exercises partial transmission.
+            if((sunset?partial:extinguished)<100 || gained>0){
+                std::cerr<<"Clouds did not consistently attenuate Kerr disk emission\n";fail();
+            }
             if(!sunset){
-                const auto throughCloud=readLinearScene();
-                blackHole.SetWeatherCloudsEnabled(false);sceneCacheValid=false;capture("miller-disc-clear-air");
-                const auto clearAir=readLinearScene();size_t extinguished=0;
-                for(size_t p=0;p<clearAir.size();p+=4)if(clearAir[p+3]>2.9f
-                    && std::max({clearAir[p],clearAir[p+1],clearAir[p+2]})>1
-                    && throughCloud[p+3]>=2 && throughCloud[p+3]<2.0005f)++extinguished;
-                std::cout<<"Bright disk pixels extinguished beyond the former one-percent cloud floor="<<extinguished<<"\n";
-                if(extinguished<100){std::cerr<<"Cloud tracing retained its HDR transmission floor\n";fail();}
+                blackHole.SetAccretionPlaneEnabled(false);sceneCacheValid=false;
+                capture("miller-daylight-disk-volume-clear");
+                const auto clearVolume=readLinearScene();
+                blackHole.SetWeatherCloudsEnabled(true);sceneCacheValid=false;
+                capture("miller-daylight-disk-volume-through-weather");
+                const auto coveredVolume=readLinearScene();
+                blackHole.SetAccretionCloudsEnabled(false);sceneCacheValid=false;
+                capture("miller-daylight-weather-only");
+                const auto weatherOnlyScene=readLinearScene();
+                blackHole.SetWeatherCloudsEnabled(false);sceneCacheValid=false;
+                capture("miller-daylight-background");
+                const auto background=readLinearScene();
+                blackHole.SetAccretionCloudsEnabled(true);
+                blackHole.SetAccretionPlaneEnabled(true);
+                size_t emitting=0,obscured=0,leaks=0;
+                for(size_t p=0;p<clearVolume.size();p+=4){
+                    const float clearGas=clearVolume[p]-background[p];
+                    if(clearVolume[p+3]<2.9f || clearGas<.10f)continue;
+                    ++emitting;
+                    const float visibility=(coveredVolume[p+3]-2.f)/(clearVolume[p+3]-2.f);
+                    const float coveredGas=coveredVolume[p]-weatherOnlyScene[p];
+                    if(visibility<.12f && coveredGas<clearGas*.2f)++obscured;
+                    if(visibility>1.005f)++leaks;
+                }
+                std::cout<<"Miller foreground cloud occlusion of volume-only disk rays: "<<obscured
+                    <<" of "<<emitting<<"; brightened="<<leaks<<"\n";
+                if(emitting<100 || obscured<100 || leaks){
+                    std::cerr<<"Disk gas without a plane hit escaped foreground clouds\n";fail();
+                }
+            }
+            if(!sunset){
                 blackHole.SetAtmospheresEnabled(false);sceneCacheValid=false;capture("miller-disc-without-atmosphere");
                 blackHole.SetAccretionCloudsEnabled(false);sceneCacheValid=false;capture("miller-disc-plane-only");
-                blackHole.SetAccretionCloudsEnabled(true);blackHole.SetAtmospheresEnabled(true);blackHole.SetWeatherCloudsEnabled(true);sceneCacheValid=false;
+                blackHole.SetAccretionCloudsEnabled(true);blackHole.SetAtmospheresEnabled(true);
             }
+            blackHole.SetWeatherCloudsEnabled(true);sceneCacheValid=false;
             KeyCallback(window,1201,0,GLFW_PRESS,0);optics.SetAutoExposure(true);sceneCacheValid=false;
             capture(sunset?"miller-sunset-gargantua-pure":"miller-daylight-gargantua-pure");
             if(!sunset){
@@ -479,6 +634,42 @@ void main(){
                 double luminance=0;for(auto value:horizon)luminance+=value;luminance/=horizon.size();
                 std::cout<<"Miller daylight away from Gargantua mean display="<<luminance<<"\n";
                 if(luminance<8){std::cerr<<"Miller daytime remained dark when the bright disk left view\n";fail();}
+            }
+        }
+        KeyCallback(window,1200,0,GLFW_PRESS,0);
+        const auto waveRadius=blackHole.PlanetSurfaceRadius(glm::vec3(toward),0);
+        KeyCallback(window,WeatherMenuCommand,0,GLFW_PRESS,0);
+        const auto calmRadius=blackHole.PlanetSurfaceRadius(glm::vec3(toward),0);
+        KeyCallback(window,WeatherMenuCommand,0,GLFW_PRESS,0);
+        const auto restoredRadius=blackHole.PlanetSurfaceRadius(glm::vec3(toward),0);
+        if(calmRadius!=blackHole.ResolveTarget(1,0).radius ||
+            std::abs(waveRadius-calmRadius)*Astronomy::metresPerAu<.01 || restoredRadius!=waveRadius)fail();
+        const auto millerPole=BlackHole::PlanetRotationDouble(0,0)[1];
+        int width,height;
+        glfwGetFramebufferSize(window,&width,&height);
+        for(int hemisphere:{1,-1}){
+            const auto radial=glm::normalize(millerPole*(.97*hemisphere)+toward*.24);
+            cameraPos=centre+radial*(Astronomy::millerRadiusAu*3);
+            cameraFront=glm::vec3(-radial);
+            cameraUp=glm::vec3(side);
+            fieldOfView=45;
+            const std::string label=hemisphere>0?"miller-north-polar-ocean":"miller-south-polar-ocean";
+            blackHole.SetWeatherCloudsEnabled(false);sceneCacheValid=false;
+            const auto clear=capture((label+"-clear").c_str());
+            blackHole.SetWeatherCloudsEnabled(true);sceneCacheValid=false;
+            const auto cloudy=capture(label.c_str());
+            int clearOcean=0,visibleOcean=0,samples=0;
+            for(int y=height/2-height/12;y<height/2+height/12;y+=4){
+                for(int x=width/2-height/12;x<width/2+height/12;x+=4){
+                    const size_t p=(static_cast<size_t>(y)*width+x)*3;
+                    clearOcean+=clear[p+2]>1.25f*clear[p] && clear[p+2]>clear[p+1]+4;
+                    visibleOcean+=cloudy[p+2]>1.25f*cloudy[p] && cloudy[p+2]>cloudy[p+1]+4;
+                    ++samples;
+                }
+            }
+            std::cout<<label<<": blue ocean "<<visibleOcean<<"/"<<samples<<" with clouds, "<<clearOcean<<" in clear air\n";
+            if(clearOcean<samples*.95 || visibleOcean<samples*.65 || cloudy==clear){
+                std::cerr<<"Miller polar view lost open water or cloud detail\n";fail();
             }
         }
         const auto mann=BlackHole::PlanetPosition(0,1),toGargantua=glm::normalize(-mann);
@@ -1003,7 +1194,7 @@ void main(){
         StartSolarSystem();scenePanel.SetVisible(false);ResizeInterface();simulationTime=0;simulationPlaying=false;
         trajectories=false;lensFlareStrength=0;fieldOfView=75;visionProfile=0;exposureEv=0;KeyCallback(window,1200,0,GLFW_PRESS,0);
         const auto earth=starSystem.Position(2,0);const auto rotation=starSystem.WeatherFrame(2,0);const auto& body=starSystem.Planets()[2];
-        const PlanetVegetation::Profile profile{body.seed,body.radiusEarth*Astronomy::earthRadiusAu*Astronomy::metresPerAu,body.temperature,body.seaLevel,body.life};
+        const PlanetVegetation::Profile profile{body.seed,body.radiusEarth*Astronomy::earthRadiusAu*Astronomy::metresPerAu,body.temperature,body.seaLevel,body.life,body.earthPoles};
         const double nightTime=body.daySeconds*.5;
         const auto nightEarth=starSystem.Position(2,nightTime);
         const auto nightRotation=starSystem.WeatherFrame(2,nightTime);

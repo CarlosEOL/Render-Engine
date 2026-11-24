@@ -21,7 +21,7 @@ unsigned int compileShaderProgram(const char*,const char*);
 // Local, deterministic visual ecology. It does not claim observed extrasolar life.
 class PlanetVegetation {
 public:
-    struct Profile {unsigned seed;double radiusMetres,temperature;float seaLevel;bool life;};
+    struct Profile {unsigned seed;double radiusMetres,temperature;float seaLevel;bool life;bool earthPoles=false;};
     struct Habitat {float elevation=0,grass=0,forest=0;int species=0;bool suitable=false;};
     static float Unit(unsigned value){value^=value>>16;value*=0x7feb352du;value^=value>>15;value*=0x846ca68bu;value^=value>>16;return (value&0xffffffu)/16777215.f;}
     static const char* ShaderFunctions(){return R"(
@@ -34,13 +34,17 @@ float vegetationMoisture(vec3 n,float seed){
         Habitat h;if(!p.life || p.radiusMetres<1000)return h;
         const auto n=glm::normalize(glm::vec3(direction));
         // Relief one gives the same clamped terrain height used by the material.
-        const float height=PlanetTerrain::SurfaceElevation(n,p.seed,0,p.seaLevel,1,0);
+        const float height=PlanetTerrain::SurfaceElevation(n,p.seed,0,p.seaLevel,1,0,false,nullptr,p.earthPoles);
         h.elevation=height*.003f;
+        if(p.earthPoles && (n.y>.90f || n.y<-.84f))return h;
         const double altitude=(height-p.seaLevel)*.003*p.radiusMetres;
         const double temperature=p.temperature+8-28*n.y*n.y-std::max(altitude,0.)*.005;
         const float moisture=.53f+.22f*std::sin(n.x*13+p.seed*.001f)*std::cos(n.z*17-p.seed*.0007f)
             +.12f*std::sin(n.y*31+n.z*8)-.16f*std::exp(-std::pow((std::abs(n.y)-.43f)/.12f,2));
-        h.suitable=height>p.seaLevel+.006f && height<std::max(.18f,p.seaLevel+.11f)
+        const bool mapped=p.earthPoles && PlanetTerrain::HasEarthMap();
+        const auto geography=mapped?PlanetTerrain::EarthGeography(n):glm::vec3(0);
+        const bool dryLand=mapped?std::max(geography.y,geography.z)<.15f:height>p.seaLevel+.006f;
+        h.suitable=dryLand && height<std::max(.18f,p.seaLevel+.11f)
             && altitude<2200 && temperature>265 && temperature<312 && moisture>.30f;
         if(!h.suitable)return h;
         h.species=temperature<281?1:temperature>294 && std::abs(n.y)<.45f?2:0;

@@ -292,6 +292,7 @@ uniform bool hotFlowDiagnostic;
 uniform float flowTime;
 uniform float rayPixelAngle;
 uniform bool accretionCloudsEnabled;
+uniform bool accretionPlaneEnabled;
 uniform bool gargantuaAppearance;
 uniform sampler2D sourceScene;
 uniform sampler2D sourceDepth;
@@ -410,7 +411,7 @@ void main() {
     float opticalEligibility = 1.0;
     vec3 plasma = vec3(0.0);
     float flowTransmission=1.0;
-    bool crossedDisk=false;
+    bool crossedDisk=false, crossedDiskVolume=false;
     float firstEmissionDistance=1e30;
     // Distant observers need the empty weak-field approach and escape legs in
     // addition to the strong-field orbit. Budget exhaustion is not a shadow.
@@ -594,7 +595,13 @@ void main() {
                 float temperature = diskTemperature * pow(max(midRadius / diskRadii.x, 1.0), -0.75);
                 float beaming = pow(shift, physicalObserver?3.0:3.2);
                 float radialFade=smoothstep(0.0,.06,midFraction)*(1.0-smoothstep(.78,1.0,midFraction));
-                plasma += flowTransmission*blackbody(temperature * shift) * beaming * density * segmentLength * .25 * 0.55 * diskEmission*radialFade;
+                vec3 emission=flowTransmission*blackbody(temperature * shift) * beaming * density
+                    * segmentLength * .25 * 0.55 * diskEmission*radialFade;
+                plasma+=emission;
+                if(dot(emission,vec3(.2126,.7152,.0722))>1e-6){
+                    crossedDiskVolume=true;
+                    firstEmissionDistance=min(firstEmissionDistance,travelled+length(samplePoint-position));
+                }
                 }
             }
         }
@@ -602,7 +609,7 @@ void main() {
 )" + R"(
         float planeBefore = dot(position, diskAxis);
         float planeAfter = dot(nextPosition, diskAxis);
-        if (accretionModel==0 && planeBefore * planeAfter < 0.0) {
+        if (accretionModel==0 && accretionPlaneEnabled && planeBefore * planeAfter < 0.0) {
             float lower=0.0,upper=1.0;
             // Locate the plane event on the curved RK segment, rather than
             // using a chord whose radius jumps when the step count changes.
@@ -683,7 +690,9 @@ void main() {
             float shift=pt>0.0?clamp(1.0/pt,.02,32.0):0.0;
             radiance*=shift*shift*shift;
         }
-    } else if(originalDepth<.99999 && depthDistance(originalDepth)<min(travelled,firstEmissionDistance)) {
+    }
+    float lensDistance=hit?min(travelled,firstEmissionDistance):firstEmissionDistance;
+    if(lensDistance<1e30 && originalDepth<.99999 && depthDistance(originalDepth)<lensDistance){
         fragColor=texture(sourceScene,originalUv);gl_FragDepth=originalDepth;return;
     }
     // Preserve stellar-plasma exclusion through lensing; the accretion disk's
@@ -693,7 +702,15 @@ void main() {
     if(accretionModel==1 && dot(plasma,vec3(.2126,.7152,.0722))>.0001)opticalEligibility=1.0;
     // Alpha 2..3 identifies disk emission; the fractional part carries optical
     // eligibility through foreground weather. Ordinary stellar sources use 0..1.
-    if(crossedDisk && dot(plasma,vec3(.2126,.7152,.0722))>.0001)opticalEligibility=3.0;
+    const vec3 luminanceWeights=vec3(.2126,.7152,.0722);
+    float diskLight=dot(plasma,luminanceWeights);
+    if(crossedDisk && diskLight>.0001)opticalEligibility=3.0;
+    else if(crossedDiskVolume && diskLight>.0001){
+        float skyLight=dot(radiance*flowTransmission,luminanceWeights);
+        // Fade the disk grading into faint gas at the edge of the flow.
+        float diskCoverage=smoothstep(.5,4.0,diskLight/max(skyLight,.0001));
+        if(diskCoverage>0.0)opticalEligibility=2.0+diskCoverage;
+    }
     // Warm-white inner light and amber filaments for the authored movie look.
     // Other black-hole presets retain their own spectra and colour treatment.
     if(gargantuaAppearance)plasma*=vec3(1.16,1.02,.78);
@@ -1211,10 +1228,15 @@ double BlackHole::PlanetLandingRadius(const glm::dvec3& direction,int planet) {
     return bodies[planet].radius*(1.0+elevation)+Astronomy::observerClearanceAu;
 }
 
+PlanetWeather::State BlackHole::MillerWeather(double seconds) const {
+    return PlanetWeather::Make(PlanetWeather::Miller(),seconds,
+        weatherEnabled?weatherWindScale:0,weatherEnabled?weatherStormScale:0);
+}
+
 double BlackHole::PlanetSurfaceRadius(const glm::vec3& worldDirection, double seconds, int planet) const {
     const auto direction=glm::vec3(glm::transpose(PlanetRotationDouble(seconds,planet))*glm::dvec3(worldDirection));
     const float phase = static_cast<float>(std::remainder(seconds, glm::two_pi<double>()));
-    if(planet==0){const auto weather=PlanetWeather::Make(PlanetWeather::Miller(),seconds,weatherWindScale,weatherStormScale);
+    if(planet==0){const auto weather=MillerWeather(seconds);
         return bodies[planet].radius*(1.0+PlanetWeather::WaveHeight(weather,glm::dvec3(direction)*static_cast<double>(weather.parameters.w),direction)/weather.parameters.w);}
     return bodies[planet].radius*(1.0+InterstellarWorlds::Elevation(direction,planet,phase));
 }
@@ -1255,6 +1277,7 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
 
     glUseProgram(program);
     glBindVertexArray(sphere.vao);
+    const auto weather=MillerWeather(seconds);
     const auto drawSphere = [&](const glm::dvec3& center, float radius, Surface surface, const glm::vec3& color, int seed, float temperature) {
         const bool blend=glIsEnabled(GL_BLEND);glDisable(GL_BLEND);
         auto model = glm::translate(identity, glm::vec3(center-cameraPosition));
@@ -1268,7 +1291,6 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
         glUniform3fv(colorLocation, 1, glm::value_ptr(color));
         if(surface==Star) stellarActivity.BindSurface(program,seed,seconds);
         const int planet=seed-1;
-        const auto weather=PlanetWeather::Make(PlanetWeather::Miller(),seconds,weatherWindScale,weatherStormScale);
         PlanetWeather::Upload(program,surface==Planet && planet==0?weather:PlanetWeather::State{});
         glUniform1i(glGetUniformLocation(program,"interstellarPlanet"),glm::clamp(planet,0,2));
         glUniform1i(glGetUniformLocation(program,"oceanWorld"),planet==0);
@@ -1411,9 +1433,8 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
         // the camera is inside it. Atmospheres behind the lens remain lensed.
         foregroundAtmosphere[planet]=distance<=shellRadius || distance+shellRadius<foregroundEnd;
         if(!foregroundAtmosphere[planet]){
-            const auto weather=PlanetWeather::Make(PlanetWeather::Miller(),seconds,weatherWindScale,weatherStormScale);
             atmosphere.Render(viewProjection,glm::vec3(0),glm::vec3(center),bodies[planet].radius,true,-cameraFloat,
-                planet==0 && weatherCloudsEnabled,seconds,glm::mat3(PlanetRotation(seconds,planet)),false,1,&weather);
+                planet==0 && weatherEnabled && weatherCloudsEnabled,seconds,glm::mat3(PlanetRotation(seconds,planet)),false,1,&weather);
         }
     }
     if (photonView) {
@@ -1458,10 +1479,9 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
     RenderLensing(viewProjection,cameraPosition,seconds,observerBeta,physicalObserverBeta,physicalObserver);
     for(int planet=0;atmospheresEnabled && planet<3;++planet){
         const auto center=PlanetPosition(seconds,planet)-cameraPosition;
-        const auto weather=PlanetWeather::Make(PlanetWeather::Miller(),seconds,weatherWindScale,weatherStormScale);
         if(foregroundAtmosphere[planet])
             atmosphere.Render(viewProjection,glm::vec3(0),glm::vec3(center),bodies[planet].radius,true,-cameraFloat,
-                planet==0 && weatherCloudsEnabled,seconds,glm::mat3(PlanetRotation(seconds,planet)),planet==0 && oceanReflectionsEnabled,.65f,&weather);
+                planet==0 && weatherEnabled && weatherCloudsEnabled,seconds,glm::mat3(PlanetRotation(seconds,planet)),planet==0 && oceanReflectionsEnabled,.65f,&weather);
     }
     gargantuaWormhole.Render(viewProjection,GargantuaWormholePosition(seconds)-cameraPosition,
         WormholePhysics::ThroatRadiusAu(),solarWormholeSky,true);
@@ -1628,6 +1648,7 @@ void BlackHole::RenderLensing(const glm::mat4& vp,const glm::dvec3& camera,doubl
     const float projectionScale=glm::length(glm::vec3(vp[0][1],vp[1][1],vp[2][1]));
     glUniform1f(glGetUniformLocation(lensProgram,"rayPixelAngle"),2.f/(std::max(1,viewport[3])*std::max(.001f,projectionScale)));
     glUniform1i(glGetUniformLocation(lensProgram,"accretionCloudsEnabled"),accretionCloudsEnabled);
+    glUniform1i(glGetUniformLocation(lensProgram,"accretionPlaneEnabled"),accretionPlaneEnabled);
     const bool core=GalacticCores::IsCore(coreId);
     glUniform1i(glGetUniformLocation(lensProgram,"gargantuaAppearance"),!core);
     const auto preset=core?GalacticCores::Get(coreId):GalacticCores::Get(GalacticCores::firstId);

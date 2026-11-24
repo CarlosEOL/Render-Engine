@@ -75,12 +75,29 @@ std::vector<NavigationEntry> NavigationCatalog::Bodies(int id,double seconds){
     StarSystem model;Load(model,id,root.name);std::vector<NavigationEntry> out;out.reserve(model.Planets().size());
     for(int i=0;i<static_cast<int>(model.Planets().size());++i){
         const auto& body=model.Planets()[i];NavigationEntry e;e.kind=Kind::Planet;e.wormhole=body.wormhole;e.system=id;e.body=i;e.key=Key(id)+"/"+std::to_string(i);e.parentKey=body.parent<0?Key(id):Key(id)+"/"+std::to_string(body.parent);e.name=body.name;e.parent=body.parent<0?root.name:model.Planets()[body.parent].name;e.type=body.classification;e.anchorAu=root.anchorAu;e.localAu=model.Position(i,seconds);e.diameterKm=body.radiusEarth*6371.0084*2;e.temperature=body.temperature;e.color=body.color;e.massEarth=body.massEarth;out.push_back(e);
+        if(body.earthPoles){
+            for(int pole:{-1,1}){
+                NavigationEntry region;
+                region.kind=Kind::SurfaceRegion;region.system=id;region.body=i;
+                region.key=e.key+(pole<0?"/antarctica":"/arctic");
+                region.parentKey=e.key;region.parent=body.name;
+                region.name=pole<0?"Antarctica":"Arctic";
+                region.type=pole<0?"Ice-covered continent / South Pole":"Seasonal sea ice / North Pole";
+                region.surfaceNormal=glm::dvec3(0,pole,0);
+                region.anchorAu=e.anchorAu;
+                region.localAu=e.localAu+model.WeatherFrame(i,seconds)*region.surfaceNormal*(body.radiusEarth*Astronomy::earthRadiusAu);
+                region.color={.69f,.84f,.96f};
+                out.push_back(region);
+            }
+        }
     }
-    for(auto& body:out)body.satelliteCount=static_cast<int>(std::count_if(out.begin(),out.end(),[&](const auto& child){return child.parentKey==body.key;}));
+    for(auto& body:out)body.satelliteCount=static_cast<int>(std::count_if(out.begin(),out.end(),[&](const auto& child){return child.kind==Kind::Planet && child.parentKey==body.key;}));
     return out;
 }
 std::vector<NavigationEntry> NavigationCatalog::Find(const std::string& query,double seconds){
-    const auto q=Normalize(query);std::vector<NavigationEntry> result;
+    const auto normalized=Normalize(query);
+    const auto q=normalized=="artic"?std::string("arctic"):normalized;
+    std::vector<NavigationEntry> result;
     const auto matches=[&](const NavigationEntry& entry){auto name=Normalize(entry.name);return q.empty() || name.find(q)!=std::string::npos || (entry.system==-2 && entry.kind==Kind::Star && q=="solarsystem") || (entry.kind==Kind::Core && q=="blackhole") || (entry.name=="Sagittarius A*" && (q=="sgra" || q=="sgra*"));};
     const std::string prefix="proceduralstar";
     const std::string seedPrefix="seedstar";
@@ -153,8 +170,12 @@ std::vector<NavigationEntry> NavigationCatalog::Children(const NavigationEntry& 
             const std::string scope=parent.kind==Kind::Barycentre?parent.parentKey:parent.key;
             NavigationEntry body=parent;if(parent.kind==Kind::Barycentre){for(const auto& e:bodies)if(e.key==scope)body=e;}
             result.push_back(body);double mass=body.massEarth;glm::dvec3 weighted=body.localAu*mass;
-            for(const auto& e:bodies)if(e.parentKey==scope){result.push_back(e);mass+=e.massEarth;weighted+=e.localAu*e.massEarth;}
-            if(result.size()>1 && mass>0){NavigationEntry centre=body;centre.kind=Kind::Barycentre;centre.key="bary:"+scope;centre.parentKey=scope;centre.name=body.name+" satellite barycentre";centre.type="Mass-weighted system centre";centre.localAu=weighted/mass;centre.diameterKm=0;centre.temperature=0;centre.satelliteCount=0;result.insert(result.begin(),centre);}
+            bool satellites=false;
+            for(const auto& e:bodies)if(e.parentKey==scope){
+                result.push_back(e);
+                if(e.kind==Kind::Planet){satellites=true;mass+=e.massEarth;weighted+=e.localAu*e.massEarth;}
+            }
+            if(satellites && mass>0){NavigationEntry centre=body;centre.kind=Kind::Barycentre;centre.key="bary:"+scope;centre.parentKey=scope;centre.name=body.name+" satellite barycentre";centre.type="Mass-weighted system centre";centre.localAu=weighted/mass;centre.diameterKm=0;centre.temperature=0;centre.satelliteCount=0;result.insert(result.begin(),centre);}
         }
         if(parent.system==-2 && parent.kind==Kind::Star){NavigationEntry group;group.system=-2;group.kind=Kind::Group;group.key="small-bodies";group.parentKey=Key(-2);group.name="Asteroid / Kuiper belt";group.parent="Sun";group.type="4096 representative small bodies";result.push_back(group);}
     }

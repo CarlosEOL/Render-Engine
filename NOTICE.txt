@@ -14,6 +14,8 @@ of the software it covers under its terms. See LICENSE in the source repository
 or LICENSE-Render-Engine.txt beside the application. Third-party assets and
 dependencies remain subject to their own rights and license terms.
 
+Do not copy this project and claim it as your own, I mean damn it just make make your own, don't you think it's more impressive that way?
+
 Canadian legal references
 
 Section 3 of the Copyright Act sets out rights held by copyright owners.

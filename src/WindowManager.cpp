@@ -287,6 +287,17 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
     manager.sceneCacheValid=false;
     if (key == GLFW_KEY_F10 || key == 3030) { manager.OpenMainMenu(); return; }
     if (manager.mainMenu.Visible()) return;
+    if(key==WeatherMenuCommand){
+        manager.weatherEnabled=!manager.weatherEnabled;
+        manager.starSystem.SetWeatherEnabled(manager.weatherEnabled);
+        manager.blackHole.SetWeatherEnabled(manager.weatherEnabled);
+#ifdef _WIN32
+        CheckMenuItem(static_cast<HMENU>(manager.nativeViewMenu),WeatherMenuCommand,
+                      MF_BYCOMMAND | (manager.weatherEnabled?MF_CHECKED:MF_UNCHECKED));
+#endif
+        manager.ShowStatusToast(manager.weatherEnabled?"Weather on":"Weather off");
+        return;
+    }
 #ifdef RENDER_ENGINE_DX12
     if(key>=1350 && key<=1354){
         NativeDX12::SetDlssMode(static_cast<NativeDX12::DlssMode>(key-1350));
@@ -382,7 +393,7 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
         manager.ResizeInterface(); return;
     }
     if (key==706) { manager.PrepareCurrentBrowser(); manager.scenePanel.ToggleBrowser(true); manager.ResizeInterface(); return; }
-    if(key==GLFW_KEY_G && manager.navigationSelectionValid && (manager.navigationSelection.kind==NavigationEntry::Kind::Nebula || manager.navigationSelection.kind==NavigationEntry::Kind::Galaxy || manager.navigationSelection.kind==NavigationEntry::Kind::Asteroid || manager.navigationSelection.kind==NavigationEntry::Kind::Barycentre || manager.navigationSelection.kind==NavigationEntry::Kind::Craft)){manager.GoToNavigation(manager.navigationSelection);return;}
+    if(key==GLFW_KEY_G && manager.navigationSelectionValid && (manager.navigationSelection.kind==NavigationEntry::Kind::Nebula || manager.navigationSelection.kind==NavigationEntry::Kind::Galaxy || manager.navigationSelection.kind==NavigationEntry::Kind::Asteroid || manager.navigationSelection.kind==NavigationEntry::Kind::Barycentre || manager.navigationSelection.kind==NavigationEntry::Kind::Craft || manager.navigationSelection.kind==NavigationEntry::Kind::SurfaceRegion)){manager.GoToNavigation(manager.navigationSelection);return;}
     if (key==GLFW_KEY_G) {
         if (manager.pendingSystemTarget!=0) { manager.EnterSelectedSystem(false); return; }
         if (manager.inStarSystem) {
@@ -1106,7 +1117,7 @@ void WindowManager::ActivateNavigation(NavigationPanel::Action action,const Navi
     if(action==NavigationPanel::Action::Open){navigationScope=entry;return;}
     if(entry.kind!=Kind::Nebula && entry.kind!=Kind::Galaxy && entry.kind!=Kind::Universe && entry.kind!=Kind::Group){
         SelectCatalogue(entry.system);
-        if(entry.kind==Kind::Planet || entry.kind==Kind::Barycentre){
+        if(entry.kind==Kind::Planet || entry.kind==Kind::Barycentre || entry.kind==Kind::SurfaceRegion){
             if(entry.system==0)selectedTarget=entry.body;
             else{previewSystem.SelectPlanet(entry.body);if(inStarSystem && activeSystemTarget==entry.system)starSystem.SelectPlanet(entry.body);}
         }else if(entry.kind==Kind::Craft)selectedTarget=9;
@@ -1118,7 +1129,17 @@ void WindowManager::GoToNavigation(const NavigationEntry& entry){
     blackHoleJourney.Reset();horizonReached=observerGravity=false;kerrObserverValid=false;
     using Kind=NavigationEntry::Kind;
     if(entry.kind==Kind::Universe || entry.kind==Kind::Group){navigationScope=entry;return;}
-    if(entry.kind==Kind::Nebula){
+    if(entry.kind==Kind::SurfaceRegion){
+        SelectCatalogue(entry.system);previewSystem.SelectPlanet(entry.body);
+        EnterSelectedSystem(false);starSystem.SelectPlanet(entry.body);
+        const auto frame=starSystem.WeatherFrame(entry.body,simulationTime);
+        const auto radial=frame*entry.surfaceNormal;
+        const double radius=starSystem.Planets()[entry.body].radiusEarth*Astronomy::earthRadiusAu;
+        starSystem.camera=starSystem.Position(entry.body,simulationTime)+radial*(radius*1.85);
+        cameraFront=glm::vec3(-radial);cameraUp=glm::vec3(frame[0]);
+        fieldOfView=50;starSystem.speedAu=150000/Astronomy::metresPerAu;
+    }
+    else if(entry.kind==Kind::Nebula){
         const auto& nebula=CelestialPhenomena::Get(entry.system);const int nearest=blackHole.NearestStar(nebula.positionAu);
         SelectCatalogue(nearest);EnterSelectedSystem(false);
         const double distance=nebula.radiusLy*Astronomy::auPerLightYear*3;
@@ -1195,6 +1216,10 @@ void WindowManager::RefreshPanel() {
     }
     scenePanel.SetPlayback(simulationPlaying,playback.str());
     if(navigationSelectionValid && navigationSelection.kind==NavigationEntry::Kind::Nebula){scenePanel.SetInformation(CelestialPhenomena::Information(navigationSelection.system));return;}
+    if(navigationSelectionValid && navigationSelection.kind==NavigationEntry::Kind::SurfaceRegion){
+        scenePanel.SetInformation(navigationSelection.name+"\n"+navigationSelection.type+"\nEarth");
+        return;
+    }
     if(navigationSelectionValid && (navigationSelection.kind==NavigationEntry::Kind::Galaxy || navigationSelection.kind==NavigationEntry::Kind::Asteroid || navigationSelection.kind==NavigationEntry::Kind::Barycentre)){
         auto info=navigationSelection.name+"\n"+navigationSelection.type+"\nParent: "+navigationSelection.parent;
         if(navigationSelection.kind==NavigationEntry::Kind::Galaxy && navigationSelection.system==0)
@@ -2381,6 +2406,7 @@ void WindowManager::MakeNewWindow() {
     const HMENU menu = CreateMenu();
     nativeMenu=menu;
     const HMENU sceneMenu=CreatePopupMenu(),timeMenu=CreatePopupMenu(),navigationMenu=CreatePopupMenu(),viewMenu=CreatePopupMenu();
+    nativeViewMenu=viewMenu;
     AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(sceneMenu),L"Scene");
     AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(timeMenu),L"Time");
     AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(navigationMenu),L"Navigation");
@@ -2410,6 +2436,7 @@ void WindowManager::MakeNewWindow() {
     AppendMenuW(navigationMenu,MF_STRING,GLFW_KEY_F8,L"Cycle vehicle view (F8)");
     AppendMenuW(navigationMenu,MF_STRING,GLFW_KEY_B,L"Boost (B)");
     AppendMenuW(viewMenu,MF_STRING,GLFW_KEY_F2,L"Orbits (F2)");
+    AppendMenuW(viewMenu,MF_STRING|MF_CHECKED,WeatherMenuCommand,L"Weather");
     AppendMenuW(viewMenu,MF_STRING,1362,L"Object information (Shift+F2)");
     AppendMenuW(viewMenu,MF_STRING,GLFW_KEY_F3,L"Find object (F3)");
     AppendMenuW(viewMenu,MF_STRING,1361,L"Nearby systems (Shift+F3)");
