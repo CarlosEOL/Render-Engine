@@ -19,6 +19,7 @@ struct Profile {
     bool metalCore=false,magneticField=false,atmosphere=false;
     bool thinPolarClouds=false;
     bool mappedEarth=false;
+    bool layeredTerrain=false;
 };
 struct State {
     glm::vec4 parameters{}; // ambient wind m/s, humidity, seed offset, radius m
@@ -35,13 +36,14 @@ struct State {
 inline float Unit(unsigned value){value^=value>>16;value*=0x7feb352du;value^=value>>15;value*=0x846ca68bu;value^=value>>16;return (value&0xffffffu)/16777215.f;}
 inline constexpr glm::vec4 rippleFrequencies{8,21,55,144};
 inline bool Ocean(const Profile& p,const glm::vec3& n){
-    if(p.mappedEarth && PlanetTerrain::HasEarthMap())return PlanetTerrain::EarthGeography(n).y>.95f;
-    return p.oceanOnly || PlanetTerrain::SurfaceElevation(n,p.seed,0,p.seaLevel,1,0)<=p.seaLevel+1e-6f;
+    if(p.mappedEarth && PlanetTerrain::HasEarthMap())return PlanetTerrain::EarthGeography(n,false).y>.95f;
+    return p.oceanOnly || PlanetTerrain::SurfaceElevation(n,p.seed,0,p.seaLevel,1,0,false,nullptr,false,0,p.layeredTerrain)<=p.seaLevel+1e-6f;
 }
 inline std::array<glm::vec3,3> Centres(const Profile& p){
-    struct Entry{unsigned seed;float sea;bool ocean,earth;std::array<glm::vec3,3> centres;};
+    struct Entry{unsigned seed;float sea;bool ocean,earth,layered;std::array<glm::vec3,3> centres;};
     static std::deque<Entry> cache;
-    for(const auto& entry:cache)if(entry.seed==p.seed && entry.sea==p.seaLevel && entry.ocean==p.oceanOnly && entry.earth==p.mappedEarth)return entry.centres;
+    for(const auto& entry:cache)if(entry.seed==p.seed && entry.sea==p.seaLevel && entry.ocean==p.oceanOnly && entry.earth==p.mappedEarth &&
+        entry.layered==p.layeredTerrain)return entry.centres;
     std::array<glm::vec3,3> centres{};
     for(unsigned i=0;i<3;++i)for(unsigned attempt=0;attempt<48;++attempt){
         const unsigned h=p.seed+i*1337+attempt*7907;
@@ -51,7 +53,7 @@ inline std::array<glm::vec3,3> Centres(const Profile& p){
         bool separate=true;for(unsigned j=0;j<i;++j)if(glm::dot(n,centres[j])>.92f)separate=false;
         if(separate){centres[i]=n;break;}
     }
-    if(cache.size()==32)cache.pop_front();cache.push_back({p.seed,p.seaLevel,p.oceanOnly,p.mappedEarth,centres});return centres;
+    if(cache.size()==32)cache.pop_front();cache.push_back({p.seed,p.seaLevel,p.oceanOnly,p.mappedEarth,p.layeredTerrain,centres});return centres;
 }
 inline State Make(const Profile& p,double seconds,float windScale=1,float stormScale=1){
     State s;

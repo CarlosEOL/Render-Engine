@@ -90,6 +90,7 @@ uniform mat4 viewProjection;
 uniform float wavePhase;
 uniform int surface;
 uniform bool oceanWorld;
+uniform float millerSeabedElevation;
 out vec3 localPosition;
 out vec3 worldPosition;
 out vec3 relativePosition;
@@ -103,7 +104,9 @@ void main() {
     patchDeltaMetres=vec3(0);
     if(surface==2 && patchDrawing){
         localPosition=surfacePatchDirection(position.xy);
-        patchDeltaMetres=surfacePatchDelta(position.xy,interstellarElevation(localPosition,wavePhase));
+        float elevation=oceanWorld && millerSeabedElevation<0.0
+            ?millerSeabedElevation:interstellarElevation(localPosition,wavePhase);
+        patchDeltaMetres=surfacePatchDelta(position.xy,elevation);
         relativePosition=surfacePatchRelative(patchDeltaMetres);
         worldPosition=relativePosition+cameraPosition;
         photonColor=vec3(0);sourceTemperature=0;sourceLuminosity=0;
@@ -111,7 +114,9 @@ void main() {
     }
     vec3 displaced = position;
     if (surface == 2) {
-        displaced=position*(1.0+interstellarElevation(position,wavePhase));
+        float elevation=oceanWorld && millerSeabedElevation<0.0
+            ?millerSeabedElevation:interstellarElevation(position,wavePhase);
+        displaced=position*(1.0+elevation);
     }
     vec4 world = model * vec4(displaced, 1.0);
     localPosition = position;
@@ -153,6 +158,7 @@ in float sourceLuminosity;
 out vec4 fragColor;
 uniform int surface;
 uniform bool oceanWorld;
+uniform float millerSeabedElevation;
 uniform vec3 bodyColor;
 uniform vec3 cameraPosition;
 uniform vec3 velocityBeta;
@@ -170,6 +176,11 @@ void main() {
     if (surface == 2) {
         vec3 radial = normalize(localPosition);
         if(patchEnabled && ((dot(radial,patchCenter)>cos(.020))!=patchDrawing))discard;
+        if(oceanWorld && millerSeabedElevation<0.0){
+            vec3 p=patchDrawing?patchTextureOrigin+patchDeltaMetres:radial*weatherParameters.w;
+            float variation=mix(.5,groundNoise(p*.12),1.0-smoothstep(.7,5.0,length(fwidth(p))));
+            fragColor=vec4(mix(vec3(.09,.11,.13),vec3(.22,.19,.15),variation),0);return;
+        }
         vec3 surfacePosition=radial*(1.0+interstellarElevation(radial,wavePhase));
         vec3 localNormal=patchDrawing?normalize(cross(dFdx(patchDeltaMetres),dFdy(patchDeltaMetres))):normalize(cross(dFdx(surfacePosition),dFdy(surfacePosition)));
         vec3 material=bodyColor;
@@ -1243,7 +1254,9 @@ double BlackHole::PlanetSurfaceRadius(const glm::vec3& worldDirection, double se
 
 void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& cameraPosition, double seconds,
                       const glm::vec3& observerVelocity, bool trajectories, int selected,int interiorVehicle,
-                      const glm::vec3& physicalObserverBeta,bool physicalObserver) const {
+                      const glm::vec3& physicalObserverBeta,bool physicalObserver,bool captureDiskForeground,
+                      float depthBelowMiller) const {
+    atmosphere.ResetDiskForeground();
     if(!skyRefreshDeferred && (skyCubeDirty || glm::length(skyCubeOrigin)>1))BuildSkyCube();
     glEnable(GL_BLEND);glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
     const glm::mat4 identity(1.0f);
@@ -1258,6 +1271,9 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
 
     glUseProgram(program);
     glUniform1i(glGetUniformLocation(program, "oceanWorld"), true);
+    const float seabedElevation=depthBelowMiller>0
+        ?static_cast<float>(-MillerOceanDepthMetres/(bodies[0].radius*Astronomy::metresPerAu)):0;
+    glUniform1f(glGetUniformLocation(program,"millerSeabedElevation"),seabedElevation);
     glUniform1i(glGetUniformLocation(program, "physicalObserver"), physicalObserver);
     glUniform1f(glGetUniformLocation(program, "seaLevel"), 0.035f);
     glUniform1f(glGetUniformLocation(program, "terrainRelief"), 0.1f);
@@ -1294,7 +1310,12 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
         PlanetWeather::Upload(program,surface==Planet && planet==0?weather:PlanetWeather::State{});
         glUniform1i(glGetUniformLocation(program,"interstellarPlanet"),glm::clamp(planet,0,2));
         glUniform1i(glGetUniformLocation(program,"oceanWorld"),planet==0);
-        const bool patch=surface==Planet && glm::length(cameraPosition-center)-PlanetSurfaceRadius(glm::normalize(glm::vec3(cameraPosition-center)),seconds,planet)<20000.0/Astronomy::metresPerAu;
+        double groundClearance=20000.0;
+        if(surface==Planet)
+            groundClearance=(glm::length(cameraPosition-center)-
+                PlanetSurfaceRadius(glm::normalize(glm::vec3(cameraPosition-center)),seconds,planet))*Astronomy::metresPerAu;
+        const bool patch=groundClearance<20000.0;
+        glUniform1f(glGetUniformLocation(program,"groundClearanceMetres"),static_cast<float>(std::max(0.0,groundClearance)));
         glUniform1i(glGetUniformLocation(program,"patchEnabled"),patch);
         glUniform1i(glGetUniformLocation(program,"patchDrawing"),false);
         if(patch) {
@@ -1309,7 +1330,8 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
                 glBindBuffer(GL_ARRAY_BUFFER,waterPatch.buffer);
                 glBufferData(GL_ARRAY_BUFFER,vertices.size()*sizeof(glm::vec3),vertices.data(),GL_STATIC_DRAW);
             }else if(glm::length(direction-waterPatchDirection)*metres>2.0)waterPatchDirection=direction;
-            const float elevation=planet==0?static_cast<float>(PlanetWeather::WaveHeight(weather,waterPatchDirection*metres,glm::vec3(waterPatchDirection))/metres):
+            const float elevation=planet==0?(depthBelowMiller>0?seabedElevation:
+                static_cast<float>(PlanetWeather::WaveHeight(weather,waterPatchDirection*metres,glm::vec3(waterPatchDirection))/metres)):
                 InterstellarWorlds::Elevation(glm::vec3(waterPatchDirection),planet,static_cast<float>(std::remainder(seconds,glm::two_pi<double>())));
             PlanetTerrain::ConfigureSurfacePatch(program,waterPatchDirection,rotation,center-cameraPosition,metres,elevation);
         }
@@ -1422,9 +1444,11 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
         glBindVertexArray(0);
     }
     std::array<bool,3> foregroundAtmosphere{};
+    const glm::vec2 diskRadiance(GargantuaDiskOuterRadius(),diskBrightness*3.5f);
     const double foregroundEnd=std::max(1000000.0/Astronomy::metresPerAu,
         glm::length(cameraPosition)-3.0*horizonRadius);
     for (int planet = 0; atmospheresEnabled && planet < 3; ++planet){
+        if(planet==0 && depthBelowMiller>0)continue;
         const auto center=PlanetPosition(seconds,planet)-cameraPosition;
         const double shellRadius=static_cast<double>(bodies[planet].radius)*1.025;
         const double distance=glm::length(center);
@@ -1434,7 +1458,8 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
         foregroundAtmosphere[planet]=distance<=shellRadius || distance+shellRadius<foregroundEnd;
         if(!foregroundAtmosphere[planet]){
             atmosphere.Render(viewProjection,glm::vec3(0),glm::vec3(center),bodies[planet].radius,true,-cameraFloat,
-                planet==0 && weatherEnabled && weatherCloudsEnabled,seconds,glm::mat3(PlanetRotation(seconds,planet)),false,1,&weather);
+                planet==0 && weatherEnabled && weatherCloudsEnabled,seconds,glm::mat3(PlanetRotation(seconds,planet)),false,1,&weather,
+                planet==0?diskRadiance:glm::vec2(0));
         }
     }
     if (photonView) {
@@ -1481,7 +1506,8 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
         const auto center=PlanetPosition(seconds,planet)-cameraPosition;
         if(foregroundAtmosphere[planet])
             atmosphere.Render(viewProjection,glm::vec3(0),glm::vec3(center),bodies[planet].radius,true,-cameraFloat,
-                planet==0 && weatherEnabled && weatherCloudsEnabled,seconds,glm::mat3(PlanetRotation(seconds,planet)),planet==0 && oceanReflectionsEnabled,.65f,&weather);
+                planet==0 && weatherEnabled && weatherCloudsEnabled,seconds,glm::mat3(PlanetRotation(seconds,planet)),planet==0 && oceanReflectionsEnabled,.65f,&weather,
+                planet==0?diskRadiance:glm::vec2(0),captureDiskForeground);
     }
     gargantuaWormhole.Render(viewProjection,GargantuaWormholePosition(seconds)-cameraPosition,
         WormholePhysics::ThroatRadiusAu(),solarWormholeSky,true);
@@ -1509,6 +1535,11 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
             glDrawArrays(GL_LINES,0,static_cast<int>(vertices.size()));
             glBindVertexArray(0); glEnable(GL_DEPTH_TEST);
         }
+    }
+    if(depthBelowMiller>0){
+        const auto center=PlanetPosition(seconds)-cameraPosition;
+        atmosphere.Render(viewProjection,glm::vec3(0),glm::vec3(center),bodies[0].radius,true,-cameraFloat,
+            false,seconds,glm::mat3(PlanetRotation(seconds)),false,1,&weather,glm::vec2(0),false,true,depthBelowMiller);
     }
 }
 

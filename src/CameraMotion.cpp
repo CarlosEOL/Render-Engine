@@ -1,4 +1,5 @@
 #include "CameraMotion.h"
+#include "Astronomy.h"
 #include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -37,6 +38,7 @@ void CameraMotion::Carry(glm::dvec3 &position, glm::vec3 &front, glm::vec3 &up, 
 void CameraMotion::SurfaceAnchor::Set(const glm::dmat3& rotation,const glm::dvec3& offset,const glm::vec3& front) {
     const auto inverse=glm::transpose(rotation);
     direction=glm::length(offset)>0?glm::normalize(inverse*offset):glm::dvec3(0,0,1);
+    descentMetres=0;
     localFront=glm::normalize(inverse*glm::dvec3(front));
     lastWorldFront=front;
 }
@@ -64,4 +66,15 @@ void CameraMotion::SurfaceAnchor::Place(const glm::dmat3& rotation,const glm::dv
     position=centre+radiusAu*radial;
     up=glm::vec3(radial);
     lastWorldFront=front=glm::vec3(rotation*localFront);
+}
+
+void CameraMotion::SurfaceAnchor::SetSurfaceRadius(double surfaceRadiusAu,double waterDepthMetres,double descentDeltaMetres) {
+    constexpr double eyeHeight=Astronomy::observerClearanceAu*Astronomy::metresPerAu;
+    const double descentLimit=waterDepthMetres>.40?eyeHeight+waterDepthMetres-.35:0;
+    descentMetres=glm::clamp(descentMetres+descentDeltaMetres,0.0,descentLimit);
+    radiusAu=surfaceRadiusAu+(eyeHeight-descentMetres)/Astronomy::metresPerAu;
+}
+
+double CameraMotion::SurfaceAnchor::DepthBelowWater() const {
+    return glm::max(0.0,descentMetres-Astronomy::observerClearanceAu*Astronomy::metresPerAu);
 }

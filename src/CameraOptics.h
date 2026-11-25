@@ -18,6 +18,7 @@ class CameraOptics
     // 0 accretion flow. A count of zero deliberately accepts no sources.
     void SetSystemSources(const std::array<glm::vec4,8>& sources,int count){systemSources=sources;systemSourceCount=glm::clamp(count,0,8);}
     void SetBlackHoleHint(const glm::vec3& value) { blackHoleHint=value; }
+    void SetDiskForegroundTexture(unsigned int texture) { diskForegroundTexture=texture; }
     void SetBlackHoleVisibility(bool value) { blackHoleVisibility=value;exposureMeter.Reset(); }
     void Release();
     unsigned int SceneTexture() const { return sceneTexture; }
@@ -35,6 +36,7 @@ class CameraOptics
     unsigned int sceneDepth = 0;
     unsigned int depthTexture = 0;
     unsigned int hdrDiskProgram=0,hdrDiskFramebuffer=0,hdrDiskTexture=0;
+    unsigned int diskForegroundTexture=0;
     mutable bool hdrDiskValid=false;
     unsigned int flareProgram = 0, flareFramebuffer = 0, flareTexture = 0;
     bool frameActive = false;

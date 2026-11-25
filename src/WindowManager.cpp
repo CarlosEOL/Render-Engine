@@ -404,7 +404,10 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
     }
     if (manager.inStarSystem) {
         bool handled = true;
-        if (key==GLFW_KEY_L) manager.starSystem.ToggleLanding(manager.simulationTime,cameraFront,cameraUp);
+        if (key==GLFW_KEY_L) {
+            manager.starSystem.ToggleLanding(manager.simulationTime,cameraFront,cameraUp);
+            if(manager.starSystem.CanDive())manager.ShowStatusToast("F dive   R rise");
+        }
         else if (key==GLFW_KEY_T) {
             manager.starSystem.ToggleFollow(manager.simulationTime);
             manager.ShowStatusToast(manager.starSystem.IsFollowing()?"Position follow on":"Position follow off");
@@ -424,7 +427,9 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
         const float exposureLevels[] = {-8, -4, -2, 0, 2, 4, 8, 12, 16};
         manager.exposureEv = exposureLevels[key - 1100];
     } else if (key == 1200 || key == 1201 || key == GLFW_KEY_F7) {
-        manager.hdrMode = key == GLFW_KEY_F7 ? !manager.hdrMode : key == 1200;
+        const bool hdr=key == GLFW_KEY_F7 ? !manager.hdrMode : key == 1200;
+        if(hdr!=manager.hdrMode)manager.sceneCacheValid=false;
+        manager.hdrMode=hdr;
     } else if (key == GLFW_KEY_EQUAL || key == GLFW_KEY_KP_ADD) {
         manager.exposureEv = glm::min(16.0f, manager.exposureEv + 1.0f);
     } else if (key == GLFW_KEY_MINUS || key == GLFW_KEY_KP_SUBTRACT) {
@@ -691,12 +696,27 @@ void WindowManager::ToggleLanding() {
         cameraSpeed = static_cast<float>(2.0/Astronomy::metresPerAu);
         ShowSpeedToast(cameraSpeed, false);
     } else {
-        cameraPos += glm::dvec3(cameraUp) * (20.0/Astronomy::metresPerAu);
+        cameraPos += glm::dvec3(cameraUp) * ((20.0+planetLanding.DepthBelowWater())/Astronomy::metresPerAu);
         cameraUp = glm::vec3(0, 1, 0);
     }
     yaw = glm::degrees(std::atan2(cameraFront.z, cameraFront.x));
     pitch = glm::degrees(std::asin(glm::clamp(cameraFront.y, -1.0f, 1.0f)));
     firstMouse = true;
+}
+
+double WindowManager::DepthBelowWater() const {
+    return inStarSystem?starSystem.DepthBelowWater():landed && landedPlanet==0?planetLanding.DepthBelowWater():0;
+}
+
+void WindowManager::MoveOnPlanetSurface(const glm::dvec3& displacementAu,double descentMetres) {
+    if(!landed || (displacementAu==glm::dvec3(0) && (landedPlanet!=0 || descentMetres==0)))return;
+    const auto centre=BlackHole::PlanetPosition(simulationTime,landedPlanet);
+    const auto rotation=BlackHole::PlanetRotationDouble(simulationTime,landedPlanet);
+    planetLanding.CaptureLook(rotation,cameraFront);
+    if(displacementAu!=glm::dvec3(0))planetLanding.Walk(rotation,displacementAu);
+    const double surface=BlackHole::PlanetLandingRadius(planetLanding.direction,landedPlanet)-Astronomy::observerClearanceAu;
+    planetLanding.SetSurfaceRadius(surface,landedPlanet==0?BlackHole::MillerOceanDepthMetres:0,descentMetres);
+    planetLanding.Place(rotation,centre,cameraPos,cameraFront,cameraUp);
 }
 
 void WindowManager::UpdateObserver(double previousTime, float realSeconds) {
@@ -958,7 +978,7 @@ void WindowManager::StartSolarSystem() {
     for (const auto& body:starSystem.Planets()) bodies.push_back(body.name);
     scenePanel.SetPlanets(bodies);
     scenePanel.SetCurrentSystemName(starSystem.Host().name);
-    scenePanel.ShowBrowser(true);
+    scenePanel.SetBrowser(true,false);
     starSystem.Overview(cameraFront,cameraUp);
     fieldOfView=45; SyncCameraAngles(); ResizeInterface(); RefreshPanel(); UpdateTitle();
 #ifdef _WIN32
@@ -984,7 +1004,7 @@ void WindowManager::StartGargantua() {
     for(int core=0;core<GalacticCores::count;++core){const auto item=GalacticCores::Get(GalacticCores::firstId+core);catalogue.push_back({item.id,item.name});}
     scenePanel.SetCatalogue(std::move(catalogue));
     SelectCatalogue(0);
-    scenePanel.SetCurrentSystemName("Gargantua system");scenePanel.ShowBrowser(true);
+    scenePanel.SetCurrentSystemName("Gargantua system");scenePanel.SetBrowser(true,false);
     ResetView(); ResizeInterface(); UpdateTitle();
 #ifdef _WIN32
     SetFocus(glfwGetWin32Window(window));
@@ -1010,7 +1030,7 @@ void WindowManager::StartQuantum(int index) {
     const auto& examples=QuantumStates::Examples();
     for (int i=0;i<static_cast<int>(examples.size());++i) catalogue.push_back({i,examples[i].name});
     scenePanel.SetCatalogue(std::move(catalogue)); scenePanel.SetPlanets({});
-    scenePanel.SetCurrentSystemName("Quantum states");scenePanel.ShowBrowser(false);
+    scenePanel.SetCurrentSystemName("Quantum states");scenePanel.SetBrowser(false,true);
     ResizeInterface(); RefreshPanel(); UpdateTitle();
 #ifdef _WIN32
     SetFocus(glfwGetWin32Window(window));
@@ -1135,9 +1155,24 @@ void WindowManager::GoToNavigation(const NavigationEntry& entry){
         const auto frame=starSystem.WeatherFrame(entry.body,simulationTime);
         const auto radial=frame*entry.surfaceNormal;
         const double radius=starSystem.Planets()[entry.body].radiusEarth*Astronomy::earthRadiusAu;
-        starSystem.camera=starSystem.Position(entry.body,simulationTime)+radial*(radius*1.85);
+        const auto centre=starSystem.Position(entry.body,simulationTime);
+        starSystem.camera=centre+radial*(radius*1.85);
         cameraFront=glm::vec3(-radial);cameraUp=glm::vec3(frame[0]);
         fieldOfView=50;starSystem.speedAu=150000/Astronomy::metresPerAu;
+        if(entry.surfaceView!=NavigationEntry::SurfaceView::Orbit){
+            const auto geography=PlanetTerrain::EarthGeography(glm::vec3(entry.surfaceNormal));
+            const auto tangent=glm::normalize(glm::cross(frame[1],radial));
+            if(entry.surfaceView==NavigationEntry::SurfaceView::Terrain){
+                const auto terrain=centre+radial*(radius+geography.x/Astronomy::metresPerAu);
+                starSystem.camera=terrain+(radial*6500.0+tangent*12000.0)/Astronomy::metresPerAu;
+                cameraFront=glm::vec3(glm::normalize(terrain-starSystem.camera));cameraUp=glm::vec3(radial);
+                starSystem.speedAu=220/Astronomy::metresPerAu;
+            }else if(geography.y>.5f && geography.x<-50){
+                starSystem.ToggleLanding(simulationTime,cameraFront,cameraUp);
+                starSystem.MoveOnSurface({},Astronomy::observerLengthMetres*.5-geography.x-14.0,cameraFront,cameraUp);
+                cameraFront=glm::vec3(glm::normalize(tangent*.42-radial));cameraUp=glm::vec3(radial);
+            }
+        }
     }
     else if(entry.kind==Kind::Nebula){
         const auto& nebula=CelestialPhenomena::Get(entry.system);const int nearest=blackHole.NearestStar(nebula.positionAu);
@@ -1343,7 +1378,9 @@ void WindowManager::UpdateTitle() {
           << (followPlanet ? " | Miller flyby" : "")
           << (followSpacecraft ? " | Spacecraft" : "")
           << (followSelected ? (followSelectedRotation?" | Following rotation":" | Following position") : "")
-          << (landed ? " | Surface free-cam" : "")
+          << (DepthBelowWater()>0?" | Underwater "+std::to_string(static_cast<int>(std::ceil(DepthBelowWater())))+" m | F dive / R rise":
+              landed?(landedPlanet==0?" | Surface free-cam | F dive / R rise":" | Surface free-cam"):
+              inStarSystem && starSystem.CanDive()?" | F dive / R rise":"")
           << (observerGravity ? " | Falling free-cam" : "")
           << (horizonReached ? (blackHoleJourney.inside
               ? " | Inside event horizon" : " | Horizon crossed") : "")
@@ -1632,15 +1669,14 @@ void WindowManager::ProcessCamera(GLFWwindow* window, const float& deltaTime) {
     }
 
     if (manager.landed) {
-        if(displacement!=glm::dvec3(0)){
-            const auto centre=BlackHole::PlanetPosition(manager.simulationTime,manager.landedPlanet);
-            const auto rotation=BlackHole::PlanetRotationDouble(manager.simulationTime,manager.landedPlanet);
-            auto& anchor=manager.planetLanding;
-            anchor.CaptureLook(rotation,cameraFront);
-            anchor.Walk(rotation,displacement);
-            anchor.radiusAu=BlackHole::PlanetLandingRadius(anchor.direction,manager.landedPlanet);
-            anchor.Place(rotation,centre,cameraPos,cameraFront,cameraUp);
-        }
+        const bool modifiers=glfwGetKey(window,GLFW_KEY_LEFT_SHIFT)==GLFW_PRESS || glfwGetKey(window,GLFW_KEY_RIGHT_SHIFT)==GLFW_PRESS
+            || glfwGetKey(window,GLFW_KEY_LEFT_CONTROL)==GLFW_PRESS || glfwGetKey(window,GLFW_KEY_RIGHT_CONTROL)==GLFW_PRESS;
+        const double descent=!modifiers && !manager.observerGravity?2.5*deltaTime*
+            ((glfwGetKey(window,GLFW_KEY_F)==GLFW_PRESS)-(glfwGetKey(window,GLFW_KEY_R)==GLFW_PRESS)):0;
+        const double distance=glm::length(displacement);
+        const double swimLimit=4.0*deltaTime/Astronomy::metresPerAu;
+        if(manager.DepthBelowWater()>0 && distance>swimLimit)displacement*=swimLimit/distance;
+        manager.MoveOnPlanetSurface(displacement,descent);
         return;
     }
     cameraPos+=displacement;
@@ -2238,7 +2274,9 @@ void WindowManager::Update(float& dT) {
         const auto physicalBeta=physicalObserver?InterstellarWorlds::Orientation()*KerrSpacetime::ObserverBeta(kerrObserver,BlackHole::HorizonRadius(),observerSpin):glm::dvec3(0);
         blackHole.Render(projection * view, cameraPos, simulationTime,
             interiorVehicle?glm::vec3(blackHole.CockpitPose(interiorVehicle,simulationTime).velocity)
-                :observerGravity || horizonReached ? glm::vec3(observer.velocity) : glm::vec3(0.0f),trajectories,selectedTarget,interiorVehicle,glm::vec3(physicalBeta),physicalObserver);
+                :observerGravity || horizonReached ? glm::vec3(observer.velocity) : glm::vec3(0.0f),trajectories,selectedTarget,interiorVehicle,glm::vec3(physicalBeta),physicalObserver,hdrMode,
+            static_cast<float>(DepthBelowWater()));
+        optics.SetDiskForegroundTexture(blackHole.DiskForegroundTexture());
         if(interiorVehicle)vehicleInterior.Render(projection*view,glm::mat3(lastCabinRotation),interiorVehicle>=2,
             static_cast<float>(blackHole.SpacecraftFuelSeconds()/InterstellarWorlds::FuelSeconds));
         glPolygonMode(GL_FRONT_AND_BACK, showWireframe ? GL_LINE : GL_FILL);
@@ -2490,8 +2528,8 @@ void WindowManager::MakeNewWindow() {
 #endif
     AppendMenuW(performance,MF_STRING,1303,L"Cooler mode: 30 FPS / 50% resolution");
     AppendMenuW(performance,MF_SEPARATOR,0,nullptr);
-    AppendMenuW(performance,MF_STRING,1300,L"30 FPS - default");
-    AppendMenuW(performance,MF_STRING,1301,L"60 FPS");
+    AppendMenuW(performance,MF_STRING,1300,L"30 FPS");
+    AppendMenuW(performance,MF_STRING,1301,L"60 FPS - default");
     AppendMenuW(performance,MF_STRING,1302,L"120 FPS");
     AppendMenuW(performance,MF_SEPARATOR,0,nullptr);
     AppendMenuW(performance,MF_STRING,1310,L"Black hole 50% in motion - paused view sharpens (default)");

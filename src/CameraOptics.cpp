@@ -501,17 +501,23 @@ void main(){
     // Grade at native texels before creating bloom mips. Filtering a disk tag
     // first gives a dark silhouette surrounded by ungraded bright mip halos.
     const char* hdrDisk=R"(#version 330 core
-uniform sampler2D scene,exposureState;out vec4 result;
+uniform sampler2D scene,diskForeground,exposureState;
+uniform bool hasDiskForeground;
+out vec4 result;
 void main(){
     vec4 source=texelFetch(scene,ivec2(gl_FragCoord.xy),0);vec3 value=source.rgb;
     if(source.a>1.5){
-        float peak=max(value.r,max(value.g,value.b));
+        // Weather and in-scattered light keep their ordinary HDR exposure.
+        vec2 uv=gl_FragCoord.xy/vec2(textureSize(scene,0));
+        vec3 foreground=hasDiskForeground?min(value,texture(diskForeground,uv).rgb):vec3(0);
+        vec3 transmitted=value-foreground;
+        float peak=max(transmitted.r,max(transmitted.g,transmitted.b));
         float gain=exp2(texelFetch(exposureState,ivec2(0),0).b);
         float desired=.84*(1.0-exp(-pow(max(peak*gain,0.0),.65)*1.3));
         // Invert the final HDR shoulder, so it is applied exactly once.
         float encoded=desired/max(1.0-desired/.85,.0001);
-        vec3 graded=value*encoded/max(peak,1e-8);
-        value=mix(value,graded,clamp((source.a-2.0)*4.0,0.0,1.0));
+        vec3 graded=transmitted*encoded/max(peak,1e-8);
+        value=foreground+mix(transmitted,graded,clamp((source.a-2.0)*4.0,0.0,1.0));
     }
     result=vec4(value,source.a);
 })";
@@ -526,6 +532,7 @@ void main(){
 void CameraOptics::BeginFrame()
 {
     frameActive = false;
+    diskForegroundTexture=0;
     if (!program)
         return;
     int viewport[4];
@@ -600,8 +607,11 @@ void CameraOptics::Render(int profile, float fieldOfView, float exposureEv, bool
             glViewport(0,0,width,height);glDisable(GL_DEPTH_TEST);glDisable(GL_BLEND);
             glPolygonMode(GL_FRONT_AND_BACK,GL_FILL);glUseProgram(hdrDiskProgram);
             glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,sceneTexture);
+            glActiveTexture(GL_TEXTURE1);glBindTexture(GL_TEXTURE_2D,diskForegroundTexture);
             glActiveTexture(GL_TEXTURE2);glBindTexture(GL_TEXTURE_2D,exposureMeter.Texture());
             glUniform1i(glGetUniformLocation(hdrDiskProgram,"scene"),0);
+            glUniform1i(glGetUniformLocation(hdrDiskProgram,"diskForeground"),1);
+            glUniform1i(glGetUniformLocation(hdrDiskProgram,"hasDiskForeground"),diskForegroundTexture!=0);
             glUniform1i(glGetUniformLocation(hdrDiskProgram,"exposureState"),2);
             glBindVertexArray(vao);glDrawArrays(GL_TRIANGLES,0,3);
             glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,hdrDiskTexture);

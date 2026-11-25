@@ -21,6 +21,8 @@ in vec2 screenPosition;
 out vec4 fragColor;
 uniform sampler2D scene;
 uniform sampler2D sceneDepth;
+uniform sampler2D previousDiskForeground;
+uniform int diskForegroundPass;
 uniform bool logarithmicDepth;
 uniform mat4 inverseViewProjection;
 uniform mat4 viewProjection;
@@ -36,6 +38,8 @@ uniform bool oceanReflections;
 uniform bool reflectionOnly;
 uniform float waveTime,waterSpecularScale;
 uniform vec3 waterOriginMetres;
+uniform vec2 marineHazeLight; // radius and radiance of the extended source
+uniform float depthBelowWater;
 
 float cloudHash(vec3 p){p=fract(p*.1031);p+=dot(p,p.yzx+33.33);return fract((p.x+p.y)*p.z);}
 float cloudNoise(vec3 p){
@@ -210,13 +214,15 @@ vec3 oceanReflection(vec3 background,vec3 origin,vec3 direction,float z){
     n=normalize(n-gradient);
     vec3 reflected=reflect(direction,n);
     if(dot(reflected,normalize(water))<=0.0)return background;
-    // Bounded depth march for finite receivers. The direction projection below
-    // handles the already-lensed stellar sky, whose depth is intentionally infinite.
+    // Concentrate depth samples near the water so adjacent shores and objects
+    // can be reflected as well as the background sky.
     vec2 hitUv=vec2(-1);float confidence=0.0;
     vec3 start=cameraPosition+direction*distance+n*(1.0/149597870700.0);
+    float previousTravel=0.0;
     for(int i=0;i<24;++i){
         float u=float(i+1)/24.0;
-        vec3 point=start+reflected*(planetRadius*.5*u*u);
+        float travel=planetRadius*.5*u*u*u*u;
+        vec3 point=start+reflected*travel;
         vec4 clip=viewProjection*vec4(point,1);
         if(clip.w<=0.0)break;
         vec2 uv=clip.xy/clip.w*.5+.5;
@@ -224,7 +230,9 @@ vec3 oceanReflection(vec3 background,vec3 origin,vec3 direction,float z){
         float sampleDepth=texture(sceneDepth,uv).r;
         float rayDistance=length(point-cameraPosition);
         float gap=rayDistance-depthDistance(sampleDepth);
-        if(sampleDepth<.99999 && gap>=0.0 && gap<max(20.0/149597870700.0,rayDistance*.015)){
+        float thickness=max(20.0/149597870700.0,travel-previousTravel);
+        previousTravel=travel;
+        if(sampleDepth<.99999 && gap>=0.0 && gap<thickness){
             float receiver=texture(scene,uv).a;
             if(receiver>=.099 && receiver<=.405)continue; // No reflected copy of the same water/specular stripe.
             hitUv=uv;confidence=1.0;break;
@@ -243,29 +251,90 @@ vec3 oceanReflection(vec3 background,vec3 origin,vec3 direction,float z){
     confidence*=smoothstep(0.0,.055,border);
     confidence*=smoothstep(0.0,.025,dot(reflected,radial));
     confidence*=1.0-.85*weatherOceanFoam(surface,normalize(cloudFrame*radial));
+    confidence*=1.0-smoothstep(1.12,1.32,length(origin)/planetRadius);
     vec2 texel=1.0/vec2(textureSize(scene,0));
     vec3 reflectedLight=texture(scene,hitUv).rgb*.5;
     reflectedLight+=(texture(scene,hitUv+texel*vec2(1,0)).rgb+texture(scene,hitUv-texel*vec2(1,0)).rgb
         +texture(scene,hitUv+texel*vec2(0,1)).rgb+texture(scene,hitUv-texel*vec2(0,1)).rgb)*.125;
-    float fresnel=.02+.98*pow(1.0-max(dot(n,-direction),0.0),5.0);
+    float fresnel=.0204+.9796*pow(1.0-max(dot(n,-direction),0.0),5.0);
     float analyticSpecular=clamp((waterMask-.1)/.3,0.0,1.0)*waterSpecularScale;
     // Replace the material's white analytic stripe only where a valid screen
     // reflection exists; retain that fallback when the source goes offscreen.
-    return max(background-vec3(analyticSpecular*confidence),vec3(0))+reflectedLight*fresnel*confidence;
+    vec3 transmitted=max(background-vec3(analyticSpecular*confidence),vec3(0));
+    return mix(transmitted,reflectedLight,fresnel*confidence);
 }
 
 )" + R"(
+vec4 underwaterScene(vec4 source,vec3 origin,vec3 direction,float sceneZ){
+    const float metresPerAu=149597870700.0;
+    vec3 radial=normalize(origin);
+    float up=dot(direction,radial);
+    float radius=length(origin)*metresPerAu;
+    float offset=depthBelowWater*(2.0*radius+depthBelowWater);
+    float b=radius*up,root=sqrt(b*b+offset);
+    float exitDistance=b>0.0?offset/(root+b):root-b;
+    float sceneDistance=depthDistance(sceneZ)*metresPerAu;
+    float travel=min(sceneDistance,exitDistance);
+    vec3 light=normalize(lightPosition-cameraPosition);
+    float daylight=smoothstep(-.14,.23,dot(radial,light));
+    float surfaceLight=daylight*exp(-depthBelowWater*.012);
+    vec3 radiance=source.rgb;
+    if(exitDistance<sceneDistance && exitDistance<160.0){
+        vec3 point=waterOriginMetres+cloudFrame*direction*exitDistance;
+        vec3 localUp=normalize(cloudFrame*radial);
+        vec3 normal=normalize(radial-transpose(cloudFrame)*weatherWaveGradient(point,localUp,true));
+        vec3 skyRay=refract(direction,-normal,1.333);
+        float window=smoothstep(.642,.683,dot(direction,normal));
+        float sun=pow(max(dot(skyRay,light),0.0),60.0);
+        vec3 sky=mix(vec3(.001,.004,.009),vec3(.34,.65,.90)+sun*vec3(3.2,2.6,1.8),daylight);
+        sky+=min(source.rgb,vec3(4.0))*(.65-.60*daylight);
+        radiance=mix(vec3(.011,.09,.125)*surfaceLight,sky,window);
+    }else if(sceneDistance<140.0){
+        vec3 p=waterOriginMetres+cloudFrame*direction*sceneDistance;
+        float a=sin(dot(p,vec3(.78,.09,.32))+waveTime*2.0+sin(dot(p,vec3(.21,.18,-.61))-waveTime));
+        float c=sin(dot(p,vec3(-.28,.12,.90))-waveTime+sin(dot(p,vec3(.56,-.12,.28))+waveTime*3.0));
+        float pattern=pow(max(0.0,1.0-abs(a+c)*.75),5.0);
+        radiance*=.83+.68*pattern*surfaceLight;
+    }
+    vec3 transmission=exp(-min(travel,180.0)*vec3(.15,.051,.027));
+    float skyLight=.72+.38*smoothstep(-.65,.58,up);
+    float forwardLight=pow(max(0.0,dot(direction,light)),8.0);
+    vec3 waterLight=mix(vec3(.0015,.007,.012),vec3(.016,.165,.24)*skyLight+
+        vec3(.035,.11,.13)*forwardLight,surfaceLight);
+    vec3 color=radiance*transmission+waterLight*(1.0-transmission);
+    if(depthBelowWater>150.0 && sceneDistance<90.0 && sceneDistance<exitDistance){
+        vec4 center=inverseViewProjection*vec4(0,0,1,1);
+        vec3 forward=normalize(center.xyz-cameraPosition*center.w);
+        float beam=smoothstep(.82,.997,dot(direction,forward))*(1.0-smoothstep(10.0,90.0,sceneDistance));
+        // Model an inspection light below the sunlit ocean.
+        color+=radiance*vec3(.54,.83,1.0)*exp(-sceneDistance*.033)*beam*3.6;
+    }
+    return vec4(color,0);
+}
+
 void main() {
-    vec4 source = texture(scene, screenPosition * 0.5 + 0.5);
-    vec3 background = source.rgb;
+    vec2 uv=screenPosition*.5+.5;
+    vec4 source = texture(scene, uv);
+    bool diskEmitter=source.a>1.5;
+    if(diskForegroundPass!=0 && !diskEmitter){
+        fragColor=vec4(0);return;
+    }
+    // Measuring the same transport with no background yields just the
+    // foreground weather and air light. A nearer shell also attenuates any
+    // foreground light already accumulated by a previous pass.
+    vec3 background=diskForegroundPass==0?source.rgb:diskForegroundPass==2
+        ?texture(previousDiskForeground,uv).rgb:vec3(0);
     vec4 farPoint = inverseViewProjection * vec4(screenPosition, 1.0, 1.0);
     vec3 direction = normalize(farPoint.xyz - cameraPosition * farPoint.w);
     vec3 origin = cameraPosition - planetCenter;
+    float opaqueDepth=texture(sceneDepth,uv).r;
+    if(depthBelowWater>0.0){
+        fragColor=underwaterScene(source,origin,direction,opaqueDepth);return;
+    }
     float auroraTop=auroraAxis.w>0.0?min(350000.0/149597870700.0,planetRadius*.09):0.0;
     vec2 shell = sphereInterval(origin, direction, max(planetRadius * 1.025,planetRadius+auroraTop));
     float start = max(shell.x, 0.0);
     float finish = shell.y;
-    float opaqueDepth = texture(sceneDepth, screenPosition * 0.5 + 0.5).r;
     if(reflectionOnly){
         fragColor=vec4(oceanReflection(background,origin,direction,opaqueDepth),source.a);return;
     }
@@ -286,7 +355,6 @@ void main() {
         fragColor = vec4(background, source.a);
         return;
     }
-    bool diskEmitter=source.a>1.5;
     float sourceEligibility=diskEmitter?source.a-2.0:source.a;
     bool waterReceiver=source.a>=.099 && source.a<=.405 && opaqueDepth<.99999;
     if(earthClouds){
@@ -363,6 +431,16 @@ void main() {
     vec3 betaRayleigh = vec3(37.0, 86.0, 210.0) / planetRadius;
     vec3 betaMie = vec3(22.0) / planetRadius;
     vec3 betaOzone = vec3(4.1, 12.0, .55) / planetRadius;
+    float betaMist=0.0,mistHalfAngle=0.0,mistRadiance=0.0;
+    if(marineHazeLight.x>0.0){
+        betaMist=19.0/planetRadius;
+        mistHalfAngle=atan(marineHazeLight.x/length(lightPosition-planetCenter))*.48;
+        // Sea mist spreads the disk's light over a broad forward lobe.
+        const float g=.54;
+        float lightCosine=clamp(dot(direction,normalize(lightPosition-cameraPosition)),-1.0,1.0);
+        float forward=pow((1.0-g)*(1.0-g)/(1.0+g*g-2.0*g*lightCosine),1.5);
+        mistRadiance=marineHazeLight.y*(.10+.90*forward);
+    }
     vec3 transmittance = vec3(1);
     vec3 scattering = vec3(0);
     for (int sampleIndex = 0; sampleIndex < samples; ++sampleIndex) {
@@ -394,10 +472,21 @@ void main() {
             }
         }
         vec3 sunTransmission=exp(-sunlightDepth)*illumination;
-        vec3 extinction=betaRayleigh*density+betaMie*haze*1.1+betaOzone*ozone;
+        float mistExtinction=0.0;
+        vec3 mistScattering=vec3(0.0);
+        if(betaMist>0.0){
+            mistExtinction=betaMist*exp(-altitude/(planetRadius*.00061));
+            // The upper disk can light marine droplets after its center has
+            // set. Approximate the visible fraction of the extended emitter.
+            float elevation=dot(normalize(samplePosition),sunDirection);
+            float visibleDisk=smoothstep(-mistHalfAngle,mistHalfAngle,elevation);
+            // The droplets also scatter blue skylight into the marine layer.
+            mistScattering=vec3(.88,1.04,1.43)*mistExtinction*mistRadiance*visibleDisk;
+        }
+        vec3 extinction=betaRayleigh*density+betaMie*haze*1.1+betaOzone*ozone+mistExtinction;
         vec3 segment=exp(-extinction*interval);
         vec3 scatterCoefficient=betaRayleigh*density*rayleighPhase+betaMie*haze*miePhase;
-        vec3 single=scatterCoefficient/max(extinction,vec3(1e-10))*sunTransmission*.30;
+        vec3 single=(scatterCoefficient*sunTransmission*.30+mistScattering)/max(extinction,vec3(1e-10));
         // Bounded second-order approximation brightens the lower blue sky.
         vec3 multiple=vec3(.055,.095,.16)*(1.0-exp(-density*.6))*(.03+.97*illumination);
         scattering+=transmittance*(1.0-segment)*(single+multiple);
@@ -418,12 +507,17 @@ void main() {
     glGenVertexArrays(1, &vao);
     glGenTextures(1, &sceneTexture);
     glGenTextures(1, &depthTexture);
+    glGenFramebuffers(1,&diskForegroundFramebuffer);
     return true;
 }
 
 void Atmosphere::Render(const glm::mat4& viewProjection, const glm::vec3& camera,
                         const glm::vec3& center, float radius, bool logarithmicDepth,
-                        const glm::vec3& lightPosition,bool earthClouds,double seconds,const glm::mat3& rotation,bool oceanReflections,float waterSpecularScale,const PlanetWeather::State* weather) const {
+                        const glm::vec3& lightPosition,bool earthClouds,double seconds,const glm::mat3& rotation,bool oceanReflections,float waterSpecularScale,
+                        const PlanetWeather::State* weather,glm::vec2 marineHazeLight,bool captureDiskForeground,bool renderAir,
+                        float depthBelowWater) const {
+    const bool reflectOcean=oceanReflections && depthBelowWater<=0 && glm::length(center-camera)<radius*1.32f;
+    if(!renderAir && !reflectOcean)return;
     int viewport[4];
     glGetIntegerv(GL_VIEWPORT, viewport);
     if (viewport[2] <= 0 || viewport[3] <= 0)
@@ -468,7 +562,9 @@ void Atmosphere::Render(const glm::mat4& viewProjection, const glm::vec3& camera
     glUniform3fv(glGetUniformLocation(program, "cameraPosition"), 1, glm::value_ptr(camera));
     glUniform3fv(glGetUniformLocation(program, "planetCenter"), 1, glm::value_ptr(center));
     glUniform3fv(glGetUniformLocation(program, "lightPosition"), 1, glm::value_ptr(lightPosition));
+    glUniform2f(glGetUniformLocation(program, "marineHazeLight"), marineHazeLight.x, marineHazeLight.y);
     glUniform1f(glGetUniformLocation(program, "planetRadius"), radius);
+    glUniform1f(glGetUniformLocation(program,"depthBelowWater"),depthBelowWater);
     glUniform1i(glGetUniformLocation(program,"earthClouds"),earthClouds);
     glUniform1i(glGetUniformLocation(program,"oceanReflections"),oceanReflections);
     glUniform1i(glGetUniformLocation(program,"reflectionOnly"),false);
@@ -481,17 +577,47 @@ void Atmosphere::Render(const glm::mat4& viewProjection, const glm::vec3& camera
     glUniformMatrix3fv(glGetUniformLocation(program,"cloudFrame"),1,GL_FALSE,glm::value_ptr(cloudFrame));
     glUniform1i(glGetUniformLocation(program, "scene"), 0);
     glUniform1i(glGetUniformLocation(program, "sceneDepth"), 1);
+    const int foregroundPass=glGetUniformLocation(program,"diskForegroundPass");
+    glUniform1i(foregroundPass,0);
     glUniform1i(glGetUniformLocation(program, "logarithmicDepth"), logarithmicDepth);
     const bool blending=glIsEnabled(GL_BLEND);glDisable(GL_BLEND);
     glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
     glBindVertexArray(vao);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-    if(oceanReflections && glm::length(center-camera)<radius*1.04f){
+    if(renderAir)glDrawArrays(GL_TRIANGLES, 0, 3);
+    if(captureDiskForeground){
+        const int nextIndex=diskForegroundIndex==0?1:0;
+        auto& layer=diskForeground[nextIndex];
+        glActiveTexture(GL_TEXTURE2);
+        if(!layer.texture)glGenTextures(1,&layer.texture);
+        if(layer.width!=textureWidth || layer.height!=textureHeight){
+            layer.width=textureWidth;layer.height=textureHeight;
+            glBindTexture(GL_TEXTURE_2D,layer.texture);
+            glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA16F,layer.width,layer.height,0,GL_RGBA,GL_FLOAT,nullptr);
+            glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+        }
+        glBindTexture(GL_TEXTURE_2D,DiskForegroundTexture());
+        GLint target=0;
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING,&target);
+        glBindFramebuffer(GL_FRAMEBUFFER,diskForegroundFramebuffer);
+        glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,layer.texture,0);
+        glUniform1i(glGetUniformLocation(program,"previousDiskForeground"),2);
+        glUniform1i(foregroundPass,diskForegroundIndex<0?1:2);
+        glDrawArrays(GL_TRIANGLES,0,3);
+        glBindFramebuffer(GL_FRAMEBUFFER,target);
+        diskForegroundIndex=nextIndex;
+        glUniform1i(foregroundPass,0);
+        glBindTexture(GL_TEXTURE_2D,0);
+        glActiveTexture(GL_TEXTURE1);
+    }
+    if(reflectOcean){
         // Reflect the finished weather/atmosphere, not the uncomposited sky.
         // This also includes the volume-cloud pass during a surface approach.
         glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,sceneTexture);
-        glCopyTexSubImage2D(GL_TEXTURE_2D,0,0,0,viewport[0],viewport[1],textureWidth,textureHeight);
+        if(renderAir)glCopyTexSubImage2D(GL_TEXTURE_2D,0,0,0,viewport[0],viewport[1],textureWidth,textureHeight);
         glUniform1i(glGetUniformLocation(program,"reflectionOnly"),true);
         glDrawArrays(GL_TRIANGLES,0,3);
     }
@@ -508,6 +634,13 @@ void Atmosphere::Release() {
     if (vao) glDeleteVertexArrays(1, &vao);
     if (sceneTexture) glDeleteTextures(1, &sceneTexture);
     if (depthTexture) glDeleteTextures(1, &depthTexture);
+    if(diskForegroundFramebuffer)glDeleteFramebuffers(1,&diskForegroundFramebuffer);
+    for(auto& layer:diskForeground){
+        if(layer.texture)glDeleteTextures(1,&layer.texture);
+        layer={};
+    }
+    diskForegroundFramebuffer=0;
+    ResetDiskForeground();
     program = vao = sceneTexture = depthTexture = 0;
     textureWidth = textureHeight = 0;
 }

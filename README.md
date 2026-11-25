@@ -7,11 +7,11 @@ Render-Engine is made for fun, learning, and experimentation. The Gargantua scen
 
 Please keep the complete fan build noncommercial. The MIT license permits commercial use of the software it covers under its terms. Film material and other third-party content are subject to their respective rights and licenses. [Project notice and legal references](NOTICE.txt) · [MIT license](LICENSE) · [Third-party notices](third_party/README.md)
 
-> Do not copy this project and claim it as your own, I mean damn it just make make your own, don't you think it's more impressive that way?
+> Do not copy this project and claim it as your own, I mean damn it just make your own, don't you think it's more impressive that way?
 
 ## Native DX12 and OpenGL builds
 
-The `build/dx12` branch runs the complete Planetorium and Quantum application through native DirectX 12. Run `Build-DX12.cmd Debug` or `Build-DX12.cmd Release`, then `build\dx12\Debug\bin\Render-Engine-DX12.exe` (or `Release`). The separate `build/opengl` branch preserves the OpenGL build. Both share the same scene controls and simulations.
+OpenGL and native DirectX 12 share the same Planetorium and Quantum simulations. Launch OpenGL from `build/current/bin/Render-Engine.exe` or DX12 from `build/dx12/Release/bin/Render-Engine-DX12.exe`. To build DX12, run `Build-DX12.cmd Release`.
 
 DX12 includes experimental **Performance > NVIDIA DLSS** Quality, Balanced, Performance and DLAA modes on supported hardware, with native rendering as the default/fallback. Stable views accumulate samples; scene changes conservatively reset history. Frame Generation and Ray Reconstruction are not integrated. See [migration changes and reasons](docs/DX12_MIGRATION.md) and [DLSS scope](docs/DLSS_2026-11-12.md).
 
@@ -42,6 +42,12 @@ Planet weather now includes circulation-driven cloud banks and fronts, seeded oc
 Endurance now has twelve beveled equipment modules, radiator panels, open connecting braces, engine pods and a docking spine, modelled from the supplied Sketchfab preview. [Exterior model notes](docs/ENDURANCE_MODEL.md).
 
 Distant Gargantua now uses consistent HDR disk/glow grading and native disk metering. Auto Exposure keeps the disk bright and recovers after turning away. [Distant rendering and exposure recovery](docs/DISTANT_GARGANTUA_EXPOSURE.md).
+
+## Planet surfaces and wildlife
+
+Explore Earth's mapped mountains and ocean trenches, sandy and rocky shores, and wind-driven surf. Generated worlds have layered mountains, ridges, and foothills. Close to the surface, finer terrain detail comes into view. [Earth map credits](assets/earth/CREDITS.md)
+
+Gulls, swallows, and geese flock over eligible worlds. Fish form schools, sharks hunt them, and dolphins sometimes leap above the water. Land with **L**, use **F** to dive and **R** to rise, and press **Space** to advance time.
 
 ## Startup laboratories
 
@@ -153,11 +159,11 @@ Saturn has physically scaled D/C/B/A rings, a faint F ring, the Cassini Division
 
 Solar/generated-system camera clocks include the star's potential and the smoothly summed potentials of the planets, plus carried orbital/rotation motion when landed or following. Outside the H plunge, Gargantua uses its Schwarzschild clock factor with additional weak planetary potentials. No discrete nearest-planet clock switch occurs. Free-flight navigation is treated as position changes between local reference frames; superluminal navigation speed is not a physical spacecraft velocity. These approximate many-body clock contributions do not constitute a multi-body spacetime solution.
 
-Menus are grouped under **Scene**, **Time**, **Navigation**, **View** and **Performance**. Lens, exposure and stellar controls are nested under View. The browser occupies at most 30% of the window. **Shift+F2** toggles information and **F4** toggles the side browser. F3, Shift+F3 and F1 open the dedicated navigation windows. The minimum window size is 900×640.
+Menus are grouped under **Scene**, **Time**, **Navigation**, **View** and **Performance**. Lens, exposure, stellar and weather controls are under **View**. The browser occupies at most 30% of the window. **Shift+F2** toggles information, **F4** or **Ctrl+F4** toggles the star-system browser, and **Shift+F4** toggles the current-system browser. **F3**, **Shift+F3** and **F1** open the dedicated navigation windows. The minimum window size is 900×640.
 
 The current optimized OpenGL executable is `build/current/bin/Render-Engine.exe`; DX12 is `build/dx12/Release/bin/Render-Engine-DX12.exe`. Superseded Debug builds and duplicate packages were removed after validation. Either executable accepts `--render-check <output-directory>` for opt-in scene/UI checks. CPU checks: `tests/RunSimulationChecks.cmd`. Generated outputs are ignored by Git. See [the latest validation and cleanup record](docs/ZOOM_AND_MILLION_SYSTEMS_2026-11-12.md) and [DX12 migration record](docs/DX12_MIGRATION.md).
 
-The **Performance** menu offers 30/60/120 FPS and 50/75/100% black-hole resolution choices. Defaults are **30 FPS, 50% resolution and 160 ray steps**. Paused stationary views reuse the last rendered scene instead of tracing light again. Inactive systems stay dormant; catalogue stars are uploaded once. Orbit curves/positions are cached, belt markers update only when requested and sub-pixel bodies/atmospheres are culled. OpenGL resolution scaling remains spatial. DX12 also offers experimental DLSS Super Resolution; Ray Reconstruction and frame generation are not integrated. These choices bound work; no hardware-temperature improvement is claimed without measurement.
+The **Performance** menu offers 30/60/120 FPS and 50/75/100% black-hole resolution choices. Paused stationary views reuse the last rendered scene. Inactive systems stay dormant. The engine caches catalogue stars and orbits, updates belt markers on demand, and culls subpixel bodies and atmospheres. OpenGL uses spatial resolution scaling. DX12 also offers experimental DLSS Super Resolution.
 
 **Vision / Lens** contains Off, Subtle and Standard flare settings. A tiny GPU extraction pass detects compact lights and resolved stellar disks in the final lensed scene. Human vision has diffuse irregular glare; the lens profiles have distinct diffraction, halo size/color, and analytic aperture reflections. The telephoto has long clean rays without reflection ghosts. These shapes are illustrative, not measured lens-flare calibration. Reflections are simple optical shapes, not mirrored copies of galaxies or scene images. Three galaxy appearances use the original spiral and a new barred-spiral/elliptical atlas; see [asset provenance and generation prompts](assets/README.md).
 

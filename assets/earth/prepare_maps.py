@@ -2,6 +2,7 @@
 
 import argparse
 import io
+import struct
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -12,6 +13,7 @@ import tifffile
 
 
 WIDTH, HEIGHT = 5400, 2700
+TILE = 900
 
 
 def rasterize(archive_path, elevation=None):
@@ -47,15 +49,41 @@ def rasterize(archive_path, elevation=None):
     return np.asarray(mask)
 
 
+def pack_elevation_tiles(dem, output):
+    # Each file covers a 15-degree band, ordered from south to north. Its
+    # index holds 25 little-endian offsets for the 24 longitude tiles.
+    for band in range(12):
+        start = (11 - band) * TILE
+        row = dem[start:start + TILE]
+        with (output / f"elevation-{band:02}.bin").open("wb") as file:
+            file.write(bytes(25 * 4))
+            offsets = []
+            for column in range(24):
+                offsets.append(file.tell())
+                metres = np.rint(row[:, column * TILE:(column + 1) * TILE])
+                if metres.min() < -12000 or metres.max() > 12000:
+                    raise ValueError("Elevation tile outside the encoding range.")
+                pixels = (metres + 12000).astype("<u2")
+                Image.fromarray(pixels).save(file, format="PNG", compress_level=5)
+            offsets.append(file.tell())
+            file.seek(0)
+            file.write(struct.pack("<25I", *offsets))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("sources", type=Path)
-    source = parser.parse_args().sources
+    parser.add_argument("--tiles-only", action="store_true")
+    args = parser.parse_args()
+    source = args.sources
     output = Path(__file__).parent
 
     dem = tifffile.imread(source / "etopo60-surface.tif")
     if dem.shape != (HEIGHT * 4, WIDTH * 4) or not np.isfinite(dem).all():
         raise ValueError("Expected the global 60 arc-second ETOPO surface raster.")
+    pack_elevation_tiles(dem, output)
+    if args.tiles_only:
+        return
     # Average each 4x4 block onto the aligned render grid.
     elevation = dem.reshape(HEIGHT, 4, WIDTH, 4).mean(axis=(1, 3))
     meters = np.rint(elevation).astype(np.int32)

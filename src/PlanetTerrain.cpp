@@ -17,10 +17,22 @@
 #include <glm/glm.hpp>
 #include <cmath>
 #include <cstdint>
+#include <array>
+#include <algorithm>
+#include <fstream>
+#include <optional>
 #include <glm/gtc/constants.hpp>
 
 namespace {
     constexpr float earthReliefMetres=.003f*6371008.4f;
+    constexpr int elevationTileSize=900,elevationWidth=21600,elevationHeight=10800;
+
+    glm::vec2 EarthCoordinates(const glm::vec3& n,int width,int height){
+        const float horizontal=std::sqrt(n.x*n.x+n.z*n.z);
+        const float longitude=horizontal>1e-6f?std::atan2(-n.z,n.x):0;
+        return glm::vec2((longitude/glm::two_pi<float>()+.5f)*width,
+            std::atan2(horizontal,-n.y)/glm::pi<float>()*height)-.5f;
+    }
 
     struct EarthMap {
         int width=0,height=0;
@@ -36,10 +48,8 @@ namespace {
 
         glm::vec3 Sample(const glm::vec3& n) const {
             if(!pixels)return glm::vec3(0);
-            const float horizontal=std::sqrt(n.x*n.x+n.z*n.z);
-            const float longitude=horizontal>1e-6f?std::atan2(-n.z,n.x):0;
-            const float x=(longitude/glm::two_pi<float>()+.5f)*width-.5f;
-            const float y=std::atan2(horizontal,-n.y)/glm::pi<float>()*height-.5f;
+            const auto coordinate=EarthCoordinates(n,width,height);
+            const float x=coordinate.x,y=coordinate.y;
             const int left=static_cast<int>(std::floor(x)),bottom=static_cast<int>(std::floor(y));
             const auto texel=[&](int column,int row){
                 const auto offset=(static_cast<size_t>(glm::clamp(row,0,height-1))*width+(column+width)%width)*4;
@@ -54,6 +64,63 @@ namespace {
     const EarthMap& Geography(){
         static const EarthMap map;
         return map;
+    }
+
+    struct ElevationTile {
+        int key=-1;
+        unsigned age=0;
+        std::unique_ptr<stbi_us,decltype(&stbi_image_free)> pixels{nullptr,stbi_image_free};
+
+        void Load(int column,int band){
+            key=band*24+column;
+            pixels.reset();
+            const std::string file=std::string("elevation-")+(band<10?"0":"")+std::to_string(band)+".bin";
+            std::ifstream data(PlanetTerrain::EarthAssetPath(file.c_str()),std::ios::binary|std::ios::ate);
+            if(!data)return;
+            const auto end=static_cast<std::streamoff>(data.tellg());
+            data.seekg(column*4);
+            std::array<unsigned char,8> index{};
+            if(!data.read(reinterpret_cast<char*>(index.data()),index.size()))return;
+            const auto offset=[&](int i){
+                return static_cast<std::uint32_t>(index[i])|(static_cast<std::uint32_t>(index[i+1])<<8)
+                    |(static_cast<std::uint32_t>(index[i+2])<<16)|(static_cast<std::uint32_t>(index[i+3])<<24);
+            };
+            const std::uint32_t start=offset(0),finish=offset(4);
+            if(start<100 || finish<=start || finish>end || finish-start>4*elevationTileSize*elevationTileSize)return;
+            std::vector<unsigned char> png(finish-start);
+            data.seekg(start);
+            if(!data.read(reinterpret_cast<char*>(png.data()),png.size()))return;
+            int width=0,height=0,channels=0;
+            stbi_set_flip_vertically_on_load(true);
+            pixels.reset(stbi_load_16_from_memory(png.data(),static_cast<int>(png.size()),&width,&height,&channels,1));
+            if(width!=elevationTileSize || height!=elevationTileSize || channels!=1)pixels.reset();
+        }
+    };
+
+    std::optional<int> NativeElevation(int x,int y){
+        x=(x+elevationWidth)%elevationWidth;
+        y=glm::clamp(y,0,elevationHeight-1);
+        const int column=x/elevationTileSize,band=y/elevationTileSize,key=band*24+column;
+        static thread_local std::array<ElevationTile,8> tiles;
+        static thread_local unsigned age=0;
+        auto tile=std::find_if(tiles.begin(),tiles.end(),[&](const auto& entry){return entry.key==key;});
+        if(tile==tiles.end()){
+            tile=std::min_element(tiles.begin(),tiles.end(),[](const auto& a,const auto& b){return a.age<b.age;});
+            tile->Load(column,band);
+        }
+        tile->age=++age;
+        if(!tile->pixels)return std::nullopt;
+        return static_cast<int>(tile->pixels.get()[(y%elevationTileSize)*elevationTileSize+x%elevationTileSize])-12000;
+    }
+
+    std::optional<float> DetailedEarthElevation(const glm::vec3& direction){
+        const auto position=EarthCoordinates(direction,elevationWidth,elevationHeight);
+        const glm::ivec2 cell(glm::floor(position));
+        const glm::vec2 f=position-glm::vec2(cell);
+        const auto a=NativeElevation(cell.x,cell.y),b=NativeElevation(cell.x+1,cell.y);
+        const auto c=NativeElevation(cell.x,cell.y+1),d=NativeElevation(cell.x+1,cell.y+1);
+        if(!a || !b || !c || !d)return std::nullopt;
+        return glm::mix(glm::mix(float(*a),float(*b),f.x),glm::mix(float(*c),float(*d),f.x),f.y);
     }
     float Hash(glm::vec3 cell, unsigned int seed) {
         std::uint32_t hash = seed ^ static_cast<std::uint32_t>(static_cast<int>(cell.x)) * 374761393u
@@ -105,6 +172,40 @@ namespace {
         const float basin=glm::smoothstep(.925f,.975f,n.y+.034f*n.z);
         return glm::mix(height,seaLevel-.13f,basin);
     }
+
+    float TerrainHeight(const glm::vec3& direction,unsigned seed,float seaLevel,bool earth,bool layered) {
+        auto position=direction*2.6f;
+        float continents=0,amplitude=.5f;
+        for(int octave=0;octave<5;++octave){
+            continents+=amplitude*Noise(position,seed);
+            position=position*2.03f+glm::vec3(7.1f,3.7f,1.9f);
+            amplitude*=.5f;
+        }
+        continents/=.96875f;
+        const float ridges=1-std::abs(Noise(direction*11.f+glm::vec3(13.f),seed));
+        float height=.75f*continents+.22f*(ridges*ridges-.5f)*glm::smoothstep(-.1f,.25f,continents);
+        if(layered){
+            const auto n=direction;
+            const glm::vec3 warp(Noise(n*4.4f+glm::vec3(13,35,9),seed),
+                Noise(n*4.4f+glm::vec3(51,7,29),seed),Noise(n*4.4f+glm::vec3(27,18,61),seed));
+            const float ranges=glm::smoothstep(-.13f,.38f,continents)*
+                glm::smoothstep(-.36f,.38f,Noise(n*6.3f+glm::vec3(29,12,53),seed));
+            auto ridgePoint=n*13.f+warp*1.85f+glm::vec3(7,43,18);
+            float ridgeStack=0,weight=.61f;
+            for(int octave=0;octave<4;++octave){
+                const float crest=1-std::abs(Noise(ridgePoint,seed));
+                ridgeStack+=weight*crest*crest*crest;
+                ridgePoint=ridgePoint*2.07f+glm::vec3(21,3,16);
+                weight*=.43f;
+            }
+            const float hills=.68f*Noise(n*27.f+warp*1.2f+glm::vec3(18,11,6),seed)
+                +.23f*Noise(n*58.f+glm::vec3(8,17,41),seed)+.09f*Noise(n*124.f+glm::vec3(31,4,17),seed);
+            const float localHills=.017f*Noise(n*320.f+glm::vec3(3,81,42),seed)
+                +.0055f*Noise(n*960.f+glm::vec3(14,31,7),seed);
+            height=.75f*continents+.44f*ranges*(ridgeStack-.23f)+(.047f+.055f*ranges)*hills+localHills;
+        }
+        return earth?EarthPolarHeight(direction,seed,height,seaLevel):height;
+    }
 }
 
 std::filesystem::path PlanetTerrain::EarthAssetPath(const char* filename){
@@ -122,7 +223,11 @@ std::filesystem::path PlanetTerrain::EarthAssetPath(const char* filename){
 
 bool PlanetTerrain::HasEarthMap(){return bool(Geography().pixels);}
 
-glm::vec3 PlanetTerrain::EarthGeography(const glm::vec3& direction){return Geography().Sample(direction);}
+glm::vec3 PlanetTerrain::EarthGeography(const glm::vec3& direction,bool detailed){
+    auto geography=Geography().Sample(direction);
+    if(detailed && geography.z<.5f)geography.x=DetailedEarthElevation(direction).value_or(geography.x);
+    return geography;
+}
 
 unsigned PlanetTerrain::LoadEarthReliefTexture(){
     const auto& map=Geography();
@@ -138,18 +243,62 @@ unsigned PlanetTerrain::LoadEarthReliefTexture(){
     return texture;
 }
 
+void PlanetTerrain::BindEarthReliefDetail(unsigned program,const glm::vec3& direction,unsigned& texture,glm::ivec2& origin){
+    constexpr int window=384, stride=128;
+    const glm::vec2 coords=EarthCoordinates(direction,elevationWidth,elevationHeight);
+    glm::ivec2 next(glm::floor(coords/static_cast<float>(stride))*static_cast<float>(stride)-static_cast<float>(stride));
+    next.y=glm::clamp(next.y,0,elevationHeight-window);
+    glActiveTexture(GL_TEXTURE6);
+    if(!texture || next!=origin){
+        if(!texture)glGenTextures(1,&texture);
+        origin=next;
+        std::vector<unsigned char> rgba(window*window*4,0);
+        for(int y=0;y<window;++y)for(int x=0;x<window;++x){
+            const auto elevation=NativeElevation(origin.x+x,origin.y+y);
+            if(!elevation)continue;
+            const int encoded=*elevation+12000;
+            const size_t pixel=(static_cast<size_t>(y)*window+x)*4;
+            rgba[pixel]=static_cast<unsigned char>(encoded>>8);
+            rgba[pixel+1]=static_cast<unsigned char>(encoded&255);
+            rgba[pixel+3]=255;
+        }
+        glBindTexture(GL_TEXTURE_2D,texture);
+        glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,window,window,0,GL_RGBA,GL_UNSIGNED_BYTE,rgba.data());
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    }else glBindTexture(GL_TEXTURE_2D,texture);
+    glUniform1i(glGetUniformLocation(program,"earthDetailMap"),6);
+    glUniform2f(glGetUniformLocation(program,"earthDetailOrigin"),static_cast<float>(origin.x),static_cast<float>(origin.y));
+    glUniform1i(glGetUniformLocation(program,"earthDetailed"),true);
+    glActiveTexture(GL_TEXTURE0);
+}
+
 float PlanetTerrain::ArcticWinter(double seconds) {
     const double year=365.2422*Astronomy::secondsPerDay;
     return static_cast<float>(.5+.5*std::cos(glm::two_pi<double>()*std::remainder(seconds/year-.20,1.0)));
 }
 
 float PlanetTerrain::WaterCoverage(const glm::vec3& n,unsigned seed,float height,float seaLevel,bool earth,float winter) {
-    const auto map=earth && HasEarthMap()?EarthGeography(n):glm::vec3(0);
+    const auto map=earth && HasEarthMap()?Geography().Sample(n):glm::vec3(0);
     const float water=earth && HasEarthMap()?glm::smoothstep(.35f,.65f,std::max(map.y,map.z)):
         1-glm::smoothstep(seaLevel-.008f,seaLevel+.008f,height);
     if(!earth || n.y<=.90f)return water;
     const float edge=glm::mix(.977f,.944f,winter)+.026f*n.x-.016f*n.z+.007f*Noise(n*58.f,seed);
     return water*(1-glm::smoothstep(edge-.010f,edge+.009f,n.y));
+}
+
+float PlanetTerrain::WaterDepthMetres(const glm::vec3& direction,unsigned seed,float seaLevel,double radiusMetres,
+    bool earth,float winter,bool layeredTerrain) {
+    if(earth && HasEarthMap()){
+        const auto map=EarthGeography(direction);
+        if(WaterCoverage(direction,seed,0,seaLevel,true,winter)<=.5f)return 0;
+        if(map.z>.5f)return glm::mix(.5f,18.f,glm::smoothstep(.5f,1.f,map.z));
+        return std::max(.25f,-map.x);
+    }
+    if(seaLevel<=-1)return 0;
+    const float height=TerrainHeight(direction,seed,seaLevel,earth,layeredTerrain);
+    if(height>=seaLevel || WaterCoverage(direction,seed,height,seaLevel,earth,winter)<=.5f)return 0;
+    return static_cast<float>((seaLevel-height)*.003f*radiusMetres);
 }
 
 std::vector<glm::vec3> PlanetTerrain::SpherePatch(const glm::vec3& direction,int segments) {
@@ -165,7 +314,7 @@ std::vector<glm::vec3> PlanetTerrain::SpherePatch(const glm::vec3& direction,int
 }
 
 float PlanetTerrain::SurfaceElevation(const glm::vec3& direction,unsigned int seed,float wavePhase,
-    float seaLevel,float relief,float waves,bool oceanOnly,const PlanetWeather::State* weather,bool earth,float arcticWinter) {
+    float seaLevel,float relief,float waves,bool oceanOnly,const PlanetWeather::State* weather,bool earth,float arcticWinter,bool layeredTerrain) {
     const float wave = (std::sin(35.0f * direction.y + 4.0f * std::sin(10.0f * direction.x) + wavePhase)
         + 0.35f * std::sin(80.0f * direction.y + 8.0f * direction.x - wavePhase)) / 1.35f;
     const float waveElevation=weather && weather->parameters.w>0
@@ -173,22 +322,10 @@ float PlanetTerrain::SurfaceElevation(const glm::vec3& direction,unsigned int se
     if(oceanOnly)return waveElevation;
     if(earth && HasEarthMap()){
         const auto map=EarthGeography(direction);
-        const float height=std::max(0.f,map.x)*(1-map.y)/earthReliefMetres;
+        const float height=map.x*(1-glm::smoothstep(.05f,.5f,map.y))/earthReliefMetres;
         return relief*height+WaterCoverage(direction,seed,height,seaLevel,true,arcticWinter)*waveElevation;
     }
-    auto position = direction * 2.6f;
-    float continents = 0.0f;
-    float amplitude = 0.5f;
-    for (int octave = 0; octave < 5; ++octave) {
-        continents += amplitude * Noise(position, seed);
-        position = position * 2.03f + glm::vec3(7.1f, 3.7f, 1.9f);
-        amplitude *= 0.5f;
-    }
-    continents /= 0.96875f;
-    const float ridges = 1.0f - std::abs(Noise(direction * 11.0f + glm::vec3(13.0f), seed));
-    float height = 0.75f * continents + 0.22f * (ridges * ridges - 0.5f)
-        * glm::smoothstep(-0.1f, 0.25f, continents);
-    if(earth)height=EarthPolarHeight(direction,seed,height,seaLevel);
+    const float height=TerrainHeight(direction,seed,seaLevel,earth,layeredTerrain);
     const float water=WaterCoverage(direction,seed,height,seaLevel,earth,arcticWinter);
     return relief * glm::max(height, seaLevel) + water * waveElevation;
 }
@@ -208,7 +345,7 @@ std::vector<glm::vec3> PlanetTerrain::SurfaceLodVertices(double radiusMetres) {
     int level=0;
     while(start<outer){
         const double finish=std::min(outer,start*2);
-        const int segments=std::max(16,128>>std::min(level,3));
+        const int segments=std::max(96,128>>std::min(level,1));
         for(int i=1;i<=8;++i)rings.push_back({start+(finish-start)*i/8,segments});
         start=finish;++level;
     }
@@ -278,6 +415,10 @@ uniform float seaLevel;
 uniform bool earthPoles;
 uniform bool earthMapped;
 uniform sampler2D earthReliefMap;
+uniform sampler2D earthDetailMap;
+uniform bool earthDetailed;
+uniform vec2 earthDetailOrigin;
+uniform bool layeredTerrain;
 uniform float arcticWinter;
 uniform float terrainRelief;
 uniform float waterWaveHeight;
@@ -352,9 +493,12 @@ float antarcticCoast(vec3 n){
 }
 
 float earthMapAtan2(float y,float x){
-    // Use the single-argument arctangent with explicit quadrant correction.
-    // This keeps the atlas coordinates stable at the poles and antimeridian.
-    float angle=atan(abs(y)/max(abs(x),1e-20));
+    vec2 firstQuadrant=abs(vec2(x,y));
+    float angle=atan(firstQuadrant.y/max(firstQuadrant.x,1e-20));
+    // Correct the backend's initial angle with the sine of its residual.
+    // Even a small error can move a sample several metres on steep terrain.
+    float inverseLength=inversesqrt(max(dot(firstQuadrant,firstQuadrant),1e-20));
+    angle+=(firstQuadrant.y*cos(angle)-firstQuadrant.x*sin(angle))*inverseLength;
     angle=mix(angle,3.14159265359-angle,float(x<0.0));
     return mix(angle,-angle,float(y<0.0));
 }
@@ -380,16 +524,72 @@ vec4 earthGeography(vec3 n){
                mix(texelFetch(earthReliefMap,ivec2(lower.x,upper.y),0),texelFetch(earthReliefMap,upper,0),f.x),f.y);
 }
 
+float earthElevationMetres(vec4 geography){
+    return dot(geography.rg,vec2(65280.0,255.0))-12000.0;
+}
+
+float earthMappedElevation(vec3 n,vec4 geography){
+    float coarse=earthElevationMetres(geography);
+    if(!earthDetailed || geography.a>=.5)return coarse;
+    vec2 coordinate=earthMapUv(n)*vec2(21600.0,10800.0)-.5;
+    coordinate.y=clamp(coordinate.y,0.0,10799.0);
+    vec2 p=coordinate-earthDetailOrigin;
+    p.x=mod(p.x,21600.0);
+    vec2 limit=vec2(textureSize(earthDetailMap,0))-1.0;
+    if(any(lessThan(p,vec2(0))) || any(greaterThan(p,limit)))return coarse;
+    ivec2 cell=ivec2(p);
+    ivec2 next=min(cell+1,ivec2(limit));
+    vec4 a=texelFetch(earthDetailMap,cell,0),b=texelFetch(earthDetailMap,ivec2(next.x,cell.y),0);
+    vec4 c=texelFetch(earthDetailMap,ivec2(cell.x,next.y),0),d=texelFetch(earthDetailMap,next,0);
+    if(min(min(a.a,b.a),min(c.a,d.a))<.5)return coarse;
+    vec2 f=fract(p);
+    float detail=mix(mix(earthElevationMetres(a),earthElevationMetres(b),f.x),
+        mix(earthElevationMetres(c),earthElevationMetres(d),f.x),f.y);
+    vec2 edge=min(p,limit-p);
+    // Fade the streamed window into the orbital surface. At the poles, retain
+    // the last latitude row instead of introducing an artificial map border.
+    if((earthDetailOrigin.y==0.0 && p.y<24.0) ||
+       (earthDetailOrigin.y+limit.y>=10799.0 && limit.y-p.y<24.0))edge.y=24.0;
+    return mix(coarse,detail,smoothstep(0.0,24.0,min(edge.x,edge.y)));
+}
+
+float liquidDepthMetres(vec3 direction,float height,float radiusMetres){
+    if(earthMapped){
+        vec4 geography=earthGeography(direction);
+        // The atlas stores inland water at its surface level.
+        if(geography.a>.5)return mix(.5,18.0,smoothstep(.5,1.0,geography.a));
+        return max(.25,-earthMappedElevation(direction,geography));
+    }
+    return max(.25,(seaLevel-height)*terrainRelief*radiusMetres);
+}
+
 float terrainHeight(vec3 direction) {
     if(earthMapped){
         vec4 earth=earthGeography(direction);
-        float height=dot(earth.rg,vec2(65280.0,255.0))-12000.0;
-        return max(0.0,height)*(1.0-earth.b)/(.003*6371008.4);
+        return earthMappedElevation(direction,earth)*(1.0-smoothstep(.05,.5,earth.b))/(.003*6371008.4);
     }
     float continents = terrainFbm(direction * 2.6);
     float ridges = 1.0 - abs(terrainNoise(direction * 11.0 + vec3(13.0)));
     float height=0.75 * continents + 0.22 * (ridges * ridges - 0.5)
         * smoothstep(-0.1, 0.25, continents);
+    if(layeredTerrain){
+        vec3 n=direction;
+        vec3 warp=vec3(terrainNoise(n*4.4+vec3(13,35,9)),terrainNoise(n*4.4+vec3(51,7,29)),
+            terrainNoise(n*4.4+vec3(27,18,61)));
+        float ranges=smoothstep(-.13,.38,continents)*smoothstep(-.36,.38,terrainNoise(n*6.3+vec3(29,12,53)));
+        vec3 ridgePoint=n*13.0+warp*1.85+vec3(7,43,18);
+        float ridgeStack=0.0,weight=.61;
+        for(int octave=0;octave<4;++octave){
+            float crest=1.0-abs(terrainNoise(ridgePoint));
+            ridgeStack+=weight*crest*crest*crest;
+            ridgePoint=ridgePoint*2.07+vec3(21,3,16);
+            weight*=.43;
+        }
+        float hills=.68*terrainNoise(n*27.0+warp*1.2+vec3(18,11,6))
+            +.23*terrainNoise(n*58.0+vec3(8,17,41))+.09*terrainNoise(n*124.0+vec3(31,4,17));
+        float localHills=.017*terrainNoise(n*320.0+vec3(3,81,42))+.0055*terrainNoise(n*960.0+vec3(14,31,7));
+        height=.75*continents+.44*ranges*(ridgeStack-.23)+(.047+.055*ranges)*hills+localHills;
+    }
     if(!earthPoles)return height;
     if(direction.y<-.80){
         float coast=antarcticCoast(direction);
@@ -423,18 +623,26 @@ float oceanWave(vec3 direction, float phase) {
 
 vec3 planetSurface(vec3 direction, float height, float phase) {
     float water=liquidCoverage(direction,height);
-    return direction*(1.0+terrainRelief*max(height,seaLevel)+water*waterWaveHeight*oceanWave(direction,phase));
+    return direction*(1.0+terrainRelief*(earthMapped?height:max(height,seaLevel))+water*waterWaveHeight*oceanWave(direction,phase));
 }
 
 float surfaceElevation(vec3 direction,float height,float phase,bool oceanOnly){
     float water=oceanOnly?1.0:liquidCoverage(direction,height);
-    return (oceanOnly?0.0:terrainRelief*max(height,seaLevel))+water*waterWaveHeight*oceanWave(direction,phase);
+    return (oceanOnly?0.0:terrainRelief*(earthMapped?height:max(height,seaLevel)))+water*waterWaveHeight*oceanWave(direction,phase);
+}
+
+float seabedElevation(vec3 direction,float height,float radiusMetres){
+    float elevation=terrainRelief*(earthMapped?height:max(height,seaLevel));
+    if(liquidCoverage(direction,height)>.5)
+        elevation-=liquidDepthMetres(direction,height,radiusMetres)/radiusMetres;
+    return elevation;
 }
 )";
     return source.c_str();
 }
 const char* PlanetTerrain::SurfaceDetailShaderFunctions(){
     static const std::string source=std::string(PlanetWeather::SurfaceShaderFunctions())+R"(
+uniform float groundClearanceMetres;
 float groundNoise(vec3 p){
     vec3 cell=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);
     float a=mix(mix(terrainHash(mod(cell,256.0)),terrainHash(mod(cell+vec3(1,0,0),256.0)),f.x),
@@ -443,6 +651,16 @@ float groundNoise(vec3 p){
                 mix(terrainHash(mod(cell+vec3(0,1,1),256.0)),terrainHash(mod(cell+vec3(1,1,1),256.0)),f.x),f.y);
     return mix(a,b,f.z);
 }
+vec2 groundMicrostructure(vec3 p,float footprint,float clearance){
+    float nearWeight=1.0-smoothstep(18.0,25.0,clearance);
+    if(nearWeight<=0.0 || footprint>=.10)return vec2(0);
+    vec3 frequency=vec3(8.0,32.0,64.0);
+    vec3 octaveWeight=1.0-smoothstep(vec3(.26),vec3(.66),footprint*frequency);
+    vec3 layers=vec3(groundNoise(p*frequency.x+vec3(29,7,61)),
+        groundNoise(p*frequency.y+vec3(4,57,18)),groundNoise(p*frequency.z+vec3(19,3,35)))-.5;
+    layers*=octaveWeight*nearWeight;
+    return vec2(dot(layers,vec3(.013,.0045,.0012)),dot(layers,vec3(.29,.25,.14)));
+}
 void groundDetail(inout vec3 material,inout vec3 normal,vec3 delta,float water,float cameraDistance,float phase){
     if(!patchDrawing || cameraDistance>=100.0)return;
     float fade=1.0-smoothstep(80.0,100.0,cameraDistance);
@@ -450,7 +668,8 @@ void groundDetail(inout vec3 material,inout vec3 normal,vec3 delta,float water,f
     float footprint=max(length(dFdx(p)),length(dFdy(p)));
     float fine=1.0-smoothstep(.35,.8,footprint*16.0);
     float grain=groundNoise(p*16.0),pebbles=groundNoise(p*2.0),strata=groundNoise(p*.25);
-    float height=(pebbles*.035+strata*.10+grain*.006*fine)*(1.0-water);
+    vec2 micro=groundMicrostructure(p,footprint,groundClearanceMetres);
+    float height=(pebbles*.035+strata*.10+grain*.006*fine+micro.x)*(1.0-water);
     if(water>.5 && weatherParameters.w>0.0){
         normal=normalize(normal-weatherWaveGradient(p,normal,true)*fade);
         return;
@@ -463,7 +682,7 @@ void groundDetail(inout vec3 material,inout vec3 normal,vec3 delta,float water,f
         vec3 gradient=sign(determinant)*(dFdx(height)*r1+dFdy(height)*r2);
         normal=normalize(abs(determinant)*normal-gradient*fade);
     }
-    float variation=.70+.32*pebbles+.18*strata+.08*(grain-.5)*fine;
+    float variation=.70+.32*pebbles+.18*strata+.08*(grain-.5)*fine+micro.y;
     material*=mix(1.0,variation,fade*(1.0-water));
 }
 )";

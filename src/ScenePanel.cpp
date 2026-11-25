@@ -121,8 +121,13 @@ void ScenePanel::RefreshVisibility() {
 }
 
 void ScenePanel::ToggleBrowser(bool local) {
-    browserVisible=!(visible && browserVisible && currentSystemOnly==local);
-    currentSystemOnly=local; visible=true;
+    const bool show=!(IsBrowserVisible() && currentSystemOnly==local);
+    visible=true;
+    SetBrowser(local,show);
+}
+void ScenePanel::SetBrowser(bool local,bool show) {
+    browserVisible=show;
+    currentSystemOnly=local;
     SetTitle(local?"Current system (Shift+F4)":"All star systems (F4)");
 #ifdef _WIN32
     if(parent){RECT rect;GetClientRect(static_cast<HWND>(parent),&rect);Resize(rect.right,rect.bottom);}

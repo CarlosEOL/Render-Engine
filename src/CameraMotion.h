@@ -17,11 +17,14 @@ struct SurfaceAnchor {
     void Set(const glm::dmat3& rotation,const glm::dvec3& offset,const glm::vec3& front);
     void CaptureLook(const glm::dmat3& rotation,const glm::vec3& front);
     void Walk(const glm::dmat3& rotation,const glm::dvec3& displacement);
+    void SetSurfaceRadius(double surfaceRadiusAu,double waterDepthMetres,double descentDeltaMetres=0);
+    double DepthBelowWater() const;
     void Place(const glm::dmat3& rotation,const glm::dvec3& centre,
         glm::dvec3& position,glm::vec3& front,glm::vec3& up);
 
 private:
     glm::dvec3 localFront{0,0,-1};
     glm::vec3 lastWorldFront{0,0,-1};
+    double descentMetres=0;
 };
 } // namespace CameraMotion

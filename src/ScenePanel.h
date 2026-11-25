@@ -10,7 +10,8 @@ class ScenePanel
     void Resize(int width, int height);
     void Toggle();
     void ToggleBrowser(bool currentSystemOnly);
-    void ShowBrowser(bool local) { browserVisible=false; ToggleBrowser(local); }
+    void SetBrowser(bool local, bool show);
+    bool IsBrowserVisible() const { return visible && browserVisible; }
     bool IsCurrentSystemBrowser() const { return currentSystemOnly; }
     void ToggleInformation();
     void SetCurrentSystemName(const std::string& name);
@@ -37,7 +38,7 @@ class ScenePanel
 
   private:
     bool visible = true;
-    bool browserVisible = true;
+    bool browserVisible = false;
     bool informationVisible = true;
     bool currentSystemOnly = true;
     void RefreshVisibility();

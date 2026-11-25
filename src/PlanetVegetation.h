@@ -34,7 +34,7 @@ float vegetationMoisture(vec3 n,float seed){
         Habitat h;if(!p.life || p.radiusMetres<1000)return h;
         const auto n=glm::normalize(glm::vec3(direction));
         // Relief one gives the same clamped terrain height used by the material.
-        const float height=PlanetTerrain::SurfaceElevation(n,p.seed,0,p.seaLevel,1,0,false,nullptr,p.earthPoles);
+        const float height=PlanetTerrain::SurfaceElevation(n,p.seed,0,p.seaLevel,1,0,false,nullptr,p.earthPoles,0,!p.earthPoles);
         h.elevation=height*.003f;
         if(p.earthPoles && (n.y>.90f || n.y<-.84f))return h;
         const double altitude=(height-p.seaLevel)*.003*p.radiusMetres;
@@ -42,7 +42,7 @@ float vegetationMoisture(vec3 n,float seed){
         const float moisture=.53f+.22f*std::sin(n.x*13+p.seed*.001f)*std::cos(n.z*17-p.seed*.0007f)
             +.12f*std::sin(n.y*31+n.z*8)-.16f*std::exp(-std::pow((std::abs(n.y)-.43f)/.12f,2));
         const bool mapped=p.earthPoles && PlanetTerrain::HasEarthMap();
-        const auto geography=mapped?PlanetTerrain::EarthGeography(n):glm::vec3(0);
+        const auto geography=mapped?PlanetTerrain::EarthGeography(n,false):glm::vec3(0);
         const bool dryLand=mapped?std::max(geography.y,geography.z)<.15f:height>p.seaLevel+.006f;
         h.suitable=dryLand && height<std::max(.18f,p.seaLevel+.11f)
             && altitude<2200 && temperature>265 && temperature<312 && moisture>.30f;

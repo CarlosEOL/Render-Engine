@@ -194,7 +194,7 @@ void StarSystem::LoadSolarSystem()
         body.gas = d.gas;
         body.atmosphere = d.atmosphere;
         body.magneticField=index==0 || index==2 || (index>=4 && index<=7);
-        body.life=index==2;
+        body.life=index==2?Planet::Life::Multicellular:Planet::Life::None;
         body.earthPoles=index==2;
         if(body.earthPoles && PlanetTerrain::HasEarthMap())body.seaLevel=0;
         body.color = d.color;

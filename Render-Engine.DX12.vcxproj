@@ -43,6 +43,7 @@ copy /Y "$(ProjectDir)assets\galactic\milky-way-nasa.jpg" "$(OutDir)assets\galac
 copy /Y "$(ProjectDir)assets\galactic\CREDITS.md" "$(OutDir)assets\galactic\CREDITS.md" &gt;nul
 if not exist "$(OutDir)assets\earth" mkdir "$(OutDir)assets\earth"
 copy /Y "$(ProjectDir)assets\earth\earth-relief.png" "$(OutDir)assets\earth\earth-relief.png" &gt;nul
+copy /Y "$(ProjectDir)assets\earth\elevation-*.bin" "$(OutDir)assets\earth\" &gt;nul
 copy /Y "$(ProjectDir)assets\earth\earth-color.jpg" "$(OutDir)assets\earth\earth-color.jpg" &gt;nul
 copy /Y "$(ProjectDir)assets\earth\CREDITS.md" "$(OutDir)assets\earth\CREDITS.md" &gt;nul
 copy /Y "$(ProjectDir)..\External_Lib\build\ShaderTranslator\Release\ShaderTranslator.dll" "$(OutDir)" &gt;nul

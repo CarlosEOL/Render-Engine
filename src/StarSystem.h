@@ -4,6 +4,8 @@
 #include "SaturnRings.h"
 #include "KerrWormhole.h"
 #include "PlanetVegetation.h"
+#include "PlanetBirds.h"
+#include "OceanFish.h"
 #include "CameraMotion.h"
 #include "WormholeSky.h"
 #include "OrbitalMechanics.h"
@@ -34,6 +36,7 @@ class StarSystem
     struct Planet
     {
         enum class Palette { Climate, Lunar };
+        enum class Life { None, Microbial, Multicellular };
         std::string name;
         std::string classification;
         OrbitalMechanics::Orbit orbit;
@@ -51,8 +54,12 @@ class StarSystem
         Palette palette = Palette::Climate;
         bool wormhole = false;
         bool metalCore = true,magneticField = false;
-        bool life = false;
+        Life life = Life::None;
         bool earthPoles = false;
+        bool HasMulticellularLife() const {return life==Life::Multicellular;}
+        bool HasSurfaceLiquid() const {
+            return !gas && !wormhole && palette==Palette::Climate && (earthPoles || seaLevel>-1);
+        }
     };
 
     static Star DescribeStar(int id, const std::string &name);
@@ -65,12 +72,17 @@ class StarSystem
     void SetStellarCorona(bool enabled) {stellarActivity.SetCoronaEnabled(enabled);}
     void SetEarthClouds(bool enabled){earthCloudsEnabled=enabled;}
     void SetOceanReflections(bool enabled){oceanReflectionsEnabled=enabled;}
+    void SetWaterRefraction(bool enabled){waterRefractionEnabled=enabled;}
+    void SetEarthShoreDetail(bool enabled){earthShoreDetail=enabled;}
     void SetWeather(float windScale,float stormScale){weatherWindScale=windScale;weatherStormScale=stormScale;}
     void SetWeatherEnabled(bool enabled){weatherEnabled=enabled;}
     void SetAurorasEnabled(bool enabled){aurorasEnabled=enabled;}
     void SetVegetationEnabled(bool enabled){vegetationEnabled=enabled;}
     size_t VisibleTrees() const {return vegetation.LastTrees();}
     size_t VisibleGrassSprites() const {return vegetation.LastGrass();}
+    std::size_t VisibleBirds() const {return birds.VisibleCount();}
+    unsigned VisibleBirdSpecies() const {return birds.VisibleSpecies();}
+    void SetBirdsEnabled(bool value){birdsEnabled=value;}
     PlanetWeather::State WeatherState(int planet,double seconds) const;
     glm::dmat3 WeatherFrame(int planet,double seconds) const {return RotationDouble(planet,seconds);}
     void SetWormholeEnabled(bool enabled){wormhole.SetEnabled(enabled);}
@@ -83,6 +95,14 @@ class StarSystem
     void Release();
     void Update(double seconds, glm::vec3 &front, glm::vec3 &up);
     void Move(GLFWwindow *window, float realSeconds, glm::vec3 &front, glm::vec3 &up);
+    void MoveOnSurface(const glm::dvec3& displacementAu,double descentMetres,glm::vec3& front,glm::vec3& up);
+    double DepthBelowWater() const {return landed?landing.DepthBelowWater():0;}
+    bool CanDive() const {return landed && landingWaterDepth>.40;}
+    size_t VisibleFish() const {return fish.LastDrawn();}
+    size_t VisibleSharks() const {return fish.LastSharks();}
+    size_t VisibleDolphins() const {return fish.LastDolphins();}
+    unsigned FishCaught() const {return fish.FishCaught();}
+    void SetFishEnabled(bool value){fishEnabled=value;}
     void Render(float fieldOfView, float aspect, const glm::vec3 &front, const glm::vec3 &up, double seconds,
                 bool trajectories, bool photonView, bool showSelection = true, unsigned int wormholeSky = 0);
     void RenderOverlays(float fieldOfView,float aspect,const glm::vec3& front,const glm::vec3& up,
@@ -143,7 +163,8 @@ class StarSystem
     glm::mat4 Rotation(int planet, double seconds) const;
     glm::dmat3 RotationDouble(int planet, double seconds) const;
     double SurfaceRadius(int planet, const glm::dvec3 &direction, double seconds) const;
-    void UpdateLandingRadius();
+    double WaterDepth(int planet,const glm::vec3& localDirection,double seconds) const;
+    void UpdateLandingRadius(double seconds,double descentMetres=0);
     void UpdatePatch(const glm::dvec3 &direction,double radiusMetres);
     void BindEarthMaps() const;
     Star star;
@@ -153,8 +174,12 @@ class StarSystem
     bool earthCloudsEnabled=true;
     bool earthMapsLoaded=false;
     unsigned earthReliefTexture=0,earthColorTexture=0;
+    unsigned earthDetailTexture=0;
+    glm::ivec2 earthDetailOrigin{0};
     bool weatherEnabled=true;
     bool oceanReflectionsEnabled=true;
+    bool waterRefractionEnabled=true;
+    bool earthShoreDetail=true;
     float weatherWindScale=1,weatherStormScale=1;
     bool aurorasEnabled=true;
     bool vegetationEnabled=true;
@@ -171,6 +196,10 @@ class StarSystem
     int selected = -1;
     int landedPlanet = -1;
     CameraMotion::SurfaceAnchor landing;
+    double landingWaterDepth=0;
+    bool fishEnabled=true;
+    bool birdsEnabled=true;
+    int wildlifePlanet=-1;
     bool landed = false;
     bool following = false;
     bool followingRotation = false;
@@ -191,4 +220,6 @@ class StarSystem
     KerrWormhole wormhole;
     WormholeSkyCache wormholeSkyCache;
     PlanetVegetation vegetation;
+    OceanFish fish;
+    PlanetBirds birds;
 };

@@ -89,6 +89,27 @@ std::vector<NavigationEntry> NavigationCatalog::Bodies(int id,double seconds){
                 region.color={.69f,.84f,.96f};
                 out.push_back(region);
             }
+            struct Landmark {const char* key;const char* name;double latitude,longitude;NavigationEntry::SurfaceView view;};
+            const Landmark landmarks[]={
+                {"everest","Mount Everest",27.9881,86.9253,NavigationEntry::SurfaceView::Terrain},
+                {"black-hills","Black Hills",43.866,-103.532,NavigationEntry::SurfaceView::Terrain},
+                {"mariana-trench","Mariana Trench",11.3693,142.5889,NavigationEntry::SurfaceView::Seafloor},
+                {"puerto-rico-trench","Puerto Rico Trench",19.70,-67.30,NavigationEntry::SurfaceView::Seafloor},
+                {"tonga-trench","Tonga Trench",-23.255,-174.726,NavigationEntry::SurfaceView::Seafloor}
+            };
+            for(const auto& site:landmarks){
+                NavigationEntry region;
+                region.kind=Kind::SurfaceRegion;region.system=id;region.body=i;
+                region.key=e.key+"/"+site.key;region.parentKey=e.key;region.parent=body.name;
+                region.name=site.name;region.surfaceView=site.view;
+                region.type=site.view==NavigationEntry::SurfaceView::Seafloor?"Ocean trench / seafloor":"Earth terrain";
+                const double lat=glm::radians(site.latitude),lon=glm::radians(site.longitude);
+                region.surfaceNormal={std::cos(lat)*std::cos(lon),std::sin(lat),-std::cos(lat)*std::sin(lon)};
+                region.anchorAu=e.anchorAu;
+                region.localAu=e.localAu+model.WeatherFrame(i,seconds)*region.surfaceNormal*(body.radiusEarth*Astronomy::earthRadiusAu);
+                region.color=site.view==NavigationEntry::SurfaceView::Seafloor?glm::vec3(.18,.65,.82):glm::vec3(.85,.81,.66);
+                out.push_back(region);
+            }
         }
     }
     for(auto& body:out)body.satelliteCount=static_cast<int>(std::count_if(out.begin(),out.end(),[&](const auto& child){return child.kind==Kind::Planet && child.parentKey==body.key;}));

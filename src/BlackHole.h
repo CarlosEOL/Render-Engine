@@ -94,6 +94,7 @@ public:
     static glm::mat4 PlanetRotation(double seconds,int planet=0);
     static glm::dmat3 PlanetRotationDouble(double seconds,int planet);
     static double PlanetLandingRadius(const glm::dvec3& direction,int planet);
+    static constexpr double MillerOceanDepthMetres=700.0;
     static double GravityParameter() { return Astronomy::gargantuaGravityAu; }
     static float HorizonRadius() { return static_cast<float>(Astronomy::gargantuaHorizonAu); }
     void Update(double seconds);
@@ -116,7 +117,9 @@ public:
     void SetPhotonView(bool enabled, const glm::dvec3& detector) { photonView = enabled; photonDetector = detector; }
     void Render(const glm::mat4& viewProjection, const glm::dvec3& cameraPosition, double seconds,
                 const glm::vec3& observerVelocity = glm::vec3(0.0f), bool trajectories = true, int selected = -1,int interiorVehicle=0,
-                const glm::vec3& physicalObserverBeta=glm::vec3(0),bool physicalObserver=false) const;
+                const glm::vec3& physicalObserverBeta=glm::vec3(0),bool physicalObserver=false,
+                bool captureDiskForeground=false,float depthBelowMiller=0) const;
+    unsigned int DiskForegroundTexture() const { return atmosphere.DiskForegroundTexture(); }
     void Release();
 
 private:

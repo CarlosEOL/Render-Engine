@@ -6,6 +6,7 @@
 #include <vector>
 struct NavigationEntry {
     enum class Kind {Universe,Galaxy,Star,Planet,Core,Craft,Asteroid,Barycentre,Group,Nebula,SurfaceRegion};
+    enum class SurfaceView {Orbit,Terrain,Seafloor};
     Kind kind=Kind::Star;
     bool wormhole=false;
     int system=-2,body=-1,planetCount=-1,satelliteCount=0;
@@ -14,6 +15,7 @@ struct NavigationEntry {
     // camera into a cosmological floating-point world coordinate.
     glm::dvec3 anchorAu=glm::dvec3(0),localAu=glm::dvec3(0);
     glm::dvec3 surfaceNormal{0};
+    SurfaceView surfaceView=SurfaceView::Orbit;
     glm::vec3 color=glm::vec3(.7f);
     double diameterKm=0,temperature=0,luminosity=0,massEarth=0,distanceAu=0;
     double Distance(const glm::dvec3& anchor,const glm::dvec3& local) const {

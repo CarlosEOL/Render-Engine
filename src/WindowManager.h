@@ -81,6 +81,8 @@ private:
     void UpdateTitle();
     void ResetView();
     void ToggleLanding();
+    void MoveOnPlanetSurface(const glm::dvec3& displacementAu,double descentMetres);
+    double DepthBelowWater() const;
     void UpdateObserver(double previousTime, float realSeconds);
     void UpdateBlackHoleJourney(const glm::dvec3& previousCamera,float realSeconds);
     bool InTesseractRoom() const;
@@ -121,7 +123,7 @@ private:
     void ActivateNavigation(NavigationPanel::Action action,const NavigationEntry& entry);
     void GoToNavigation(const NavigationEntry& entry);
     void UpdateNavigationAnchor();
-    int frameLimit = 30;
+    int frameLimit = 60;
     float blackHoleResolution = .5f;
     bool adaptiveBlackHoleQuality=true;
     double lastBlackHoleCameraChange=-1e30;

@@ -183,6 +183,7 @@
     <ClCompile Include="src\ExposureMeter.cpp" />
     <ClCompile Include="src\GalaxyBackground.cpp" />
     <ClCompile Include="src\StarSystem.cpp" />
+    <ClCompile Include="src\PlanetBirds.cpp" />
     <ClCompile Include="src\StellarActivity.cpp" />
     <ClCompile Include="src\ControlsPanel.cpp" />
     <ClCompile Include="src\NavigationCatalog.cpp" />
@@ -207,6 +208,7 @@
     <ClInclude Include="src\BlackHole.h" />
     <ClInclude Include="src\OrbitalMechanics.h" />
     <ClInclude Include="src\PlanetTerrain.h" />
+    <ClInclude Include="src\PlanetBirds.h" />
     <ClInclude Include="src\UniverseCatalog.h" />
     <ClInclude Include="src\MilkyWayModel.h" />
     <ClInclude Include="src\GalacticCore.h" />
@@ -258,6 +260,7 @@ copy /Y "$(ProjectDir)assets\galactic\milky-way-nasa.jpg" "$(TargetDir)assets\ga
 copy /Y "$(ProjectDir)assets\galactic\CREDITS.md" "$(TargetDir)assets\galactic\CREDITS.md"
 if not exist "$(TargetDir)assets\earth" mkdir "$(TargetDir)assets\earth"
 copy /Y "$(ProjectDir)assets\earth\earth-relief.png" "$(TargetDir)assets\earth\earth-relief.png"
+copy /Y "$(ProjectDir)assets\earth\elevation-*.bin" "$(TargetDir)assets\earth\"
 copy /Y "$(ProjectDir)assets\earth\earth-color.jpg" "$(TargetDir)assets\earth\earth-color.jpg"
 copy /Y "$(ProjectDir)assets\earth\CREDITS.md" "$(TargetDir)assets\earth\CREDITS.md"
 copy /Y "$(ProjectDir)..\External_Lib\lib\assimp-vc143-mtd.dll" "$(TargetDir)assimp-vc143-mtd.dll"</Command>

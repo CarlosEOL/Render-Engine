@@ -4,7 +4,7 @@
 - July surface colors from [NASA Earth Observatory Blue Marble Next Generation](https://science.nasa.gov/earth/earth-observatory/blue-marble-next-generation/base-topography/), July 2004.
 - Coastline and inland water polygons from [Natural Earth 1:10m Physical Vectors](https://www.naturalearthdata.com/downloads/10m-physical-vectors/).
 
-Both runtime textures use a 5,400 × 2,700 equirectangular grid with about 7.4 km between samples at the equator. The map describes continents, major islands, lakes and mountain ranges. Close-up ground detail and seasonal sea ice are procedural.
+The orbital color and coastline atlases use a 5,400 × 2,700 equirectangular grid. Close-range terrain streams the original 60 arc-second ETOPO surface heights and ocean depths, with about 1.85 km between samples at the equator. Peak heights and trench depths reflect the grid’s sampling, and ground texture at walking scale is procedural.
 
 To regenerate the textures, place the source files below in a directory and run `python assets/earth/prepare_maps.py <source-directory>` with NumPy, Pillow, pyshp, tifffile and imagecodecs installed.
 
@@ -13,4 +13,4 @@ To regenerate the textures, place the source files below in a directory and run 
 - [Land polygons](https://naturalearth.s3.amazonaws.com/10m_physical/ne_10m_land.zip) as `ne_10m_land.zip`
 - [Lake polygons](https://naturalearth.s3.amazonaws.com/10m_physical/ne_10m_lakes.zip) as `ne_10m_lakes.zip`
 
-The relief texture packs signed elevation in meters into red and green with a bias of 12,000. Blue and alpha carry the ocean and inland water masks, respectively. Inland water levels are estimated from the mapped shoreline.
+The orbital relief texture packs signed elevation in meters into red and green with a bias of 12,000. Blue and alpha carry the ocean and inland water masks, respectively. Inland water levels are estimated from the mapped shoreline. The twelve elevation archives each contain a 15-degree latitude band of signed ETOPO heights, stored as biased 16-bit PNG tiles. Use the `--tiles-only` option to regenerate the elevation archives independently of the orbital atlases.
