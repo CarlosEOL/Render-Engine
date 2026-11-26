@@ -1,5 +1,8 @@
 #include "glad/glad.h"
 #include "BlackHole.h"
+#ifdef RENDER_ENGINE_DX12
+#include "dx12/Dx12SceneBridge.h"
+#endif
 #include "GalacticCore.h"
 #include "StellarPhotometry.h"
 #include "OrbitalMechanics.h"
@@ -155,7 +158,10 @@ in vec3 patchDeltaMetres;
 in vec3 photonColor;
 in float sourceTemperature;
 in float sourceLuminosity;
-out vec4 fragColor;
+layout(location=0) out vec4 fragColor;
+#ifdef WRITE_RAY_WATER_NORMAL
+layout(location=1) out vec4 rayWaterNormal;
+#endif
 uniform int surface;
 uniform bool oceanWorld;
 uniform float millerSeabedElevation;
@@ -172,6 +178,9 @@ uniform sampler2D stellarCorona;
 uniform float limitingMagnitude;
 
 void main() {
+#ifdef WRITE_RAY_WATER_NORMAL
+    rayWaterNormal=vec4(0);
+#endif
     gl_FragDepth=surface==7?0.999999:clamp(log2(1.0+length(relativePosition)*1e12)/log2(1.0+20000.0*1e12),0.0,.999998);
     if (surface == 2) {
         vec3 radial = normalize(localPosition);
@@ -212,6 +221,9 @@ void main() {
             // Water carries its analytic-specular contribution below the
             // optical-emitter threshold, so SSR can replace rather than add it.
             fragColor=vec4(ocean*(.03+.97*light)+specular*.65,.1+.3*specular);
+#ifdef WRITE_RAY_WATER_NORMAL
+            rayWaterNormal=vec4(normal,1);
+#endif
             return;
         }
         fragColor=vec4(material*(.035+.965*light)+specular,0);
@@ -766,7 +778,11 @@ void main() {
 bool BlackHole::Initialize() {
     const std::string vertexSource = std::string("#version 330 core\n")
         + PlanetTerrain::ShaderFunctions() + InterstellarWorlds::ShaderFunctions() + vertexBody;
-    const std::string fragmentSource = std::string("#version 330 core\nuniform float horizonRadius;\nuniform vec3 observerBeta;\n")
+    const std::string fragmentSource = std::string("#version 330 core\n"
+#ifdef RENDER_ENGINE_DX12
+        "#define WRITE_RAY_WATER_NORMAL\n"
+#endif
+        "uniform float horizonRadius;\nuniform vec3 observerBeta;\n")
         + OrbitalMechanics::RelativityShaderFunctions() + PlanetTerrain::ShaderFunctions() + PlanetTerrain::SurfaceDetailShaderFunctions() + InterstellarWorlds::ShaderFunctions() + StellarActivity::ShaderFunctions() + fragmentBody;
     program = compileShaderProgram(vertexSource.c_str(), fragmentSource.c_str());
     const std::string lensSource = std::string("#version 330 core\nuniform float horizonRadius;\nuniform vec3 observerBeta;\n")
@@ -1255,7 +1271,7 @@ double BlackHole::PlanetSurfaceRadius(const glm::vec3& worldDirection, double se
 void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& cameraPosition, double seconds,
                       const glm::vec3& observerVelocity, bool trajectories, int selected,int interiorVehicle,
                       const glm::vec3& physicalObserverBeta,bool physicalObserver,bool captureDiskForeground,
-                      float depthBelowMiller) const {
+                      float depthBelowMiller,unsigned reflectionSky,bool captureReflectionSky) const {
     atmosphere.ResetDiskForeground();
     if(!skyRefreshDeferred && (skyCubeDirty || glm::length(skyCubeOrigin)>1))BuildSkyCube();
     glEnable(GL_BLEND);glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
@@ -1289,12 +1305,36 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
     const int surfaceLocation = glGetUniformLocation(program, "surface");
     const int colorLocation = glGetUniformLocation(program, "bodyColor");
 
-    RenderBackground(viewProjection,cameraPosition);
+    RenderBackground(viewProjection,cameraPosition,false,0,glm::dvec3(0),true,captureReflectionSky?2.f:7.f);
 
+#ifdef RENDER_ENGINE_DX12
+    bool rayScene=false;
+    if(!captureReflectionSky && NativeDX12::HardwareRaysEnabled()){
+        glm::vec4 raySky(0);
+        float closest=80000.f;
+        if(atmospheresEnabled)for(int p=0;p<3;++p){
+            const auto offset=cameraPosition-PlanetPosition(seconds,p);
+            const double distance=glm::length(offset);
+            const float height=static_cast<float>((distance-bodies[p].radius)*Astronomy::metresPerAu);
+            if(height>=closest || distance<=0)continue;
+            closest=height;
+            raySky=glm::vec4(glm::vec3(offset/distance),1.f-glm::smoothstep(10000.f,80000.f,height));
+        }
+        rayScene=NativeDX12::BeginRayScene({viewProjection,glm::vec3(0),glm::normalize(-cameraFloat),
+            125000.f,true,depthBelowMiller>0,true,true,raySky});
+    }
+#endif
     glUseProgram(program);
     glBindVertexArray(sphere.vao);
     const auto weather=MillerWeather(seconds);
     const auto drawSphere = [&](const glm::dvec3& center, float radius, Surface surface, const glm::vec3& color, int seed, float temperature) {
+        if(captureReflectionSky){
+            const double distance=glm::length(center-cameraPosition);
+            if(surface==Planet && distance-radius<125000.0/Astronomy::metresPerAu)return;
+            const auto clip=viewProjection*glm::vec4(center-cameraPosition,1);
+            const float guard=radius*1.5f;
+            if(clip.w+guard<std::max(std::abs(clip.x),std::abs(clip.y)))return;
+        }
         const bool blend=glIsEnabled(GL_BLEND);glDisable(GL_BLEND);
         auto model = glm::translate(identity, glm::vec3(center-cameraPosition));
         if (surface == Planet)
@@ -1336,10 +1376,34 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
             PlanetTerrain::ConfigureSurfacePatch(program,waterPatchDirection,rotation,center-cameraPosition,metres,elevation);
         }
         glBindVertexArray(sphere.vao);
+#ifdef RENDER_ENGINE_DX12
+        const bool rayPlanet=rayScene && surface==Planet && groundClearance<125000.0;
+        // Miller is entirely ocean. Its wave mesh is a receiver but does not
+        // supply opaque mirror hits on neighboring wave facets.
+        const NativeDX12::RayMaterial raySurface{NativeDX12::RayKind::Surface,
+            NativeDX12::RaySpace::RelativeAu,color,.03f,planet!=0};
+        if(rayPlanet && !patch)NativeDX12::SetRayMaterial(raySurface);
+#endif
         glDrawArrays(GL_TRIANGLES, 0, sphere.vertexCount);
+#ifdef RENDER_ENGINE_DX12
+        if(rayPlanet && !patch)NativeDX12::SetRayMaterial({});
+#endif
         if(patch) {
             glUniform1i(glGetUniformLocation(program,"patchDrawing"),true);
+#ifdef RENDER_ENGINE_DX12
+            if(rayPlanet)NativeDX12::SetRayMaterial(raySurface);
+#endif
             glBindVertexArray(waterPatch.vao);glDrawArrays(GL_TRIANGLES,0,waterPatch.vertexCount);
+#ifdef RENDER_ENGINE_DX12
+            if(rayScene && planet==0 && depthBelowMiller<=0){
+                glUniform1f(glGetUniformLocation(program,"millerSeabedElevation"),
+                    static_cast<float>(-MillerOceanDepthMetres/(radius*Astronomy::metresPerAu)));
+                NativeDX12::SetRayMaterial({NativeDX12::RayKind::Bottom,NativeDX12::RaySpace::RelativeAu,{.15f,.24f,.23f},0},true);
+                glDrawArrays(GL_TRIANGLES,0,waterPatch.vertexCount);
+                glUniform1f(glGetUniformLocation(program,"millerSeabedElevation"),seabedElevation);
+            }
+            if(rayScene)NativeDX12::SetRayMaterial({});
+#endif
             glBindVertexArray(sphere.vao);
         }
         glUniform1i(glGetUniformLocation(program,"patchEnabled"),false);
@@ -1369,6 +1433,7 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
             glUniform1f(glGetUniformLocation(program, "temperature"),static_cast<float>(metadata.temperature));
             drawSphere(catalogue.Position(star),static_cast<float>(metadata.radiusSolar*Astronomy::solarRadiusAu), Star, glm::vec3(1),id,static_cast<float>(metadata.temperature));
     }
+    if(!captureReflectionSky){
     const auto observed = ObservedFlight(cameraPosition, seconds);
     if (!observed.captured) {
         glUniform1i(surfaceLocation, 4);
@@ -1392,7 +1457,14 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
         glUniformMatrix4fv(modelLocation, 1, GL_FALSE, glm::value_ptr(craftModel));
         glUniform3f(colorLocation, 0.75f, 0.80f, 0.84f);
         glBindVertexArray(craftRing.vao);
+#ifdef RENDER_ENGINE_DX12
+        const bool rayCraft=rayScene && glm::length(observed.state.position-cameraPosition)*Astronomy::metresPerAu<125000;
+        if(rayCraft)NativeDX12::SetRayMaterial({NativeDX12::RayKind::Solid,NativeDX12::RaySpace::RelativeAu,{.68f,.74f,.80f},.32f});
+#endif
         glDrawArrays(GL_TRIANGLES, 0, craftRing.vertexCount);
+#ifdef RENDER_ENGINE_DX12
+        if(rayCraft)NativeDX12::SetRayMaterial({});
+#endif
         if (observed.firing) {
             glUniform1i(surfaceLocation, 6);
             const auto direction = glm::normalize(glm::vec3(observed.state.velocity));
@@ -1415,10 +1487,21 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
         model=glm::scale(model,glm::vec3(1.0f/static_cast<float>(Astronomy::metresPerAu)));
         glUniform1i(surfaceLocation,5);glUniform3f(colorLocation,.82f,.85f,.86f);
         glUniformMatrix4fv(modelLocation,1,GL_FALSE,glm::value_ptr(model));
+#ifdef RENDER_ENGINE_DX12
+        const bool rayRanger=rayScene && glm::length(state.position-cameraPosition)*Astronomy::metresPerAu<125000;
+        if(rayRanger)NativeDX12::SetRayMaterial({NativeDX12::RayKind::Solid,NativeDX12::RaySpace::RelativeAu,{.79f,.81f,.84f},.25f});
+#endif
         glBindVertexArray(rangerMesh.vao);glDrawArrays(GL_TRIANGLES,0,rangerMesh.vertexCount);
         auto cockpit=glm::translate(model,glm::vec3(0,1.2,-1));cockpit=glm::scale(cockpit,glm::vec3(1.2,.5,1.6));
         glUniform3f(colorLocation,.04f,.16f,.22f);glUniformMatrix4fv(modelLocation,1,GL_FALSE,glm::value_ptr(cockpit));
+#ifdef RENDER_ENGINE_DX12
+        if(rayRanger)NativeDX12::SetRayMaterial({NativeDX12::RayKind::Glass,NativeDX12::RaySpace::RelativeAu,{.04f,.16f,.22f},.04f});
+#endif
         glBindVertexArray(sphere.vao);glDrawArrays(GL_TRIANGLES,0,sphere.vertexCount);
+#ifdef RENDER_ENGINE_DX12
+        if(rayRanger)NativeDX12::SetRayMaterial({});
+#endif
+    }
     }
     glBindVertexArray(0);
     if (trajectories && guides.vao) {
@@ -1462,7 +1545,7 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
                 planet==0?diskRadiance:glm::vec2(0));
         }
     }
-    if (photonView) {
+    if (photonView && !captureReflectionSky) {
         packetCache.clear();
         packetCache.reserve(100);
         const auto appendStream = [&](const glm::dvec3& emitter, const glm::vec3& color, bool historical) {
@@ -1502,11 +1585,15 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
     RenderLensing(viewProjection,cameraPosition,seconds,observerBeta,physicalObserverBeta,physicalObserver);
+#ifdef RENDER_ENGINE_DX12
+    if(rayScene)NativeDX12::ResolveRayScene(reflectionSky);
+#endif
     for(int planet=0;atmospheresEnabled && planet<3;++planet){
         const auto center=PlanetPosition(seconds,planet)-cameraPosition;
         if(foregroundAtmosphere[planet])
             atmosphere.Render(viewProjection,glm::vec3(0),glm::vec3(center),bodies[planet].radius,true,-cameraFloat,
-                planet==0 && weatherEnabled && weatherCloudsEnabled,seconds,glm::mat3(PlanetRotation(seconds,planet)),planet==0 && oceanReflectionsEnabled,.65f,&weather,
+                planet==0 && weatherEnabled && weatherCloudsEnabled,seconds,glm::mat3(PlanetRotation(seconds,planet)),
+                !captureReflectionSky && planet==0 && oceanReflectionsEnabled,.65f,&weather,
                 planet==0?diskRadiance:glm::vec2(0),captureDiskForeground);
     }
     gargantuaWormhole.Render(viewProjection,GargantuaWormholePosition(seconds)-cameraPosition,
@@ -1543,6 +1630,21 @@ void BlackHole::Render(const glm::mat4& viewProjection, const glm::dvec3& camera
     }
 }
 
+#ifdef RENDER_ENGINE_DX12
+bool BlackHole::HasLocalReflectionReceivers(const glm::dvec3& camera,double seconds) const {
+    constexpr double range=125000.0/Astronomy::metresPerAu;
+    for(int planet=0;planet<3;++planet){
+        if(glm::length(camera-PlanetPosition(seconds,planet))-bodies[planet].radius<range)return true;
+    }
+    const auto craft=ObservedFlight(camera,seconds);
+    if(!craft.captured && glm::length(craft.state.position-camera)<range)return true;
+    for(int ranger=0;ranger<2;++ranger){
+        if(glm::length(ObservedRanger(camera,seconds,ranger).position-camera)<range)return true;
+    }
+    return false;
+}
+#endif
+
 void BlackHole::UploadStream(const glm::dvec3& camera) const {
     catalogue.UpdateStream(camera,magnitudeLimit);
     if(uploadedStreamRevision==catalogue.StreamRevision())return;
@@ -1564,7 +1666,7 @@ void BlackHole::UploadStream(const glm::dvec3& camera) const {
     glBindVertexArray(0);glBindBuffer(GL_ARRAY_BUFFER,0);
 }
 
-void BlackHole::RenderBackground(const glm::mat4& vp,const glm::dvec3& camera,bool photons,double seconds,const glm::dvec3& detector,bool includeLocal) const {
+void BlackHole::RenderBackground(const glm::mat4& vp,const glm::dvec3& camera,bool photons,double seconds,const glm::dvec3& detector,bool includeLocal,float starPointSize) const {
     if(includeLocal)UploadStream(camera);
     if(!photons)milkyWay.Render(vp,camera);
     if(!photons)galaxies.Render(vp,camera,galaxyMagnitudeLimit,includeLocal);
@@ -1586,7 +1688,7 @@ void BlackHole::RenderBackground(const glm::mat4& vp,const glm::dvec3& camera,bo
     glUniform1f(glGetUniformLocation(program,"limitingMagnitude"),magnitudeLimit);
     stellarActivity.BindCorona(program,3);
     glActiveTexture(GL_TEXTURE0);
-    glBindVertexArray(backgroundStars.vao);glPointSize(photons?2.f:7.f);
+    glBindVertexArray(backgroundStars.vao);glPointSize(photons?2.f:starPointSize);
     // Conservative spatial batches: reject entire dim/offscreen regions.
     // Individual apparent-magnitude decisions remain in the vertex shader.
     const glm::dmat4 precise(vp);

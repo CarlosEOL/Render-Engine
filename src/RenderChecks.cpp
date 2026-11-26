@@ -36,7 +36,7 @@
 unsigned int compileShaderProgram(const char*,const char*);
 
 // Optional hidden-window GPU smoke checks; normal application startup never runs this.
-bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,bool galaxyOnly,bool lensingOnly,bool wormholeOnly,bool weatherOnly)
+bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,bool galaxyOnly,bool lensingOnly,bool wormholeOnly,bool weatherOnly,bool rayOnly)
 {
     if (!blackHoleReady || !starSystemReady || !quantumReady || !opticsReady)
         return false;
@@ -262,6 +262,165 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,boo
             fail();
         return pixels;
     };
+    if(rayOnly){
+#ifdef RENDER_ENGINE_DX12
+        using namespace NativeDX12;
+        if(HardwareRaysEnabled() || !ScreenSpaceReflectionsEnabled())fail();
+        if(!HardwareRaysAvailable()){
+            if(SetHardwareRays(true) || !ScreenSpaceReflectionsEnabled())fail();
+            std::cout<<"DXR unavailable. Screen-space reflection fallback checked.\n";
+            return success;
+        }
+        StartSolarSystem();scenePanel.SetVisible(false);ResizeInterface();
+        simulationPlaying=false;trajectories=false;lensFlareStrength=0;
+        fieldOfView=72;visionProfile=0;exposureEv=0;
+        KeyCallback(window,1200,0,GLFW_PRESS,0);
+        starSystem.SetEarthClouds(false);
+        glm::dvec3 shallows(0);
+        for(double lat=23.;lat<27. && shallows==glm::dvec3(0);lat+=.075)
+            for(double lon=-80.5;lon<-76.;lon+=.075){
+                const double p=glm::radians(lat),t=glm::radians(lon);
+                const glm::dvec3 n(std::cos(p)*std::cos(t),std::sin(p),-std::cos(p)*std::sin(t));
+                const auto map=PlanetTerrain::EarthGeography(glm::vec3(n));
+                if(map.y>.98f && map.x>-22 && map.x<-14){shallows=n;break;}
+            }
+        if(shallows==glm::dvec3(0))return false;
+        double brightest=-2;
+        for(int hour=0;hour<24;++hour){
+            const double time=hour*3600.;
+            const auto n=starSystem.WeatherFrame(2,time)*shallows;
+            const double light=glm::dot(n,glm::normalize(-starSystem.Position(2,time)));
+            if(light>brightest){brightest=light;simulationTime=time;}
+        }
+        const auto n=starSystem.WeatherFrame(2,simulationTime)*shallows;
+        const auto east=glm::normalize(glm::cross(glm::dvec3(0,1,0),n));
+        starSystem.camera=starSystem.Position(2,simulationTime)+n*(Astronomy::earthRadiusAu+4./Astronomy::metresPerAu);
+        cameraFront=glm::vec3(glm::normalize(east-n*.22));cameraUp=glm::vec3(n);
+        SyncCameraAngles();sceneCacheValid=false;
+        const auto before=capture("earth-water-screen-space");
+        const auto previousPasses=RayPassCount();
+        KeyCallback(window,RayTracingMenuCommand,0,GLFW_PRESS,0);
+        const bool balanced=!DlssAvailable() || GetDlssMode()==DlssMode::Balanced;
+        if(!HardwareRaysEnabled() || ScreenSpaceReflectionsEnabled() || !balanced)fail();
+        sceneCacheValid=false;
+        capture("earth-water-dxr-balanced");
+        SetDlssMode(DlssMode::Off);sceneCacheValid=false;
+        const auto traced=capture("earth-water-dxr");
+        std::vector<float> clearEnvironment,cloudyEnvironment;
+        const auto rays=InspectRayCoverage(&clearEnvironment);
+        std::size_t changed=0;
+        for(std::size_t i=0;i<before.size() && i<traced.size();i+=3)
+            changed+=std::abs(int(before[i])-traced[i])+std::abs(int(before[i+1])-traced[i+1])+std::abs(int(before[i+2])-traced[i+2])>10;
+        const auto surface=RayGeometryCount(RayKind::Surface), bottom=RayGeometryCount(RayKind::Bottom);
+        const auto wildlife=RayGeometryCount(RayKind::Submerged);
+        std::cout<<"DXR Earth water: surface batches="<<surface<<"; seabed batches="<<bottom
+            <<"; submerged NPC batches="<<wildlife<<"; changed pixels="<<changed<<"; DLSS Balanced="<<balanced
+            <<"; receivers="<<rays.receivers<<"; reflection samples="<<rays.sampled
+            <<"; wave normals="<<rays.waterNormals<<"\n";
+        if(RayPassCount()<=previousPasses || !surface || !bottom || !wildlife || changed<1000 ||
+            rays.receivers<200000 || rays.sampled<100000 || rays.waterNormals<100000)fail();
+        starSystem.SetEarthClouds(true);sceneCacheValid=false;
+        capture("earth-water-dxr-volumetric-clouds");
+        const auto cloudy=InspectRayCoverage(&cloudyEnvironment);
+        size_t cloudPixels=0;
+        for(size_t i=0;i<clearEnvironment.size() && i<cloudyEnvironment.size();++i){
+            if(clearEnvironment[i]<0 || cloudyEnvironment[i]<0)continue;
+            if(std::abs(clearEnvironment[i]-cloudyEnvironment[i])>.01f)++cloudPixels;
+        }
+        std::cout<<"DXR reflected Earth clouds: clear="<<rays.meanEnvironmentLuminance
+            <<"; clouded="<<cloudy.meanEnvironmentLuminance<<"; changed reflection samples="<<cloudPixels<<"\n";
+        if(!reflectionSkyTexture || cloudPixels<100)fail();
+
+        // A reflected red panel is behind the camera and a blue panel is
+        // below the water. Neither panel is present in the raster image.
+        const char* rayVertex=R"(#version 330 core
+layout(location=0) in vec3 position;
+uniform mat4 vp;
+out vec3 relativeMetres;
+void main(){relativeMetres=position;gl_Position=vp*vec4(position,1);}
+)";
+        const char* rayFragment=R"(#version 330 core
+in vec3 relativeMetres;
+out vec4 color;
+void main(){color=vec4(vec3(.028+relativeMetres.x*.0001),.22);}
+)";
+        const auto probe=compileShaderProgram(rayVertex,rayFragment);
+        unsigned probeVao,probeData;
+        glGenVertexArrays(1,&probeVao);glGenBuffers(1,&probeData);
+        glBindVertexArray(probeVao);glBindBuffer(GL_ARRAY_BUFFER,probeData);
+        glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,3*sizeof(float),nullptr);glEnableVertexAttribArray(0);
+        const auto testProjection=glm::perspective(glm::radians(64.f),1.f,.08f,70.f);
+        SkyCubeCapture<16> directionalSky;
+        const unsigned sky=directionalSky.Capture([](const glm::vec3& direction,const glm::vec3&){
+            glClearColor(.02f,direction.z>.5f?.9f:.02f,.02f,0);
+            glClear(GL_COLOR_BUFFER_BIT);
+        });
+        const auto sample=[&](bool reflected,bool transmitted,unsigned environment=0){
+            glViewport(0,0,128,128);optics.BeginFrame();
+            glEnable(GL_DEPTH_TEST);glDepthMask(GL_TRUE);glDisable(GL_BLEND);glDisable(GL_CULL_FACE);
+            glClearColor(0,0,0,0);glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+            if(!BeginRayScene({testProjection,glm::vec3(0),{0,0,-1},65,false,false,reflected,transmitted}))fail();
+            glUseProgram(probe);
+            glUniformMatrix4fv(glGetUniformLocation(probe,"vp"),1,GL_FALSE,glm::value_ptr(testProjection));
+            glBindVertexArray(probeVao);glBindBuffer(GL_ARRAY_BUFFER,probeData);
+            const auto panel=[&](float z,RayMaterial material,bool hidden){
+                const float vertices[]{-18,-18,z,18,-18,z,18,18,z,-18,-18,z,18,18,z,-18,18,z};
+                glBufferData(GL_ARRAY_BUFFER,sizeof(vertices),vertices,GL_DYNAMIC_DRAW);
+                SetRayMaterial(material,hidden);
+                glDrawArrays(GL_TRIANGLES,0,6);
+            };
+            panel(-4,{RayKind::Surface,RaySpace::RelativeMetres,{.028f,.028f,.028f},0},false);
+            if(!environment)panel(3,{RayKind::Solid,RaySpace::RelativeMetres,{.94f,.04f,.03f},0},true);
+            panel(-11,{RayKind::Bottom,RaySpace::RelativeMetres,{.03f,.09f,.97f},0},true);
+            if(!ResolveRayScene(environment))fail();
+            optics.Render(0,64,0,true,0,false,.016f);
+            std::vector<float> pixels(128*128*4);
+            glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,optics.SceneTexture());
+            glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_FLOAT,pixels.data());
+            const auto center=(64*128+64)*4;
+            return glm::vec3(pixels[center],pixels[center+1],pixels[center+2]);
+        };
+        const auto plain=sample(false,false);
+        const auto mirror=sample(true,false);
+        const auto mirrorHits=InspectRayCoverage().reflectedHits;
+        const auto refraction=sample(false,true);
+        const auto offscreenSky=sample(true,false,sky);
+        std::cout<<"DXR offscreen reflection: "<<mirrorHits<<" ray hits; red gain="<<mirror.r-plain.r
+            <<"; submerged transmission blue gain="<<refraction.b-plain.b<<"\n";
+        if(mirrorHits<4000 || mirror.r-plain.r<.005f || refraction.b-plain.b<.025f)fail();
+        std::cout<<"DXR offscreen environment: green gain="<<offscreenSky.g-plain.g<<"\n";
+        if(!sky || offscreenSky.g-plain.g<.012f)fail();
+        directionalSky.Release();
+        glDeleteProgram(probe);glDeleteBuffers(1,&probeData);glDeleteVertexArrays(1,&probeVao);
+
+        StartGargantua();scenePanel.SetVisible(false);ResizeInterface();
+        simulationTime=0;simulationPlaying=false;trajectories=false;selectedTarget=-1;
+        const auto centre=BlackHole::PlanetPosition(0),toward=glm::normalize(-centre);
+        const auto side=glm::normalize(glm::cross(toward,glm::dvec3(0,1,0)));
+        const auto radial=glm::normalize(toward*.11+side);
+        cameraPos=centre+radial*(blackHole.PlanetSurfaceRadius(glm::vec3(radial),0)+3/Astronomy::metresPerAu);
+        cameraUp=glm::vec3(radial);cameraFront=glm::vec3(glm::normalize(toward-radial*.3));
+        SyncCameraAngles();blackHole.SetWeatherCloudsEnabled(false);sceneCacheValid=false;
+        capture("miller-dxr-gargantua-reflection");
+        const auto brightDisk=InspectRayCoverage();
+        const float diskRadius=blackHole.GargantuaDiskOuterRadius()/BlackHole::HorizonRadius();
+        const float diskBrightness=blackHole.GargantuaDiskBrightness();
+        blackHole.SetGargantuaDisk(diskRadius,0);sceneCacheValid=false;
+        capture("miller-dxr-reflection-no-disk-emission");
+        const auto darkDisk=InspectRayCoverage();
+        blackHole.SetGargantuaDisk(diskRadius,diskBrightness);blackHole.SetWeatherCloudsEnabled(true);
+        std::cout<<"DXR reflected Gargantua: peak="<<brightDisk.brightestEnvironment
+            <<"; unlit disk peak="<<darkDisk.brightestEnvironment<<"\n";
+        if(brightDisk.brightestEnvironment-darkDisk.brightestEnvironment<.1f)fail();
+
+        KeyCallback(window,RayTracingMenuCommand,0,GLFW_PRESS,0);
+        if(HardwareRaysEnabled() || !ScreenSpaceReflectionsEnabled())fail();
+        std::cout<<"Ray tracing checks "<<(success?"PASSED":"FAILED")<<"\n";
+#else
+        std::cout<<"DXR unavailable in the OpenGL renderer. Screen-space reflections remain enabled.\n";
+#endif
+        return success;
+    }
     const auto checkLandingPlayback=[&](const char* name,bool catalogue,int planet){
         const double start=simulationTime;
         const auto pose=[&](){

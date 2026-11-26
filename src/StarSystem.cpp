@@ -19,6 +19,9 @@
 #include "WormholePhysics.h"
 #include "InterstellarWorlds.h"
 #include "LensCalibration.h"
+#ifdef RENDER_ENGINE_DX12
+#include "dx12/Dx12SceneBridge.h"
+#endif
 
 unsigned int compileShaderProgram(const char *, const char *);
 
@@ -669,12 +672,19 @@ void main() {
 }
 )";
     const std::string fragment =
-        std::string("#version 330 core\nconst float horizonRadius=0.0; const vec3 observerBeta=vec3(0);\n") + PlanetVegetation::ShaderFunctions() +
+        std::string("#version 330 core\n"
+#ifdef RENDER_ENGINE_DX12
+            "#define WRITE_RAY_WATER_NORMAL\n"
+#endif
+            "const float horizonRadius=0.0; const vec3 observerBeta=vec3(0);\n") + PlanetVegetation::ShaderFunctions() +
         PlanetTerrain::ShaderFunctions() + PlanetTerrain::SurfaceDetailShaderFunctions() + OrbitalMechanics::RelativityShaderFunctions() + StellarActivity::ShaderFunctions() + SaturnRings::ShaderFunctions() + R"(
 in vec3 localPosition;
 in vec3 relativePosition;
 in vec3 patchDeltaMetres;
-out vec4 color;
+layout(location=0) out vec4 color;
+#ifdef WRITE_RAY_WATER_NORMAL
+layout(location=1) out vec4 rayWaterNormal;
+#endif
 uniform int bodyKind;
 uniform mat4 model;
 uniform vec3 starPosition;
@@ -713,6 +723,9 @@ vec3 refractedSeabed(vec3 waterColor,vec3 radial,vec3 normal,float height){
 }
 
 void main() {
+#ifdef WRITE_RAY_WATER_NORMAL
+    rayWaterNormal=vec4(0);
+#endif
     if (bodyKind == 4) {
         color=vec4(albedo,0); gl_FragDepth=0; return;
     }
@@ -875,6 +888,9 @@ void main() {
     float foam=max(shoreFoam,water*weatherOceanFoam(patchDrawing?patchTextureOrigin+patchDeltaMetres:radial*weatherParameters.w,radial));
     material=mix(material,vec3(.72,.80,.82),foam);specular*=1.0-.85*foam;
     color=vec4(material*(.012+diffuse)+specular,water>.95?.1+.3*specular:0.0);
+#ifdef WRITE_RAY_WATER_NORMAL
+    if(water>.95)rayWaterNormal=vec4(normal,1);
+#endif
 }
 )";
     program = compileShaderProgram(vertex.c_str(), fragment.c_str());
@@ -931,11 +947,14 @@ void StarSystem::BindEarthMaps() const {
 }
 
 void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front, const glm::vec3 &up, double seconds,
-                        bool trajectories, bool photonView, bool showSelection, unsigned int wormholeSky)
+                        bool trajectories, bool photonView, bool showSelection, unsigned int wormholeSky,
+                        unsigned reflectionSky, bool captureReflectionSky)
 {
-    vegetation.ClearCounts();
-    birds.ClearCounts();
-    fish.ClearCount();
+    if(!captureReflectionSky){
+        vegetation.ClearCounts();
+        birds.ClearCounts();
+        fish.ClearCount();
+    }
     if (!program || planets.empty())
         return;
     if(!InDetailRange())return;
@@ -943,19 +962,36 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
     const int divePlanet=waterDepth>0?landedPlanet:-1;
     glDisable(GL_BLEND); // Opaque reflected light writes RGB and zero flare eligibility.
     double clearance = glm::length(camera) - star.radiusSolar * Astronomy::solarRadiusAu;
+#ifdef RENDER_ENGINE_DX12
+    glm::vec4 raySky(0);
+#endif
     for (int planet = 0; planet < static_cast<int>(planets.size()); ++planet)
     {
         const auto delta = camera - Position(planet, seconds);
         const double distance = glm::length(delta);
-        if (distance > 0)
-            clearance = std::min(clearance, distance - SurfaceRadius(planet, delta / distance, seconds));
+        if (distance <= 0) continue;
+        const double altitude=distance-SurfaceRadius(planet,delta/distance,seconds);
+        if (altitude >= clearance) continue;
+        clearance=altitude;
+#ifdef RENDER_ENGINE_DX12
+        const float height=static_cast<float>(altitude*Astronomy::metresPerAu);
+        raySky=glm::vec4(glm::vec3(delta/distance),planets[planet].atmosphere?
+            1.f-glm::smoothstep(10000.f,80000.f,height):0.f);
+#endif
     }
+#ifdef RENDER_ENGINE_DX12
+    const bool closeRays=clearance*Astronomy::metresPerAu<180000;
+#endif
     if (landed)
         clearance = 1.0 / Astronomy::metresPerAu;
     const auto projection = glm::perspective(glm::radians(fieldOfView), aspect,
                                              static_cast<float>(std::clamp(clearance * .01, 1e-13, 1e-3)), 20000.0f);
     const auto view = glm::lookAt(glm::vec3(0), front, up);
     const auto vp = projection * view;
+#ifdef RENDER_ENGINE_DX12
+    const bool rayScene=!captureReflectionSky && closeRays && NativeDX12::BeginRayScene(
+        {vp,glm::vec3(0),glm::normalize(glm::vec3(-camera)),125000.f,true,divePlanet>=0,oceanReflectionsEnabled,waterRefractionEnabled,raySky});
+#endif
     int viewport[4];glGetIntegerv(GL_VIEWPORT,viewport);
     const double pixelsPerRadian=viewport[3]/(2.0*std::tan(glm::radians(static_cast<double>(fieldOfView))*.5));
     glClear(GL_DEPTH_BUFFER_BIT);
@@ -965,7 +1001,11 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
     glUniform3fv(glGetUniformLocation(program, "starPosition"), 1, glm::value_ptr(glm::vec3(-camera)));
     glUniform1f(glGetUniformLocation(program, "phase"),
                 static_cast<float>(std::remainder(seconds, glm::two_pi<double>())));
-    glUniform1i(glGetUniformLocation(program,"waterRefraction"),waterRefractionEnabled);
+    glUniform1i(glGetUniformLocation(program,"waterRefraction"),waterRefractionEnabled
+#ifdef RENDER_ENGINE_DX12
+        && !rayScene
+#endif
+    );
     glUniform1i(glGetUniformLocation(program,"earthShoreDetail"),earthShoreDetail);
     glUniform1i(glGetUniformLocation(program,"layeredTerrain"),!solarSystem);
     const auto setModel = [&](const glm::mat4 &model) {
@@ -989,10 +1029,13 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
     {
         const auto &body = planets[planet];
         if(body.wormhole)continue; // The throat is rendered by null-ray transport, never terrain.
-        const auto weather=WeatherState(planet,seconds);PlanetWeather::Upload(program,weather);
         const auto center = Position(planet, seconds);
         const double radius = body.radiusEarth * Astronomy::earthRadiusAu;
+        // Nearby surfaces live in the ray geometry. Keep their atmosphere in
+        // the environment, with the distant bodies behind it.
+        if(captureReflectionSky && glm::length(center-camera)-radius < 125000.0/Astronomy::metresPerAu)continue;
         if(radius/glm::max(radius,glm::length(center-camera))*pixelsPerRadian<.75)continue;
+        const auto weather=WeatherState(planet,seconds);PlanetWeather::Upload(program,weather);
         model = glm::translate(glm::mat4(1), glm::vec3(center - camera)) * Rotation(planet, seconds);
         model = glm::scale(model, glm::vec3(static_cast<float>(radius)));
         setModel(model);
@@ -1047,12 +1090,32 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
             PlanetTerrain::ConfigureSurfacePatch(program,patchDirection,RotationDouble(planet,seconds),center-camera,metres,elevation);
         }
         glBindVertexArray(sphereVao);
+#ifdef RENDER_ENGINE_DX12
+        const bool rayBody=rayScene && groundClearance<125000 && !body.gas;
+        const NativeDX12::RayMaterial raySurface{NativeDX12::RayKind::Surface,NativeDX12::RaySpace::RelativeAu,body.color,.02f};
+        if(rayBody && !patch)NativeDX12::SetRayMaterial(raySurface);
+#endif
         glDrawArrays(GL_TRIANGLES, 0, sphereCount);
+#ifdef RENDER_ENGINE_DX12
+        if(rayBody && !patch)NativeDX12::SetRayMaterial({});
+#endif
         if (patch)
         {
             glUniform1i(glGetUniformLocation(program, "patchDrawing"), true);
             glBindVertexArray(patchVao);
+#ifdef RENDER_ENGINE_DX12
+            if(rayBody)NativeDX12::SetRayMaterial(raySurface);
+#endif
             glDrawArrays(GL_TRIANGLES, 0, patchCount);
+#ifdef RENDER_ENGINE_DX12
+            if(rayBody && !seabed && body.HasSurfaceLiquid() && waterRefractionEnabled){
+                glUniform1i(glGetUniformLocation(program,"seabedRendering"),true);
+                NativeDX12::SetRayMaterial({NativeDX12::RayKind::Bottom,NativeDX12::RaySpace::RelativeAu,{.27f,.31f,.21f},0},true);
+                glDrawArrays(GL_TRIANGLES,0,patchCount);
+                glUniform1i(glGetUniformLocation(program,"seabedRendering"),false);
+            }
+            if(rayBody)NativeDX12::SetRayMaterial({});
+#endif
             glUniform1i(glGetUniformLocation(program,"patchDrawing"),false);
         }
     }
@@ -1109,12 +1172,12 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
             Astronomy::solarGravityAu*planets[5].massEarth/332946.0487,seconds);
     }
     int livingPlanet=divePlanet;double livingClearance=std::numeric_limits<double>::max();
-    if((vegetationEnabled || birdsEnabled || fishEnabled) && divePlanet<0)for(int planet=0;planet<static_cast<int>(planets.size());++planet){
+    if(!captureReflectionSky && (vegetationEnabled || birdsEnabled || fishEnabled) && divePlanet<0)for(int planet=0;planet<static_cast<int>(planets.size());++planet){
         const auto& body=planets[planet];if(!body.HasMulticellularLife() || body.gas || body.wormhole)continue;
         const double clearance=std::abs(glm::length(Position(planet,seconds)-camera)-body.radiusEarth*Astronomy::earthRadiusAu);
         if(clearance<livingClearance){livingClearance=clearance;livingPlanet=planet;}
     }
-    if(livingPlanet>=0 && planets[livingPlanet].HasMulticellularLife()){
+    if(!captureReflectionSky && livingPlanet>=0 && planets[livingPlanet].HasMulticellularLife()){
         if(livingPlanet!=wildlifePlanet){birds.Reset();fish.Reset();wildlifePlanet=livingPlanet;}
         const auto& body=planets[livingPlanet];
         const auto centre=Position(livingPlanet,seconds);
@@ -1142,11 +1205,14 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
                 [&](const glm::vec3& direction){return WaterDepth(livingPlanet,direction,seconds);});
         }
     }
+#ifdef RENDER_ENGINE_DX12
+    if(rayScene)NativeDX12::ResolveRayScene(reflectionSky);
+#endif
     for (int planet = 0; planet < static_cast<int>(planets.size()); ++planet)
     {
         if(planet==divePlanet)continue;
         const auto& body=planets[planet];
-        const bool reflectOcean=oceanReflectionsEnabled && body.HasSurfaceLiquid();
+        const bool reflectOcean=!captureReflectionSky && oceanReflectionsEnabled && body.HasSurfaceLiquid();
         if(!body.atmosphere && !reflectOcean)continue;
         const auto center = glm::vec3(Position(planet, seconds) - camera);
         const auto weather=WeatherState(planet,seconds);
@@ -1158,7 +1224,7 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
     for(int body=0;body<static_cast<int>(planets.size());++body)
         if(planets[body].wormhole)wormhole.Render(vp,Position(body,seconds)-camera,
             planets[body].radiusEarth*Astronomy::earthRadiusAu,wormholeSky);
-    if(divePlanet>=0){
+    if(!captureReflectionSky && divePlanet>=0){
         const auto& body=planets[divePlanet];
         const auto center=Position(divePlanet,seconds);
         const auto rotation=RotationDouble(divePlanet,seconds);
@@ -1169,6 +1235,18 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
     }
     glBindVertexArray(0);
 }
+
+#ifdef RENDER_ENGINE_DX12
+bool StarSystem::HasLocalReflectionReceivers(double seconds) const {
+    if(!oceanReflectionsEnabled || !InDetailRange() || DepthBelowWater()>0)return false;
+    for(int planet=0;planet<static_cast<int>(planets.size());++planet){
+        const auto& body=planets[planet];
+        if(!body.gas && !body.wormhole && glm::length(camera-Position(planet,seconds))-
+            body.radiusEarth*Astronomy::earthRadiusAu < 145000.0/Astronomy::metresPerAu)return true;
+    }
+    return false;
+}
+#endif
 
 void StarSystem::RenderOverlays(float fieldOfView,float aspect,const glm::vec3& front,const glm::vec3& up,
                                 double seconds,bool trajectories,bool showSelection,int lensProfile){

@@ -1,5 +1,8 @@
 #include "glad/glad.h"
 #include "Atmosphere.h"
+#ifdef RENDER_ENGINE_DX12
+#include "dx12/Dx12SceneBridge.h"
+#endif
 #include <cmath>
 #include <string>
 #include <glm/gtc/type_ptr.hpp>
@@ -516,6 +519,9 @@ void Atmosphere::Render(const glm::mat4& viewProjection, const glm::vec3& camera
                         const glm::vec3& lightPosition,bool earthClouds,double seconds,const glm::mat3& rotation,bool oceanReflections,float waterSpecularScale,
                         const PlanetWeather::State* weather,glm::vec2 marineHazeLight,bool captureDiskForeground,bool renderAir,
                         float depthBelowWater) const {
+#ifdef RENDER_ENGINE_DX12
+    oceanReflections = oceanReflections && NativeDX12::ScreenSpaceReflectionsEnabled();
+#endif
     const bool reflectOcean=oceanReflections && depthBelowWater<=0 && glm::length(center-camera)<radius*1.32f;
     if(!renderAir && !reflectOcean)return;
     int viewport[4];

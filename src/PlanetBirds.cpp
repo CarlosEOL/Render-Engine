@@ -4,6 +4,9 @@
 #include "PlanetTerrain.h"
 #include "PlanetWeather.h"
 #include "glad/glad.h"
+#ifdef RENDER_ENGINE_DX12
+#include "dx12/Dx12SceneBridge.h"
+#endif
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <algorithm>
@@ -315,6 +318,11 @@ void PlanetBirds::Render(const Habitat& h, const glm::dmat3& rotation,
         stepRemainder-=fixedStep;
     }
     for(auto& batch:visible)batch.clear();
+#ifdef RENDER_ENGINE_DX12
+    const bool rayBirds=NativeDX12::CapturingRayScene();
+#else
+    constexpr bool rayBirds=false;
+#endif
     for(const auto& flock:flocks){
         const auto index=static_cast<unsigned>(flock.species);
         const glm::dmat3 orientation=rotation*flock.frame;
@@ -325,7 +333,7 @@ void PlanetBirds::Render(const Habitat& h, const glm::dmat3& rotation,
             const auto relative=glm::vec3(centre+orientation*glm::dvec3(bird.position+bird.velocity*static_cast<float>(stepRemainder)));
             if(glm::dot(relative,relative)>viewRange*viewRange)continue;
             const auto clip=viewProjection*glm::vec4(relative/static_cast<float>(Astronomy::metresPerAu),1);
-            if(clip.w<=0 || std::abs(clip.x)>clip.w*1.06f || std::abs(clip.y)>clip.w*1.06f)continue;
+            if(!rayBirds && (clip.w<=0 || std::abs(clip.x)>clip.w*1.06f || std::abs(clip.y)>clip.w*1.06f))continue;
             const float flutter=index==1?8.f:index==2?3.1f:3.7f;
             const float glide=index==1?.9f:glm::smoothstep(-.60f,.4f,std::sin(birdTime*1.05f+bird.phase));
             const float stroke=std::sin(birdTime*flutter*glm::two_pi<float>()+bird.phase);
@@ -345,11 +353,18 @@ void PlanetBirds::Render(const Habitat& h, const glm::dmat3& rotation,
     glBindBuffer(GL_ARRAY_BUFFER,instances);
     for(unsigned i=0;i<speciesCount;++i){
         if(visible[i].empty())continue;
+#ifdef RENDER_ENGINE_DX12
+        const glm::vec3 colors[]={{.58f,.63f,.69f},{.11f,.15f,.21f},{.39f,.32f,.24f}};
+        if(rayBirds)NativeDX12::SetRayMaterial({NativeDX12::RayKind::Solid,NativeDX12::RaySpace::RelativeMetres,colors[i],.025f});
+#endif
         glBufferData(GL_ARRAY_BUFFER,visible[i].size()*sizeof(Instance),visible[i].data(),GL_DYNAMIC_DRAW);
         glDrawArraysInstanced(GL_TRIANGLES,vertexStart[i],vertexCount[i],static_cast<int>(visible[i].size()));
         visibleCount+=visible[i].size();
         visibleSpecies|=1u<<i;
     }
+#ifdef RENDER_ENGINE_DX12
+    if(rayBirds)NativeDX12::SetRayMaterial({});
+#endif
     glBindVertexArray(0);
     if(blend)glEnable(GL_BLEND);
     if(cull)glEnable(GL_CULL_FACE);

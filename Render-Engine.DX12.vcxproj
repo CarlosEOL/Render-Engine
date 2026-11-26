@@ -19,7 +19,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
-      <AdditionalIncludeDirectories>$(ProjectDir)..\External_Lib\include;$(ProjectDir)src</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(IntDir);$(ProjectDir)..\External_Lib\include;$(ProjectDir)src</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>RENDER_ENGINE_DX12;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <DebugInformationFormat Condition="'$(Configuration)'=='Debug'">OldStyle</DebugInformationFormat>
       <DebugInformationFormat Condition="'$(Configuration)'=='Release'">ProgramDatabase</DebugInformationFormat>
@@ -53,7 +53,17 @@ copy /Y "$(ProjectDir)..\External_Lib\lib\assimp-vc143-mtd.dll" "$(OutDir)" &gt;
     <ClCompile Include="src\dx12\Dx12SceneBridge.cpp" />
     <ClCompile Include="src\dx12\Dx12Dlss.cpp" />
     <ClCompile Include="src\dx12\Dx12Renderer.cpp" />
+    <ClCompile Include="src\dx12\Dx12RayTracing.cpp" />
   </ItemGroup>
+  <Target Name="BuildSurfaceRays" BeforeTargets="ClCompile"
+          Inputs="$(ProjectDir)src\dx12\shaders\SurfaceRays.hlsl" Outputs="$(IntDir)SurfaceRays.generated.h">
+    <PropertyGroup>
+      <SurfaceSdkVersion>$([Microsoft.Build.Utilities.ToolLocationHelper]::GetLatestSDKTargetPlatformVersion('Windows', '10.0'))</SurfaceSdkVersion>
+      <SurfaceDxcPath Condition="'$(SurfaceDxcPath)'==''">$(WindowsSdkDir)bin\$(SurfaceSdkVersion)\x64\dxc.exe</SurfaceDxcPath>
+    </PropertyGroup>
+    <MakeDir Directories="$(IntDir)" />
+    <Exec Command="&quot;$(SurfaceDxcPath)&quot; -T cs_6_5 -E main -O3 -Fh &quot;$(IntDir)SurfaceRays.generated.h&quot; -Vn SurfaceRayShader &quot;$(ProjectDir)src\dx12\shaders\SurfaceRays.hlsl&quot;" />
+  </Target>
   <ItemGroup>
     <ClInclude Include="src\dx12\Dx12SceneBridge.h" />
     <ClInclude Include="src\dx12\Dx12Dlss.h" />

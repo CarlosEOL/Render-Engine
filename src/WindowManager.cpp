@@ -299,8 +299,18 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
         return;
     }
 #ifdef RENDER_ENGINE_DX12
+    if(key==RayTracingMenuCommand){
+        const bool enabled=NativeDX12::SetHardwareRays(!NativeDX12::HardwareRaysEnabled());
+        CheckMenuItem(static_cast<HMENU>(manager.nativePerformanceMenu),RayTracingMenuCommand,
+            MF_BYCOMMAND | (enabled?MF_CHECKED:MF_UNCHECKED));
+        CheckMenuRadioItem(static_cast<HMENU>(manager.nativeDlssMenu),1350,1354,
+            1350+static_cast<unsigned>(NativeDX12::GetDlssMode()),MF_BYCOMMAND);
+        manager.ShowStatusToast(enabled?"Hardware ray tracing on":"Screen-space reflections on");
+        return;
+    }
     if(key>=1350 && key<=1354){
         NativeDX12::SetDlssMode(static_cast<NativeDX12::DlssMode>(key-1350));
+        CheckMenuRadioItem(static_cast<HMENU>(manager.nativeDlssMenu),1350,1354,key,MF_BYCOMMAND);
         manager.ShowStatusToast(key==1350?"DLSS off":NativeDX12::DlssStatus());
         return;
     }
@@ -2002,6 +2012,39 @@ void WindowManager::RenderSpeedToast() {
 }
 
 
+#ifdef RENDER_ENGINE_DX12
+unsigned WindowManager::PrepareReflectionSky(bool catalogue) {
+    const auto origin=catalogue?systemOriginAu+starSystem.camera:cameraPos;
+    const double now=glfwGetTime();
+    const double travel=glm::length(origin-reflectionSkyOrigin)*Astronomy::metresPerAu;
+    const bool sameScene=sceneCacheValid && reflectionSkyTexture && reflectionSkyCatalogue==catalogue &&
+        (!catalogue || reflectionSkySystem==activeSystemTarget);
+    const bool moved=travel>180.0 || std::abs(simulationTime-reflectionSkyTime)>12.0;
+    if(sameScene && travel<50000.0 && (!moved || now-reflectionSkyUpdated<.6))return reflectionSkyTexture;
+
+    // This is linear HDR scene radiance in world directions, without camera
+    // exposure, postprocessing or screen overlays.
+    const auto projection=glm::perspective(glm::half_pi<float>(),1.f,
+        static_cast<float>(.1/Astronomy::metresPerAu),20000.f);
+    reflectionSkyTexture=reflectedEnvironment.Capture([&](const glm::vec3& direction,const glm::vec3& up){
+        const auto vp=projection*glm::lookAt(glm::vec3(0),direction,up);
+        if(catalogue){
+            blackHole.RenderBackground(vp,origin,false,0,glm::dvec3(0),true,2.f);
+            starSystem.Render(90.f,1.f,direction,up,simulationTime,false,false,false,
+                starSystem.IsSolarSystem()?gargantuaPortalSky:0,0,true);
+        }else{
+            blackHole.Render(vp,origin,simulationTime,glm::vec3(0),false,-1,0,glm::vec3(0),false,false,0,0,true);
+        }
+    });
+    reflectionSkyOrigin=origin;
+    reflectionSkyTime=simulationTime;
+    reflectionSkyUpdated=now;
+    reflectionSkyCatalogue=catalogue;
+    reflectionSkySystem=activeSystemTarget;
+    return reflectionSkyTexture;
+}
+#endif
+
 void WindowManager::Update(float& dT) {
     glfwPollEvents();
     if (isClosed()) return;
@@ -2249,6 +2292,11 @@ void WindowManager::Update(float& dT) {
         optics.SetBlackHoleHint({-1,-1,0});optics.SetStellarHint({-1,-1,0});optics.SetSystemSources({},0);
     }else if (inStarSystem && starSystemReady) {
         glPolygonMode(GL_FRONT_AND_BACK,GL_FILL);
+        unsigned reflectionSky=0;
+#ifdef RENDER_ENGINE_DX12
+        if(blackHoleReady && !starSystem.IsCore() && NativeDX12::HardwareRaysEnabled() &&
+            starSystem.HasLocalReflectionReceivers(simulationTime))reflectionSky=PrepareReflectionSky(true);
+#endif
         if(blackHoleReady && !starSystem.IsCore()){
             const auto skyProjection=glm::perspective(glm::radians(fieldOfView),aspectRatio,.00001f,20000.f);
             const auto skyView=glm::lookAt(glm::vec3(0),cameraFront,cameraUp);
@@ -2263,7 +2311,7 @@ void WindowManager::Update(float& dT) {
             blackHole.RenderCore(glm::perspective(glm::radians(fieldOfView),aspectRatio,.00001f,20000.f)*glm::lookAt(glm::vec3(0),cameraFront,cameraUp),starSystem.camera,activeSystemTarget,simulationTime,physical,beta);
         }
         else starSystem.Render(fieldOfView,aspectRatio,cameraFront,cameraUp,simulationTime,trajectories,photonView,pendingSystemTarget==activeSystemTarget,
-            blackHoleReady && starSystem.IsSolarSystem()?gargantuaPortalSky:0);
+            blackHoleReady && starSystem.IsSolarSystem()?gargantuaPortalSky:0,reflectionSky);
         if(pendingSystemTarget>=10 && pendingSystemTarget!=activeSystemTarget)
             blackHole.RenderCatalogueSelection(projection*glm::lookAt(glm::vec3(0),cameraFront,cameraUp),
                 systemOriginAu+starSystem.camera,pendingSystemTarget,simulationTime);
@@ -2272,10 +2320,15 @@ void WindowManager::Update(float& dT) {
         const bool physicalObserver=kerrObserverValid && observerSpin==blackHole.Spin() && (observerGravity || horizonReached) && !interiorVehicle
             && glm::length(cameraPos-InterstellarWorlds::Orientation()*kerrObserver.state.position)<1e-9;
         const auto physicalBeta=physicalObserver?InterstellarWorlds::Orientation()*KerrSpacetime::ObserverBeta(kerrObserver,BlackHole::HorizonRadius(),observerSpin):glm::dvec3(0);
+        unsigned reflectionSky=0;
+#ifdef RENDER_ENGINE_DX12
+        if(!blackHoleJourney.inside && DepthBelowWater()<=0 && NativeDX12::HardwareRaysEnabled() &&
+            blackHole.HasLocalReflectionReceivers(cameraPos,simulationTime))reflectionSky=PrepareReflectionSky(false);
+#endif
         blackHole.Render(projection * view, cameraPos, simulationTime,
             interiorVehicle?glm::vec3(blackHole.CockpitPose(interiorVehicle,simulationTime).velocity)
                 :observerGravity || horizonReached ? glm::vec3(observer.velocity) : glm::vec3(0.0f),trajectories,selectedTarget,interiorVehicle,glm::vec3(physicalBeta),physicalObserver,hdrMode,
-            static_cast<float>(DepthBelowWater()));
+            static_cast<float>(DepthBelowWater()),reflectionSky);
         optics.SetDiskForegroundTexture(blackHole.DiskForegroundTexture());
         if(interiorVehicle)vehicleInterior.Render(projection*view,glm::mat3(lastCabinRotation),interiorVehicle>=2,
             static_cast<float>(blackHole.SpacecraftFuelSeconds()/InterstellarWorlds::FuelSeconds));
@@ -2310,7 +2363,15 @@ void WindowManager::Update(float& dT) {
 
         // Choose draw count from loaded vertices
         GLsizei drawCount = currentModelVertices.empty() ? 36 : currentModelVertices.size() / 6;
+#ifdef RENDER_ENGINE_DX12
+        const bool rayModel=!showWireframe && NativeDX12::BeginRayScene(
+            {projection*view,glm::vec3(cameraPos),{0,0,-1},2000.f,false,false,true,true});
+        if(rayModel)NativeDX12::SetRayMaterial({NativeDX12::RayKind::Solid,NativeDX12::RaySpace::World,{.82f,.82f,.76f},.17f});
+#endif
         glDrawArrays(GL_TRIANGLES, 0, drawCount);
+#ifdef RENDER_ENGINE_DX12
+        if(rayModel)NativeDX12::ResolveRayScene();
+#endif
 
         glBindVertexArray(0);
     }
@@ -2521,9 +2582,14 @@ void WindowManager::MakeNewWindow() {
     AppendMenuW(viewMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(exposureMenu), L"Exposure / HDR");
     const HMENU performance=CreatePopupMenu();
 #ifdef RENDER_ENGINE_DX12
+    nativePerformanceMenu=performance;
+    AppendMenuW(performance,MF_STRING | (NativeDX12::HardwareRaysAvailable()?MF_ENABLED:MF_GRAYED),
+        RayTracingMenuCommand,L"Hardware ray tracing");
     const HMENU reconstruction=CreatePopupMenu();
+    nativeDlssMenu=reconstruction;
     const wchar_t* dlssModes[]={L"Off - native rendering (default)",L"DLSS Quality",L"DLSS Balanced",L"DLSS Performance",L"DLAA - native resolution"};
     for(int i=0;i<5;++i)AppendMenuW(reconstruction,MF_STRING,1350+i,dlssModes[i]);
+    CheckMenuRadioItem(reconstruction,1350,1354,1350,MF_BYCOMMAND);
     AppendMenuW(performance,MF_POPUP,reinterpret_cast<UINT_PTR>(reconstruction),L"NVIDIA DLSS (experimental)");
 #endif
     AppendMenuW(performance,MF_STRING,1303,L"Cooler mode: 30 FPS / 50% resolution");
@@ -2613,6 +2679,9 @@ void WindowManager::ReleaseGraphics() {
     vehicleInterior.Release();
     tesseractScene.Release();
     quantum.Release();
+#ifdef RENDER_ENGINE_DX12
+    reflectedEnvironment.Release();
+#endif
     starSystem.Release();
     solarPortalSystem.Release();
     optics.Release();

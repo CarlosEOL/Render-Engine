@@ -19,7 +19,8 @@ int RunEngine(int argc,char** argv) {
     const bool lensingChecks=argc>1 && std::string(argv[1])=="--lensing-check";
     const bool wormholeChecks=argc>1 && std::string(argv[1])=="--wormhole-check";
     const bool weatherChecks=argc>1 && std::string(argv[1])=="--weather-check";
-    const bool renderChecks=uiChecks || galaxyChecks || lensingChecks || wormholeChecks || weatherChecks || (argc>1 && std::string(argv[1])=="--render-check");
+    const bool rayChecks=argc>1 && std::string(argv[1])=="--raytracing-check";
+    const bool renderChecks=uiChecks || galaxyChecks || lensingChecks || wormholeChecks || weatherChecks || rayChecks || (argc>1 && std::string(argv[1])=="--render-check");
     if(renderChecks){std::cout<<std::unitbuf;std::cerr<<std::unitbuf;}
 #ifdef RENDER_ENGINE_DX12
     bool warp=false;for(int i=1;i<argc;++i)if(std::string(argv[i])=="--warp")warp=true;
@@ -29,7 +30,7 @@ int RunEngine(int argc,char** argv) {
     window.MakeNewWindow();
     cout << "Made a new window.\n" << endl;
     if(renderChecks) {
-        bool success=window.RunRenderChecks(argc>2?argv[2]:"build/render-checks",uiChecks,galaxyChecks,lensingChecks,wormholeChecks,weatherChecks);
+        bool success=window.RunRenderChecks(argc>2?argv[2]:"build/render-checks",uiChecks,galaxyChecks,lensingChecks,wormholeChecks,weatherChecks,rayChecks);
 #ifdef RENDER_ENGINE_DX12
         const auto errors=NativeDX12::SceneValidationErrors();
         std::cout<<"DX12 scene validation errors="<<errors<<"\n";

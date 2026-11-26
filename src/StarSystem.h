@@ -104,7 +104,11 @@ class StarSystem
     unsigned FishCaught() const {return fish.FishCaught();}
     void SetFishEnabled(bool value){fishEnabled=value;}
     void Render(float fieldOfView, float aspect, const glm::vec3 &front, const glm::vec3 &up, double seconds,
-                bool trajectories, bool photonView, bool showSelection = true, unsigned int wormholeSky = 0);
+                bool trajectories, bool photonView, bool showSelection = true, unsigned int wormholeSky = 0,
+                unsigned reflectionSky = 0, bool captureReflectionSky = false);
+#ifdef RENDER_ENGINE_DX12
+    bool HasLocalReflectionReceivers(double seconds) const;
+#endif
     void RenderOverlays(float fieldOfView,float aspect,const glm::vec3& front,const glm::vec3& up,
                         double seconds,bool trajectories,bool showSelection,int lensProfile=0);
     void GoToSelected(double seconds, glm::vec3 &front, glm::vec3 &up);

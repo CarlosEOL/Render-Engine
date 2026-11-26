@@ -3,6 +3,9 @@
 #include "Astronomy.h"
 #include "FlockSteering.h"
 #include "MarineAnimalGeometry.h"
+#ifdef RENDER_ENGINE_DX12
+#include "dx12/Dx12SceneBridge.h"
+#endif
 #include "glad/glad.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
@@ -129,7 +132,13 @@ void main(){
         stepRemainder+=haveTime?std::min(seconds-lastTime,.24):0.0;
         haveTime=true;
         lastTime=seconds;
-        if(submerged)Populate(cameraLocal,surfaceRadiusMetres,seed,waterDepth);
+#ifdef RENDER_ENGINE_DX12
+        const bool rayAnimals=NativeDX12::CapturingRayScene();
+#else
+        constexpr bool rayAnimals=false;
+#endif
+        if(submerged || rayAnimals)
+            Populate(submerged?cameraLocal:up*(surfaceRadiusMetres-5.),surfaceRadiusMetres,seed,waterDepth);
         constexpr double step=.025;
         while(stepRemainder>=step){
             for(auto& school:schools)Advance(school,static_cast<float>(step));
@@ -139,11 +148,11 @@ void main(){
         const auto queue=[&](unsigned animal,const glm::dvec3& location,const glm::vec3& heading,float scale,float phase,float tint){
             const auto relative=glm::vec3(rotation*(location-cameraLocal));
             const auto clip=viewProjection*glm::vec4(relative/static_cast<float>(Astronomy::metresPerAu),1);
-            if(clip.w<=0 || std::abs(clip.x)>clip.w*1.10f || std::abs(clip.y)>clip.w*1.10f)return;
+            if(!rayAnimals && (clip.w<=0 || std::abs(clip.x)>clip.w*1.10f || std::abs(clip.y)>clip.w*1.10f))return;
             visible[animal].push_back({glm::vec4(relative,scale),glm::vec4(glm::vec3(rotation*glm::dvec3(heading)),0),
                 glm::vec4(0,phase,tint,0)});
         };
-        if(submerged){
+        if(submerged || rayAnimals){
             for(const auto& school:schools){
                 if(glm::length(school.origin-cameraLocal)>39)continue;
                 for(std::size_t i=0;i<school.count;++i){
@@ -165,7 +174,7 @@ void main(){
                 }
             }
         }
-        AddDolphins(cameraLocal,surfaceRadiusMetres,seconds,seed,submerged,waterDepth,queue);
+        AddDolphins(cameraLocal,surfaceRadiusMetres,seconds,seed,submerged || rayAnimals,waterDepth,queue);
         if(std::all_of(visible.begin(),visible.end(),[](const auto& batch){return batch.empty();}))return;
         const bool blend=glIsEnabled(GL_BLEND),cull=glIsEnabled(GL_CULL_FACE);
         glDisable(GL_BLEND);glDisable(GL_CULL_FACE);
@@ -181,9 +190,18 @@ void main(){
             if(visible[animal].empty())continue;
             glUniform1i(glGetUniformLocation(program,"animalKind"),animal);
             glBufferData(GL_ARRAY_BUFFER,visible[animal].size()*sizeof(Instance),visible[animal].data(),GL_DYNAMIC_DRAW);
+#ifdef RENDER_ENGINE_DX12
+            const glm::vec3 colors[]={{.18f,.31f,.31f},{.47f,.49f,.50f},{.25f,.36f,.43f}};
+            if(rayAnimals)NativeDX12::SetRayMaterial(
+                {animal==2?NativeDX12::RayKind::Solid:NativeDX12::RayKind::Submerged,
+                 NativeDX12::RaySpace::RelativeMetres,colors[animal],.06f},animal<2 && !submerged);
+#endif
             glDrawArraysInstanced(GL_TRIANGLES,vertexStart[animal],vertexCount[animal],static_cast<int>(visible[animal].size()));
-            lastDrawn[animal]=visible[animal].size();
+            if(submerged || animal==2)lastDrawn[animal]=visible[animal].size();
         }
+#ifdef RENDER_ENGINE_DX12
+        if(rayAnimals)NativeDX12::SetRayMaterial({});
+#endif
         glBindVertexArray(0);
         if(blend)glEnable(GL_BLEND);
         if(cull)glEnable(GL_CULL_FACE);

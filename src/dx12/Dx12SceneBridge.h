@@ -1,5 +1,6 @@
 #pragma once
 #include "Dx12Dlss.h"
+#include <vector>
 
 namespace NativeDX12 {
 void ConfigureSceneBridge(bool validation, bool warp = false);
@@ -10,8 +11,41 @@ void PresentScene();
 void SetSceneSwapInterval(int interval);
 void ReleaseSceneBridge();
 unsigned SceneValidationErrors();
+enum class RayKind : unsigned { None, Surface, Bottom, Solid, Submerged, Glass };
+enum class RaySpace { RelativeAu, RelativeMetres, World };
+struct RayMaterial {
+    RayKind kind = RayKind::None;
+    RaySpace space = RaySpace::RelativeAu;
+    glm::vec3 color{.4f};
+    float reflectivity = 0;
+    bool visibleInReflections = true;
+};
+struct RayView {
+    glm::mat4 viewProjection{1.f};
+    glm::vec3 eye{0.f}, light{0.f, 1.f, 0.f};
+    float range = 10000.f;
+    bool logarithmic = true, underwater = false, reflection = true, refraction = true;
+    glm::vec4 sky{0.f};
+};
+bool HardwareRaysAvailable();
+bool HardwareRaysEnabled();
+bool ScreenSpaceReflectionsEnabled();
+bool SetHardwareRays(bool enabled);
+bool BeginRayScene(const RayView& view);
+bool CapturingRayScene();
+void SetRayMaterial(RayMaterial material, bool only = false);
+bool ResolveRayScene(unsigned environment = 0);
+unsigned long long RayPassCount();
+unsigned RayGeometryCount(RayKind kind);
+struct RayCoverage {
+    unsigned receivers = 0, sampled = 0, reflectedHits = 0, waterNormals = 0;
+    double meanEnvironmentLuminance = 0;
+    float brightestEnvironment = 0;
+};
+RayCoverage InspectRayCoverage(std::vector<float>* environmentLuminance = nullptr);
 void SetDlssMode(DlssMode mode);
 DlssMode GetDlssMode();
+bool DlssAvailable();
 const char* DlssStatus();
 // Returns the SDK's render size; unchanged scenes accumulate subpixel samples.
 glm::uvec2 PrepareSceneReconstruction(unsigned width, unsigned height, bool unchanged);

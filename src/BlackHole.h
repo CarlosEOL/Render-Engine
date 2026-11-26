@@ -57,7 +57,7 @@ public:
     size_t ResidentStarCells() const {return catalogue.ResidentCells();}
     void SetGalaxyMagnitudeLimit(float value){value=glm::clamp(value,-2.f,30.f);if(galaxyMagnitudeLimit!=value){galaxyMagnitudeLimit=value;skyCubeDirty=true;}}
     void RenderBackground(const glm::mat4& vp,const glm::dvec3& camera,bool photons=false,
-        double seconds=0,const glm::dvec3& detector=glm::dvec3(0),bool includeLocal=true) const;
+        double seconds=0,const glm::dvec3& detector=glm::dvec3(0),bool includeLocal=true,float starPointSize=7.f) const;
     void RenderCore(const glm::mat4& vp,const glm::dvec3& localCamera,int coreId,double seconds,
         bool physicalObserver=false,const glm::vec3& physicalBeta=glm::vec3(0)) const;
     std::vector<int> NearbyStars(const glm::dvec3& camera) const { return catalogue.Nearby(camera); }
@@ -118,7 +118,11 @@ public:
     void Render(const glm::mat4& viewProjection, const glm::dvec3& cameraPosition, double seconds,
                 const glm::vec3& observerVelocity = glm::vec3(0.0f), bool trajectories = true, int selected = -1,int interiorVehicle=0,
                 const glm::vec3& physicalObserverBeta=glm::vec3(0),bool physicalObserver=false,
-                bool captureDiskForeground=false,float depthBelowMiller=0) const;
+                bool captureDiskForeground=false,float depthBelowMiller=0,
+                unsigned reflectionSky=0,bool captureReflectionSky=false) const;
+#ifdef RENDER_ENGINE_DX12
+    bool HasLocalReflectionReceivers(const glm::dvec3& camera,double seconds) const;
+#endif
     unsigned int DiskForegroundTexture() const { return atmosphere.DiskForegroundTexture(); }
     void Release();
 

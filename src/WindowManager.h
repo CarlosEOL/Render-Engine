@@ -45,7 +45,7 @@ public:
     void ReleaseGraphics();
     double GetSimulationTime() const { return simulationTime; }
     int GetFrameLimit() const { return !isFocused || mainMenu.Visible() || idleFrame ? glm::min(frameLimit,30) : frameLimit; }
-    bool RunRenderChecks(const std::string& directory, bool uiOnly = false, bool galaxyOnly = false, bool lensingOnly = false, bool wormholeOnly = false,bool weatherOnly=false);
+    bool RunRenderChecks(const std::string& directory, bool uiOnly = false, bool galaxyOnly = false, bool lensingOnly = false, bool wormholeOnly = false,bool weatherOnly=false,bool rayOnly=false);
 
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
     static void MouseCallback(GLFWwindow* window, double xPos, double yPos);
@@ -130,6 +130,15 @@ private:
     float renderedBlackHoleScale=0;
     float lensFlareStrength = .45f;
     bool sceneCacheValid = false;
+#ifdef RENDER_ENGINE_DX12
+    unsigned PrepareReflectionSky(bool catalogue);
+    SkyCubeCapture<384> reflectedEnvironment;
+    glm::dvec3 reflectionSkyOrigin{0};
+    double reflectionSkyTime=0, reflectionSkyUpdated=0;
+    int reflectionSkySystem=0;
+    bool reflectionSkyCatalogue=false;
+    unsigned reflectionSkyTexture=0;
+#endif
     bool idleFrame = false;
     std::array<double,24> lastSceneSignature = {};
     NavigationCatalog navigationCatalog;
@@ -164,7 +173,10 @@ private:
     int quantumRateIndex = 2;
     void* nativeMenu = nullptr;
     void* nativeViewMenu = nullptr;
+    void* nativePerformanceMenu = nullptr;
+    void* nativeDlssMenu = nullptr;
     static constexpr int WeatherMenuCommand = 1380;
+    static constexpr int RayTracingMenuCommand = 1381;
     bool weatherEnabled = true;
     CameraOptics optics;
     bool opticsReady = false;

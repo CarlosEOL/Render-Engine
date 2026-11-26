@@ -4,14 +4,11 @@
 #include <cmath>
 #include <limits>
 #include <initializer_list>
+#include <utility>
 
-// Destination environments are independent of the camera's streamed star cells.
-// Capture once per simulated hour, and never render either mouth recursively.
-class WormholeSkyCache {
+template<int size> class SkyCubeCapture {
 public:
-    template<class Draw> unsigned Capture(double seconds, Draw draw) {
-        const double next=std::floor(seconds/3600.0);
-        if(texture && next==bucket)return texture;
+    template<class Draw> unsigned Capture(Draw draw) {
         GLint viewport[4],drawFbo,readFbo,renderbuffer,program,vao,active,depthFunc;
         GLfloat clear[4];GLboolean depthMask;
         glGetIntegerv(GL_VIEWPORT,viewport);glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&drawFbo);
@@ -49,12 +46,26 @@ public:
         glClearColor(clear[0],clear[1],clear[2],clear[3]);glUseProgram(program);glBindVertexArray(vao);
         for(int unit=0;unit<8;++unit){glActiveTexture(GL_TEXTURE0+unit);glBindTexture(GL_TEXTURE_2D,textures[unit][0]);glBindTexture(GL_TEXTURE_CUBE_MAP,textures[unit][1]);}
         glActiveTexture(active);
-        if(complete)bucket=next;
         return complete?texture:0;
     }
-    void Release(){if(texture)glDeleteTextures(1,&texture);if(fbo)glDeleteFramebuffers(1,&fbo);if(zbuffer)glDeleteRenderbuffers(1,&zbuffer);texture=fbo=zbuffer=0;bucket=std::numeric_limits<double>::quiet_NaN();}
+    void Release(){if(texture)glDeleteTextures(1,&texture);if(fbo)glDeleteFramebuffers(1,&fbo);if(zbuffer)glDeleteRenderbuffers(1,&zbuffer);texture=fbo=zbuffer=0;}
 private:
-    static constexpr int size=512;
     unsigned texture=0,fbo=0,zbuffer=0;
+};
+
+// Capture the destination once per simulated hour without rendering either mouth recursively.
+class WormholeSkyCache {
+public:
+    template<class Draw> unsigned Capture(double seconds, Draw draw) {
+        const double next=std::floor(seconds/3600.0);
+        if(texture && next==bucket)return texture;
+        texture=cube.Capture(std::move(draw));
+        if(texture)bucket=next;
+        return texture;
+    }
+    void Release(){cube.Release();texture=0;}
+private:
+    SkyCubeCapture<512> cube;
+    unsigned texture=0;
     double bucket=std::numeric_limits<double>::quiet_NaN();
 };

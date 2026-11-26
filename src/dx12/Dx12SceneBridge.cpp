@@ -1,5 +1,6 @@
 #include "Dx12SceneBridge.h"
 #include "Dx12Renderer.h"
+#include "Dx12RayTracing.h"
 #include "ShaderTranslator.h"
 #include "glad/glad.h"
 #include <d3dcompiler.h>
@@ -108,7 +109,7 @@ struct UniformValue {
 struct Program {
   std::vector<GLuint> shaders;
   std::string log, vertexHlsl, fragmentHlsl;
-  bool linked = false, points = false;
+  bool linked = false, points = false, writesWaterNormal = false;
   ShaderStage vs, ps;
   Com<ID3DBlob> gs;
   std::vector<D3D12_INPUT_ELEMENT_DESC> inputs;
@@ -118,6 +119,7 @@ struct Program {
   std::map<std::string, GLint> locations;
   std::map<std::string, UniformValue> values;
   std::unordered_map<std::string, Com<ID3D12PipelineState>> pipelines;
+  std::unordered_map<std::string, Com<ID3D12PipelineState>> streamPipelines;
 };
 struct TextureUnit {
   GLuint image = 0, cube = 0;
@@ -293,6 +295,10 @@ public:
   Dlss dlss;
   DlssMode dlssMode = DlssMode::Off, preparedMode = DlssMode::Off;
   Texture dlssOutput, dlssMotion;
+  Texture rayOutput, raySamples, rayGuides, rayNormals;
+  SurfaceRayTracing rays;
+  RayMaterial rayMaterial{};
+  bool rayEnabled = false, rayOnly = false, rayNormalsReady = false;
   glm::uvec2 dlssExtent{};
   glm::vec2 dlssJitter{};
   unsigned stableFrames = 0;
@@ -394,7 +400,7 @@ public:
   Attachment Target() {
     return boundFbo ? framebuffers[boundFbo].color : Attachment{};
   }
-  void BindTargets();
+  void BindTargets(bool waterNormals);
   void BufferData(GLsizeiptr size, const void *data);
   void TexImage(GLenum target, GLint level, GLint internal, GLsizei w,
                 GLsizei h, GLenum format, GLenum type, const void *data);
@@ -405,10 +411,13 @@ public:
   void Link(Program &program);
   void SetUniform(GLint location, const void *value, UINT bytes);
   void Draw(GLenum mode, GLint first, GLsizei count, GLsizei instances);
+  bool StartRays(const RayView& view);
+  bool FinishRays(unsigned environment);
+  void CaptureRays(Program& program, const VertexArray& vao, GLint first, GLsizei count, GLsizei instances);
   D3D12_GPU_VIRTUAL_ADDRESS Constants(const ShaderStage &stage,
                                       const Program &program);
   D3D12_GPU_DESCRIPTOR_HANDLE BindTextures(const Program &program, bool vertex=false);
-  Com<ID3D12PipelineState> Pipeline(Program &program, GLenum mode);
+  Com<ID3D12PipelineState> Pipeline(Program &program, GLenum mode, bool waterNormals);
   std::vector<unsigned char> Read(Texture &texture, UINT level, UINT layer,
                                   UINT &pitch);
   void GetTexture(GLenum target, GLint level, GLenum format, GLenum type,
@@ -435,6 +444,8 @@ void SceneBridge::Initialize(HWND hwnd) {
   gpu.Initialize(window, size.right, size.bottom, sceneWarp, false,
                  sceneValidation);
   dlss.Initialize(gpu.device.Get());
+  if (!sceneWarp && rays.Initialize(gpu.device.Get(), gpu.commands.Get()) && sceneValidation)
+    std::cout << "DXR 1.1 surface ray tracing available\n";
   auto makeHeap = [&](D3D12_DESCRIPTOR_HEAP_TYPE type, UINT count, bool visible,
                       Com<ID3D12DescriptorHeap> &heap) {
     D3D12_DESCRIPTOR_HEAP_DESC d{};
@@ -473,7 +484,8 @@ void SceneBridge::Initialize(HWND hwnd) {
   D3D12_ROOT_SIGNATURE_DESC desc{};
   desc.NumParameters = static_cast<UINT>(std::size(p));
   desc.pParameters = p;
-  desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+  desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT |
+               D3D12_ROOT_SIGNATURE_FLAG_ALLOW_STREAM_OUTPUT;
   Com<ID3DBlob> signature, error;
   Check(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1,
                                     &signature, &error),
@@ -651,7 +663,7 @@ void SceneBridge::State(Texture &t, D3D12_RESOURCE_STATES next, UINT level,
   gpu.commands->ResourceBarrier(1, &barrier);
   t.states[sub] = next;
 }
-void SceneBridge::BindTargets() {
+void SceneBridge::BindTargets(bool waterNormals) {
   if (!boundFbo) {
     RECT size{};
     GetClientRect(window, &size);
@@ -664,14 +676,26 @@ void SceneBridge::BindTargets() {
   auto &color = Color();
   const auto target = Target();
   State(color, D3D12_RESOURCE_STATE_RENDER_TARGET, target.level, target.layer);
-  const auto rtv = color.rtvs[target.level + target.layer * color.levels];
+  D3D12_CPU_DESCRIPTOR_HANDLE rtvsForDraw[2]{color.rtvs[target.level + target.layer * color.levels]};
+  if (waterNormals) {
+    if (!rayNormalsReady) {
+      if (!rayNormals.resource || rayNormals.width != color.width || rayNormals.height != color.height)
+        Allocate(rayNormals, color.width, color.height, DXGI_FORMAT_R16G16B16A16_FLOAT, false);
+      State(rayNormals, D3D12_RESOURCE_STATE_RENDER_TARGET);
+      constexpr float empty[4]{};
+      gpu.commands->ClearRenderTargetView(rayNormals.rtvs[0], empty, 0, nullptr);
+      rayNormalsReady = true;
+    }
+    rtvsForDraw[1] = rayNormals.rtvs[0];
+  }
+  const UINT targetCount = waterNormals ? 2 : 1;
   auto *depth = Depth();
   if (depth && depth->resource) {
     State(*depth, D3D12_RESOURCE_STATE_DEPTH_WRITE);
     const auto dsv = depth->dsvs[0];
-    gpu.commands->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+    gpu.commands->OMSetRenderTargets(targetCount, rtvsForDraw, FALSE, &dsv);
   } else
-    gpu.commands->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+    gpu.commands->OMSetRenderTargets(targetCount, rtvsForDraw, FALSE, nullptr);
 }
 
 void SceneBridge::BufferData(GLsizeiptr size, const void *data) {
@@ -921,6 +945,14 @@ void SceneBridge::Link(Program &program) {
                      IID_PPV_ARGS(&reflection)),
           "Reflect scene textures");
     reflectTextures(program.samplers);
+    D3D11_SHADER_DESC pixelShader{};
+    reflection->GetDesc(&pixelShader);
+    for (UINT i = 0; i < pixelShader.OutputParameters; ++i) {
+      D3D11_SIGNATURE_PARAMETER_DESC output{};
+      reflection->GetOutputParameterDesc(i, &output);
+      if (output.SystemValueType == D3D_NAME_TARGET && output.SemanticIndex == 1)
+        program.writesWaterNormal = true;
+    }
     if (program.points) {
       const auto begin = program.vertexHlsl.find("struct SPIRV_Cross_Output"),
                  end = program.vertexHlsl.find("};", begin);
@@ -1124,11 +1156,11 @@ D3D12_BLEND Blend(GLenum value) {
   }
 }
 } // namespace
-Com<ID3D12PipelineState> SceneBridge::Pipeline(Program &program, GLenum mode) {
+Com<ID3D12PipelineState> SceneBridge::Pipeline(Program &program, GLenum mode, bool waterNormals) {
   std::ostringstream key;
   key << mode << '/' << Color().format << '/' << (Depth() != nullptr) << '/'
       << depthTest << depthMask << blend << cull << polygon << sourceRgb
-      << destRgb << sourceAlpha << destAlpha << '/' << depthFunction;
+      << destRgb << sourceAlpha << destAlpha << '/' << depthFunction << '/' << waterNormals;
   auto &vao = arrays[boundVao];
   auto inputs = program.inputs;
   for (auto &input : inputs) {
@@ -1171,6 +1203,14 @@ Com<ID3D12PipelineState> SceneBridge::Pipeline(Program &program, GLenum mode) {
   b.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
   p.NumRenderTargets = 1;
   p.RTVFormats[0] = Color().format;
+  if (waterNormals) {
+    p.NumRenderTargets = 2;
+    p.RTVFormats[1] = rayNormals.format;
+    p.BlendState.IndependentBlendEnable = TRUE;
+    auto& normals = p.BlendState.RenderTarget[1];
+    normals = b;
+    normals.BlendEnable = FALSE;
+  }
   p.SampleMask = UINT_MAX;
   p.SampleDesc.Count = 1;
   p.PrimitiveTopologyType =
@@ -1199,7 +1239,9 @@ void SceneBridge::Draw(GLenum mode, GLint first, GLsizei count,
   if (!program.linked)
     throw std::runtime_error("Drawing an unlinked scene shader: " +
                              program.log);
-  BindTargets();
+  const bool waterNormals = !rayOnly && rays.Capturing() && rayMaterial.kind == RayKind::Surface &&
+                            program.writesWaterNormal && Color().layers == 1 && Target().level == 0;
+  BindTargets(waterNormals);
   ID3D12DescriptorHeap *heaps[] = {srvs.Get(), samplers.Get()};
   gpu.commands->SetDescriptorHeaps(2, heaps);
   gpu.commands->SetGraphicsRootSignature(root.Get());
@@ -1215,7 +1257,7 @@ void SceneBridge::Draw(GLenum mode, GLint first, GLsizei count,
   gpu.commands->SetGraphicsRootDescriptorTable(3, BindTextures(program));
   if(!program.vertexSamplers.empty())
     gpu.commands->SetGraphicsRootDescriptorTable(5, BindTextures(program,true));
-  gpu.commands->SetPipelineState(Pipeline(program, mode).Get());
+  if (!rayOnly) gpu.commands->SetPipelineState(Pipeline(program, mode, waterNormals).Get());
   const D3D12_VIEWPORT vp{static_cast<float>(viewport[0]),
                           static_cast<float>(viewport[1]),
                           static_cast<float>(viewport[2]),
@@ -1257,7 +1299,140 @@ void SceneBridge::Draw(GLenum mode, GLint first, GLsizei count,
                             ? D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP
                             : D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
   gpu.commands->IASetPrimitiveTopology(topology);
+  if (!rayOnly) gpu.commands->DrawInstanced(count, instances, first, 0);
+  if (mode == GL_TRIANGLES && rays.Capturing() && rayMaterial.kind != RayKind::None)
+      CaptureRays(program, vao, first, count, instances);
+}
+
+bool SceneBridge::StartRays(const RayView& view) {
+  if (!rayEnabled || !rays.Available() || rays.Capturing()) return false;
+  rayMaterial = {};
+  rayOnly = false;
+  rayNormalsReady = false;
+  const auto zeros = Upload(SurfaceRayTracing::counterBytes);
+  auto settings = view;
+  if (dlssFrame && viewport[2] == static_cast<GLint>(dlss.InputSize().x) &&
+      viewport[3] == static_cast<GLint>(dlss.InputSize().y)) {
+    glm::mat4 jitter(1);
+    jitter[3][0] = -2 * dlssJitter.x / dlss.InputSize().x;
+    jitter[3][1] = 2 * dlssJitter.y / dlss.InputSize().y;
+    settings.viewProjection = jitter * settings.viewProjection;
+  }
+  return rays.Start(gpu.frameIndex, settings, {zeros.first, zeros.resource, zeros.offset, zeros.second});
+}
+
+void SceneBridge::CaptureRays(Program& program, const VertexArray& vao, GLint first, GLsizei count, GLsizei instances) {
+  if (UINT64(count)*UINT64(instances) > UINT_MAX) return;
+  const char* varying = rayMaterial.space == RaySpace::World ? " FragPos " :
+                        rayMaterial.space == RaySpace::RelativeMetres ? " relativeMetres " : " relativePosition ";
+  std::string key(varying);
+  auto inputs = program.inputs;
+  for (auto& input : inputs) {
+    const auto& attribute = vao.attributes[input.InputSlot];
+    input.AlignedByteOffset = static_cast<UINT>(attribute.offset);
+    input.InputSlotClass = attribute.divisor ? D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA
+                                            : D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
+    input.InstanceDataStepRate = attribute.divisor;
+    key += '/' + std::to_string(input.AlignedByteOffset) + ':' + std::to_string(attribute.divisor);
+  }
+  auto pipeline = program.streamPipelines.find(key);
+  if (pipeline == program.streamPipelines.end()) {
+    const auto output = program.vertexHlsl.find("struct SPIRV_Cross_Output");
+    if (output == std::string::npos) return;
+    const auto field = program.vertexHlsl.find(varying, output);
+    if (field == std::string::npos || field > program.vertexHlsl.find("};", output)) return;
+    const auto semantic = program.vertexHlsl.find("TEXCOORD", field);
+    if (semantic == std::string::npos || semantic > program.vertexHlsl.find(';', field)) return;
+    const UINT index = static_cast<UINT>(std::stoi(program.vertexHlsl.substr(semantic + 8)));
+    const D3D12_SO_DECLARATION_ENTRY entry{0, "TEXCOORD", index, 0, 3, 0};
+    const UINT stride = 3*sizeof(float);
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC settings{};
+    settings.pRootSignature = root.Get();
+    settings.VS = {program.vs.code->GetBufferPointer(), program.vs.code->GetBufferSize()};
+    settings.StreamOutput = {&entry, 1, &stride, 1, D3D12_SO_NO_RASTERIZED_STREAM};
+    settings.InputLayout = {inputs.data(), static_cast<UINT>(inputs.size())};
+    settings.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    settings.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+    settings.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+    settings.SampleMask = UINT_MAX;
+    settings.SampleDesc.Count = 1;
+    Com<ID3D12PipelineState> state;
+    Check(gpu.device->CreateGraphicsPipelineState(&settings, IID_PPV_ARGS(&state)), "Create ray geometry capture pipeline");
+    pipeline = program.streamPipelines.emplace(key, std::move(state)).first;
+  }
+  const auto output = rays.Append(static_cast<UINT>(UINT64(count)*UINT64(instances)), rayMaterial);
+  if (!output.BufferLocation) return;
+  gpu.commands->SetPipelineState(pipeline->second.Get());
+  gpu.commands->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
+  gpu.commands->SOSetTargets(0, 1, &output);
   gpu.commands->DrawInstanced(count, instances, first, 0);
+  const D3D12_STREAM_OUTPUT_BUFFER_VIEW unused{};
+  gpu.commands->SOSetTargets(0, 1, &unused);
+}
+
+bool SceneBridge::FinishRays(unsigned environment) {
+  if (!rays.Capturing()) return false;
+  rayMaterial = {};
+  rayOnly = false;
+  if (!rays.HasGeometry()) {
+    rays.Cancel();
+    return false;
+  }
+  auto& color = Color();
+  auto* depth = Depth();
+  const auto attachment = Target();
+  if (!color.resource || !depth || !depth->resource || attachment.level || attachment.layer ||
+      color.format != DXGI_FORMAT_R16G16B16A16_FLOAT || viewport[0]<0 || viewport[1]<0 ||
+      viewport[2]<=0 || viewport[3]<=0 || viewport[0]+viewport[2]>static_cast<int>(color.width) ||
+      viewport[1]+viewport[3]>static_cast<int>(color.height)) {
+    rays.Cancel();
+    return false;
+  }
+  if (!rayOutput.resource || rayOutput.width != color.width || rayOutput.height != color.height) {
+    Allocate(rayOutput, color.width, color.height, color.format, false, 1, true);
+    Allocate(raySamples, color.width, color.height, color.format, false, 1, true);
+    Allocate(rayGuides, color.width, color.height, color.format, false, 1, true);
+  }
+  gpu.commands->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
+  State(color, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+  State(*depth, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+  State(rayOutput, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+  State(raySamples, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+  State(rayGuides, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+  if (srvCursor + 7 > (gpu.frameIndex+1)*32768) {
+    rays.Cancel();
+    return false;
+  }
+  const UINT descriptors = srvCursor;
+  srvCursor += 7;
+  ID3D12Resource* sky = nullptr;
+  auto image = textures.find(environment);
+  if (image != textures.end() && image->second.resource && image->second.layers == 6) {
+    auto& cube = image->second;
+    for (UINT face = 0; face < 6; ++face)
+      State(cube, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, 0, face);
+    sky = cube.resource.Get();
+  }
+  if (rayNormalsReady)State(rayNormals, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+  const glm::uvec4 region(viewport[0], viewport[1], viewport[2], viewport[3]);
+  const bool traced = rays.Resolve([&](UINT64 bytes) {
+    const auto memory = Upload(bytes);
+    return SurfaceRayTracing::Upload{memory.first, memory.resource, memory.offset, memory.second};
+  }, color.resource.Get(), depth->resource.Get(), sky, rayNormalsReady ? rayNormals.resource.Get() : nullptr,
+      rayOutput.resource.Get(), raySamples.resource.Get(), rayGuides.resource.Get(),
+      srvs.Get(), SrvCpu(descriptors), Srv(descriptors), srvStride, region);
+  if (!traced) return false;
+  State(raySamples, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+  State(rayGuides, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+  State(rayOutput, D3D12_RESOURCE_STATE_COPY_SOURCE);
+  State(color, D3D12_RESOURCE_STATE_COPY_DEST);
+  D3D12_TEXTURE_COPY_LOCATION from{}, to{};
+  from.pResource = rayOutput.resource.Get();
+  to.pResource = color.resource.Get();
+  from.Type = to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+  const D3D12_BOX box{region.x,region.y,0,region.x+region.z,region.y+region.w,1};
+  gpu.commands->CopyTextureRegion(&to, region.x, region.y, 0, &from, &box);
+  return true;
 }
 
 void SceneBridge::Blit(Texture &texture, UINT sourceLevel,
@@ -2074,8 +2249,68 @@ unsigned SceneValidationErrors() {
   C().gpu.WaitIdle();
   return C().gpu.ErrorCount();
 }
+bool HardwareRaysAvailable() { return bridge && C().rays.Available(); }
+bool HardwareRaysEnabled() { return bridge && C().rayEnabled; }
+bool ScreenSpaceReflectionsEnabled() { return !HardwareRaysEnabled(); }
+bool SetHardwareRays(bool enabled) {
+  if (!HardwareRaysAvailable()) return false;
+  auto& scene = C();
+  scene.rayEnabled = enabled;
+  if (enabled && scene.dlss.Available()) SetDlssMode(DlssMode::Balanced);
+  return enabled;
+}
+bool BeginRayScene(const RayView& view) { return bridge && C().StartRays(view); }
+bool CapturingRayScene() { return bridge && C().rays.Capturing(); }
+void SetRayMaterial(RayMaterial material, bool only) {
+  if (!CapturingRayScene()) return;
+  C().rayMaterial = material;
+  C().rayOnly = only;
+}
+bool ResolveRayScene(unsigned environment) { return bridge && C().FinishRays(environment); }
+unsigned long long RayPassCount() { return C().rays.PassCount(); }
+unsigned RayGeometryCount(RayKind kind) { return C().rays.GeometryCount(kind); }
+RayCoverage InspectRayCoverage(std::vector<float>* environmentLuminance) {
+  auto& scene = C();
+  RayCoverage coverage;
+  if (!scene.rayOutput.resource) return coverage;
+  if (environmentLuminance)
+    environmentLuminance->assign(static_cast<size_t>(scene.raySamples.width)*scene.raySamples.height,-1.f);
+  UINT guidePitch = 0, samplePitch = 0, normalPitch = 0;
+  const auto guide = scene.Read(scene.rayGuides, 0, 0, guidePitch);
+  const auto samples = scene.Read(scene.raySamples, 0, 0, samplePitch);
+  const auto normals = scene.rayNormalsReady ? scene.Read(scene.rayNormals, 0, 0, normalPitch) : std::vector<unsigned char>{};
+  for (UINT y = 0; y < scene.rayGuides.height; ++y) {
+    for (UINT x = 0; x < scene.rayGuides.width; ++x) {
+      unsigned short g = 0, s = 0;
+      std::memcpy(&g, guide.data() + y * guidePitch + x * 8 + 6, 2);
+      std::memcpy(&s, samples.data() + y * samplePitch + x * 8 + 6, 2);
+      if (Unhalf(g) <= 0) continue;
+      ++coverage.receivers;
+      if (normalPitch) {
+        unsigned short valid = 0;
+        std::memcpy(&valid, normals.data() + y * normalPitch + x * 8 + 6, 2);
+        if (Unhalf(valid) > 0) ++coverage.waterNormals;
+      }
+      const float distance = Unhalf(s);
+      if (distance >= -1) ++coverage.sampled;
+      if (distance >= 0) ++coverage.reflectedHits;
+      if (distance == -1) {
+        unsigned short rgb[3];
+        std::memcpy(rgb, samples.data() + y * samplePitch + x * 8, sizeof(rgb));
+        const float light=.2126f*Unhalf(rgb[0])+.7152f*Unhalf(rgb[1])+.0722f*Unhalf(rgb[2]);
+        if (environmentLuminance)(*environmentLuminance)[static_cast<size_t>(y)*scene.raySamples.width+x]=light;
+        coverage.meanEnvironmentLuminance+=light;
+        coverage.brightestEnvironment=std::max(coverage.brightestEnvironment,light);
+      }
+    }
+  }
+  if (coverage.sampled > coverage.reflectedHits)
+    coverage.meanEnvironmentLuminance/=coverage.sampled-coverage.reflectedHits;
+  return coverage;
+}
 void SetDlssMode(DlssMode mode) { C().dlssMode=mode;C().stableFrames=0; }
 DlssMode GetDlssMode() { return C().dlssMode; }
+bool DlssAvailable() { return bridge && C().dlss.Available(); }
 const char* DlssStatus() { return C().dlss.Status().c_str(); }
 glm::uvec2 PrepareSceneReconstruction(unsigned w,unsigned h,bool unchanged) {return C().PrepareReconstruction(w,h,unchanged);}
 bool ReconstructionNeedsFrame() {return C().dlssFrame;}
