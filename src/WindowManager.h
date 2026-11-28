@@ -45,7 +45,9 @@ public:
     void ReleaseGraphics();
     double GetSimulationTime() const { return simulationTime; }
     int GetFrameLimit() const { return !isFocused || mainMenu.Visible() || idleFrame ? glm::min(frameLimit,30) : frameLimit; }
-    bool RunRenderChecks(const std::string& directory, bool uiOnly = false, bool galaxyOnly = false, bool lensingOnly = false, bool wormholeOnly = false,bool weatherOnly=false,bool rayOnly=false);
+    bool RunRenderChecks(const std::string& directory, bool uiOnly = false, bool galaxyOnly = false, bool lensingOnly = false, bool wormholeOnly = false,
+        bool weatherOnly=false,bool rayOnly=false,bool wondersOnly=false,bool precipitationOnly=false,bool shorelineOnly=false,bool cityOnly=false,
+        bool earthAtmosphereOnly=false,bool exposureOnly=false);
 
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
     static void MouseCallback(GLFWwindow* window, double xPos, double yPos);
@@ -132,9 +134,12 @@ private:
     bool sceneCacheValid = false;
 #ifdef RENDER_ENGINE_DX12
     unsigned PrepareReflectionSky(bool catalogue);
-    SkyCubeCapture<384> reflectedEnvironment;
+    SkyCubeCapture<384> reflectedEnvironment, pendingReflectionEnvironment;
     glm::dvec3 reflectionSkyOrigin{0};
+    glm::dvec3 pendingReflectionCamera{0};
     double reflectionSkyTime=0, reflectionSkyUpdated=0;
+    double pendingReflectionTime=0;
+    int pendingReflectionFace=-1;
     int reflectionSkySystem=0;
     bool reflectionSkyCatalogue=false;
     unsigned reflectionSkyTexture=0;

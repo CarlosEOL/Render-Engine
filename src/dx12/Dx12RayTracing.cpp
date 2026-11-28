@@ -12,7 +12,6 @@
 namespace NativeDX12 {
 namespace {
 constexpr UINT capacity = 2250000;
-constexpr UINT vertexStride = 3 * sizeof(float);
 constexpr unsigned primary=1, reflection=2, transmission=4, shadow=8, indirect=16;
 
 unsigned Channels(RayKind kind) {
@@ -24,6 +23,13 @@ unsigned Channels(RayKind kind) {
     case RayKind::Glass: return primary | reflection;
     default: return 0;
     }
+}
+
+unsigned Channels(const RayMaterial& material) {
+    // A fully liquid surface has no opaque secondary hits.
+    if(material.kind==RayKind::Surface && material.capturesWaterNormal && !material.visibleInReflections)
+        return primary;
+    return Channels(material.kind) & (material.visibleInReflections ? ~0u : ~reflection);
 }
 
 bool EnsureBuffer(ID3D12Device* device, Microsoft::WRL::ComPtr<ID3D12Resource>& buffer,
@@ -47,11 +53,11 @@ bool EnsureBuffer(ID3D12Device* device, Microsoft::WRL::ComPtr<ID3D12Resource>& 
 struct GpuMaterial {
     glm::vec3 color;
     float reflectivity;
-    unsigned firstVertex, channels;
+    unsigned firstVertex;
     float unitScale;
     unsigned kind;
 };
-static_assert(sizeof(GpuMaterial) == 32);
+static_assert(sizeof(GpuMaterial) == 28);
 
 struct GpuView {
     glm::mat4 projection, inverseProjection;
@@ -139,13 +145,13 @@ bool SurfaceRayTracing::Start(UINT frameIndex, const RayView& settings, const Up
     return true;
 }
 
-D3D12_STREAM_OUTPUT_BUFFER_VIEW SurfaceRayTracing::Append(UINT vertices, const RayMaterial& material) {
+D3D12_STREAM_OUTPUT_BUFFER_VIEW SurfaceRayTracing::Append(UINT vertices, const RayMaterial& material, bool liquidMask) {
     if (!capturing || !vertices || vertices > capacity - vertexCount || geometries.size() >= maxGeometry)
         return {};
     const UINT64 start = frame->stream->GetGPUVirtualAddress();
     const D3D12_STREAM_OUTPUT_BUFFER_VIEW output{start + counterBytes + UINT64(vertexCount) * vertexStride,
         UINT64(vertices) * vertexStride, start + geometries.size() * sizeof(UINT64)};
-    geometries.push_back({vertices, vertexCount, material});
+    geometries.push_back({vertices, vertexCount, material, liquidMask});
     vertexCount += vertices;
     return output;
 }
@@ -158,6 +164,12 @@ bool SurfaceRayTracing::Resolve(const std::function<Upload(UINT64)>& allocateUpl
     if (!capturing) return false;
     capturing = false;
     if (geometries.empty() || viewport.z == 0 || viewport.w == 0) return false;
+
+    // Route ray types through the hardware instance mask. Dry geometry can
+    // use fixed-function traversal while mixed land/water is checked at the hit.
+    std::sort(geometries.begin(),geometries.end(),[](const Geometry& a,const Geometry& b) {
+        return Channels(a.material)<Channels(b.material);
+    });
 
     auto matrices = allocateUpload(geometries.size() * sizeof(float) * 12);
     auto materialData = allocateUpload(geometries.size() * sizeof(GpuMaterial));
@@ -173,51 +185,77 @@ bool SurfaceRayTracing::Resolve(const std::function<Upload(UINT64)>& allocateUpl
         const std::array<float, 12> matrix{scale,0,0,translation.x, 0,scale,0,translation.y, 0,0,scale,translation.z};
         std::memcpy(transform + i * 12, matrix.data(), sizeof(matrix));
         const auto kind = static_cast<unsigned>(g.material.kind);
-        const unsigned channels = Channels(g.material.kind) & (g.material.visibleInReflections ? ~0u : ~reflection);
-        material[i] = {g.material.color, g.material.reflectivity, g.firstVertex, channels, scale, kind};
+        material[i] = {g.material.color, g.material.reflectivity, g.firstVertex, scale, kind};
         ++tracedKinds[kind];
         auto& geo = triangles[i];
         geo.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
-        geo.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_NO_DUPLICATE_ANYHIT_INVOCATION;
+        geo.Flags = g.liquidMask ? D3D12_RAYTRACING_GEOMETRY_FLAG_NONE : D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
         geo.Triangles.Transform3x4 = matrices.address + i * sizeof(matrix);
         geo.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
         geo.Triangles.VertexCount = g.vertices;
         geo.Triangles.VertexBuffer = {vertexAddress + UINT64(g.firstVertex) * vertexStride, vertexStride};
     }
-    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC bottom{}, top{};
-    bottom.Inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
-    bottom.Inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_BUILD;
-    bottom.Inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
-    bottom.Inputs.NumDescs = static_cast<UINT>(triangles.size());
-    bottom.Inputs.pGeometryDescs = triangles.data();
-    auto instance = allocateUpload(sizeof(D3D12_RAYTRACING_INSTANCE_DESC));
-    auto* model = static_cast<D3D12_RAYTRACING_INSTANCE_DESC*>(instance.data);
-    *model = {};
-    model->Transform[0][0] = model->Transform[1][1] = model->Transform[2][2] = 1;
-    model->InstanceMask = 255;
+    struct BottomGroup {
+        D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC build{};
+        UINT first, mask;
+        UINT64 offset;
+    };
+    std::vector<BottomGroup> groups;
+    UINT64 bottomSize=0, scratchSize=0;
+    constexpr UINT64 alignment=D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BYTE_ALIGNMENT;
+    for (UINT first=0;first<geometries.size();) {
+        const UINT mask=Channels(geometries[first].material);
+        UINT next=first+1;
+        while(next<geometries.size() && Channels(geometries[next].material)==mask)++next;
+        BottomGroup group{{},first,mask,bottomSize};
+        auto& inputs=group.build.Inputs;
+        inputs.Type=D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
+        inputs.Flags=D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_BUILD;
+        inputs.DescsLayout=D3D12_ELEMENTS_LAYOUT_ARRAY;
+        inputs.NumDescs=next-first;
+        inputs.pGeometryDescs=triangles.data()+first;
+        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO bytes{};
+        device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs,&bytes);
+        if(!bytes.ResultDataMaxSizeInBytes)return false;
+        bottomSize+=(bytes.ResultDataMaxSizeInBytes+alignment-1)&~(alignment-1);
+        scratchSize=std::max(scratchSize,bytes.ScratchDataSizeInBytes);
+        groups.push_back(group);
+        first=next;
+    }
+    auto instances=allocateUpload(groups.size()*sizeof(D3D12_RAYTRACING_INSTANCE_DESC));
+    auto* models=static_cast<D3D12_RAYTRACING_INSTANCE_DESC*>(instances.data);
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC top{};
     top.Inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
     top.Inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_BUILD;
     top.Inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
-    top.Inputs.NumDescs = 1;
-    top.Inputs.InstanceDescs = instance.address;
-    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO bottomBytes{}, topBytes{};
-    device->GetRaytracingAccelerationStructurePrebuildInfo(&bottom.Inputs, &bottomBytes);
+    top.Inputs.NumDescs = static_cast<UINT>(groups.size());
+    top.Inputs.InstanceDescs = instances.address;
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO topBytes{};
     device->GetRaytracingAccelerationStructurePrebuildInfo(&top.Inputs, &topBytes);
     const auto uav = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
     const auto acceleration = D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE;
-    if (!bottomBytes.ResultDataMaxSizeInBytes || !topBytes.ResultDataMaxSizeInBytes ||
-        !EnsureBuffer(device.Get(), frame->bottom, bottomBytes.ResultDataMaxSizeInBytes, acceleration, uav) ||
+    if (!topBytes.ResultDataMaxSizeInBytes ||
+        !EnsureBuffer(device.Get(), frame->bottom, bottomSize, acceleration, uav) ||
         !EnsureBuffer(device.Get(), frame->top, topBytes.ResultDataMaxSizeInBytes, acceleration, uav) ||
         !EnsureBuffer(device.Get(), frame->scratch,
-            std::max(bottomBytes.ScratchDataSizeInBytes, topBytes.ScratchDataSizeInBytes),
+            std::max(scratchSize, topBytes.ScratchDataSizeInBytes),
             D3D12_RESOURCE_STATE_UNORDERED_ACCESS, uav)) return false;
-    bottom.DestAccelerationStructureData = frame->bottom->GetGPUVirtualAddress();
     top.DestAccelerationStructureData = frame->top->GetGPUVirtualAddress();
-    model->AccelerationStructure = bottom.DestAccelerationStructureData;
-    bottom.ScratchAccelerationStructureData = top.ScratchAccelerationStructureData = frame->scratch->GetGPUVirtualAddress();
+    top.ScratchAccelerationStructureData = frame->scratch->GetGPUVirtualAddress();
     UseAs(commands.Get(), frame->stream.Get(), frame->streamState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    commands->BuildRaytracingAccelerationStructure(&bottom, 0, nullptr);
-    CompleteBuild(commands.Get(), frame->bottom.Get(), frame->scratch.Get());
+    for (size_t i=0;i<groups.size();++i) {
+        auto& group=groups[i];
+        auto& model=models[i];
+        model={};
+        model.Transform[0][0]=model.Transform[1][1]=model.Transform[2][2]=1;
+        model.InstanceID=group.first;
+        model.InstanceMask=group.mask;
+        model.AccelerationStructure=frame->bottom->GetGPUVirtualAddress()+group.offset;
+        group.build.DestAccelerationStructureData=model.AccelerationStructure;
+        group.build.ScratchAccelerationStructureData=top.ScratchAccelerationStructureData;
+        commands->BuildRaytracingAccelerationStructure(&group.build,0,nullptr);
+        CompleteBuild(commands.Get(),frame->bottom.Get(),frame->scratch.Get());
+    }
     commands->BuildRaytracingAccelerationStructure(&top, 0, nullptr);
     CompleteBuild(commands.Get(), frame->top.Get(), frame->scratch.Get());
 

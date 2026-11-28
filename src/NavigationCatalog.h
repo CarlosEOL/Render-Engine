@@ -8,8 +8,9 @@ struct NavigationEntry {
     enum class Kind {Universe,Galaxy,Star,Planet,Core,Craft,Asteroid,Barycentre,Group,Nebula,SurfaceRegion};
     enum class SurfaceView {Orbit,Terrain,Seafloor};
     Kind kind=Kind::Star;
-    bool wormhole=false;
+    bool wormhole=false,city=false;
     int system=-2,body=-1,planetCount=-1,satelliteCount=0;
+    int earthWonder=-1;
     std::string key,parentKey,name,parent,type;
     // Subtract anchors before adding local offsets: never flatten a landed
     // camera into a cosmological floating-point world coordinate.

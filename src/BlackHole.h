@@ -36,6 +36,7 @@ public:
     void SetGargantuaDisk(float outerRadii,float emission){if(std::isfinite(outerRadii)&&std::isfinite(emission)){diskOuterRadii=glm::clamp(outerRadii,2.f,24.f);diskBrightness=glm::clamp(emission,0.f,32.f);}}
     float GargantuaDiskOuterRadius() const {return HorizonRadius()*diskOuterRadii;}
     float GargantuaDiskBrightness() const {return diskBrightness;}
+    float MarineMeteringWeight(const glm::dvec3& camera,double seconds) const;
     void SetLensingDiagnostic(bool value) { lensingDiagnostic=value; }
     void SetHotFlowDiagnostic(bool value) { hotFlowDiagnostic=value; }
     void SetAccretionCloudsEnabled(bool value) { accretionCloudsEnabled=value; }
@@ -45,8 +46,9 @@ public:
     void SetOceanReflectionsEnabled(bool enabled) { oceanReflectionsEnabled=enabled; }
     void SetWeather(float windScale,float stormScale){weatherWindScale=windScale;weatherStormScale=stormScale;}
     void SetWeatherEnabled(bool enabled){weatherEnabled=enabled;}
+    double LocalThunder() const { return atmosphere.LocalThunder(); }
     void SetGalaxyAutoExposure(bool enabled){if(galaxies.SetAutoExposure(enabled))skyCubeDirty=true;}
-    unsigned int LensingSourceDepthTexture() const { return sourceDepth; }
+    unsigned int LensingSourceDepthTexture() const { return cameraLensCopy.depth; }
     unsigned int WormholeSky(double seconds=0) const;
     static glm::dvec3 GargantuaWormholePosition(double seconds);
     void SetWormholeSky(unsigned int texture){solarWormholeSky=texture;}
@@ -156,9 +158,11 @@ private:
     unsigned int stellarProperties = 0;
     unsigned int stellarResiduals = 0;
     unsigned int skyCube = 0;
-    unsigned int sourceColor = 0;
-    unsigned int sourceDepth = 0;
-    mutable int sourceWidth = 0, sourceHeight = 0;
+    struct LensCopy {
+        unsigned color=0,depth=0;
+        int width=0,height=0;
+    };
+    mutable LensCopy cameraLensCopy,reflectionLensCopy;
     mutable glm::dvec3 skyCubeOrigin=glm::dvec3(0);
     mutable bool skyCubeDirty=true,skyCubeAllocated=false;
     bool skyRefreshDeferred=false;
@@ -167,7 +171,7 @@ private:
     std::vector<StarBatch> starBatches;
     void BuildSkyCube(const glm::dvec3& origin=glm::dvec3(0)) const;
     void RenderLensing(const glm::mat4& viewProjection,const glm::dvec3& camera,double seconds,const glm::vec3& beta,
-                       const glm::vec3& physicalBeta,bool physicalObserver,int coreId=-1) const;
+                       const glm::vec3& physicalBeta,bool physicalObserver,int coreId=-1,bool reflectionCapture=false) const;
     Mesh sphere;
     Mesh backgroundStars;
     mutable Mesh streamedStars;

@@ -119,7 +119,8 @@ struct Program {
   std::map<std::string, GLint> locations;
   std::map<std::string, UniformValue> values;
   std::unordered_map<std::string, Com<ID3D12PipelineState>> pipelines;
-  std::unordered_map<std::string, Com<ID3D12PipelineState>> streamPipelines;
+  std::array<int,3> raySemantics{-2,-2,-2};
+  int rayLiquidSemantic=-2;
 };
 struct TextureUnit {
   GLuint image = 0, cube = 0;
@@ -413,11 +414,11 @@ public:
   void Draw(GLenum mode, GLint first, GLsizei count, GLsizei instances);
   bool StartRays(const RayView& view);
   bool FinishRays(unsigned environment);
-  void CaptureRays(Program& program, const VertexArray& vao, GLint first, GLsizei count, GLsizei instances);
+  int RayStreamSemantic(Program& program,bool liquid=false);
   D3D12_GPU_VIRTUAL_ADDRESS Constants(const ShaderStage &stage,
                                       const Program &program);
   D3D12_GPU_DESCRIPTOR_HANDLE BindTextures(const Program &program, bool vertex=false);
-  Com<ID3D12PipelineState> Pipeline(Program &program, GLenum mode, bool waterNormals);
+  Com<ID3D12PipelineState> Pipeline(Program &program, GLenum mode, bool waterNormals, int streamSemantic,int liquidSemantic);
   std::vector<unsigned char> Read(Texture &texture, UINT level, UINT layer,
                                   UINT &pitch);
   void GetTexture(GLenum target, GLint level, GLenum format, GLenum type,
@@ -1156,19 +1157,24 @@ D3D12_BLEND Blend(GLenum value) {
   }
 }
 } // namespace
-Com<ID3D12PipelineState> SceneBridge::Pipeline(Program &program, GLenum mode, bool waterNormals) {
+Com<ID3D12PipelineState> SceneBridge::Pipeline(Program &program, GLenum mode, bool waterNormals, int streamSemantic,int liquidSemantic) {
   std::ostringstream key;
   key << mode << '/' << Color().format << '/' << (Depth() != nullptr) << '/'
       << depthTest << depthMask << blend << cull << polygon << sourceRgb
-      << destRgb << sourceAlpha << destAlpha << '/' << depthFunction << '/' << waterNormals;
+      << destRgb << sourceAlpha << destAlpha << '/' << depthFunction << '/' << waterNormals
+      << '/' << streamSemantic << '/' << liquidSemantic << '/' << rayOnly;
   auto &vao = arrays[boundVao];
   auto inputs = program.inputs;
+  constexpr DXGI_FORMAT floatFormats[]{DXGI_FORMAT_UNKNOWN,DXGI_FORMAT_R32_FLOAT,
+      DXGI_FORMAT_R32G32_FLOAT,DXGI_FORMAT_R32G32B32_FLOAT,DXGI_FORMAT_R32G32B32A32_FLOAT};
   for (auto &input : inputs) {
     const auto &attribute = vao.attributes[input.InputSlot];
+    if(attribute.enabled && attribute.components>=1 && attribute.components<=4)
+      input.Format=floatFormats[attribute.components];
     input.AlignedByteOffset = static_cast<UINT>(attribute.offset);
     input.InputSlotClass=attribute.divisor?D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA:D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
     input.InstanceDataStepRate=attribute.divisor;
-    key << '/' << attribute.offset << ':' << attribute.divisor;
+    key << '/' << attribute.offset << ':' << attribute.divisor << ':' << input.Format;
   }
   const auto existing = program.pipelines.find(key.str());
   if (existing != program.pipelines.end())
@@ -1177,8 +1183,12 @@ Com<ID3D12PipelineState> SceneBridge::Pipeline(Program &program, GLenum mode, bo
   p.pRootSignature = root.Get();
   p.VS = {program.vs.code->GetBufferPointer(),
           program.vs.code->GetBufferSize()};
-  p.PS = {program.ps.code->GetBufferPointer(),
-          program.ps.code->GetBufferSize()};
+  if (!rayOnly) p.PS = {program.ps.code->GetBufferPointer(),program.ps.code->GetBufferSize()};
+  const D3D12_SO_DECLARATION_ENTRY entries[]{
+    {0,"TEXCOORD",static_cast<UINT>(std::max(0,streamSemantic)),0,3,0},
+    {0,liquidSemantic>=0?"TEXCOORD":nullptr,static_cast<UINT>(std::max(0,liquidSemantic)),0,1,0}};
+  const UINT streamStride=SurfaceRayTracing::vertexStride;
+  if (streamSemantic >= 0) p.StreamOutput = {entries,2,&streamStride,1,rayOnly ? D3D12_SO_NO_RASTERIZED_STREAM : 0u};
   if (mode == GL_POINTS && program.gs)
     p.GS = {program.gs->GetBufferPointer(), program.gs->GetBufferSize()};
   p.InputLayout = {inputs.data(), static_cast<UINT>(inputs.size())};
@@ -1187,11 +1197,11 @@ Com<ID3D12PipelineState> SceneBridge::Pipeline(Program &program, GLenum mode, bo
   p.RasterizerState.CullMode =
       cull ? D3D12_CULL_MODE_BACK : D3D12_CULL_MODE_NONE;
   p.RasterizerState.DepthClipEnable = TRUE;
-  p.DepthStencilState.DepthEnable = depthTest && Depth() != nullptr;
+  p.DepthStencilState.DepthEnable = !rayOnly && depthTest && Depth() != nullptr;
   p.DepthStencilState.DepthWriteMask =
       depthMask ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
   p.DepthStencilState.DepthFunc = static_cast<D3D12_COMPARISON_FUNC>(depthFunction-GL_NEVER+1);
-  p.DSVFormat = Depth() ? DXGI_FORMAT_D32_FLOAT : DXGI_FORMAT_UNKNOWN;
+  p.DSVFormat = !rayOnly && Depth() ? DXGI_FORMAT_D32_FLOAT : DXGI_FORMAT_UNKNOWN;
   auto &b = p.BlendState.RenderTarget[0];
   b.BlendEnable = blend;
   b.SrcBlend = Blend(sourceRgb);
@@ -1201,8 +1211,8 @@ Com<ID3D12PipelineState> SceneBridge::Pipeline(Program &program, GLenum mode, bo
   b.DestBlendAlpha = Blend(destAlpha);
   b.BlendOpAlpha = D3D12_BLEND_OP_ADD;
   b.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
-  p.NumRenderTargets = 1;
-  p.RTVFormats[0] = Color().format;
+  p.NumRenderTargets = rayOnly ? 0 : 1;
+  p.RTVFormats[0] = rayOnly ? DXGI_FORMAT_UNKNOWN : Color().format;
   if (waterNormals) {
     p.NumRenderTargets = 2;
     p.RTVFormats[1] = rayNormals.format;
@@ -1239,9 +1249,22 @@ void SceneBridge::Draw(GLenum mode, GLint first, GLsizei count,
   if (!program.linked)
     throw std::runtime_error("Drawing an unlinked scene shader: " +
                              program.log);
-  const bool waterNormals = !rayOnly && rays.Capturing() && rayMaterial.kind == RayKind::Surface &&
+  D3D12_STREAM_OUTPUT_BUFFER_VIEW stream{};
+  int streamSemantic=-1,liquidSemantic=-1;
+  if (mode==GL_TRIANGLES && rays.Capturing() && rayMaterial.kind!=RayKind::None && UINT64(count)*instances<=UINT_MAX) {
+    streamSemantic=RayStreamSemantic(program);
+    if(streamSemantic>=0){
+      if(rayMaterial.capturesWaterNormal || rayMaterial.kind==RayKind::Bottom)
+        liquidSemantic=RayStreamSemantic(program,true);
+      stream=rays.Append(static_cast<UINT>(UINT64(count)*instances),rayMaterial,liquidSemantic>=0);
+    }
+    if(!stream.BufferLocation)streamSemantic=liquidSemantic=-1;
+  }
+  if(rayOnly && streamSemantic<0)return;
+  const bool waterNormals = !rayOnly && streamSemantic>=0 && rayMaterial.capturesWaterNormal &&
                             program.writesWaterNormal && Color().layers == 1 && Target().level == 0;
-  BindTargets(waterNormals);
+  if(rayOnly)gpu.commands->OMSetRenderTargets(0,nullptr,FALSE,nullptr);
+  else BindTargets(waterNormals);
   ID3D12DescriptorHeap *heaps[] = {srvs.Get(), samplers.Get()};
   gpu.commands->SetDescriptorHeaps(2, heaps);
   gpu.commands->SetGraphicsRootSignature(root.Get());
@@ -1257,7 +1280,7 @@ void SceneBridge::Draw(GLenum mode, GLint first, GLsizei count,
   gpu.commands->SetGraphicsRootDescriptorTable(3, BindTextures(program));
   if(!program.vertexSamplers.empty())
     gpu.commands->SetGraphicsRootDescriptorTable(5, BindTextures(program,true));
-  if (!rayOnly) gpu.commands->SetPipelineState(Pipeline(program, mode, waterNormals).Get());
+  gpu.commands->SetPipelineState(Pipeline(program,mode,waterNormals,streamSemantic,liquidSemantic).Get());
   const D3D12_VIEWPORT vp{static_cast<float>(viewport[0]),
                           static_cast<float>(viewport[1]),
                           static_cast<float>(viewport[2]),
@@ -1299,9 +1322,12 @@ void SceneBridge::Draw(GLenum mode, GLint first, GLsizei count,
                             ? D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP
                             : D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
   gpu.commands->IASetPrimitiveTopology(topology);
-  if (!rayOnly) gpu.commands->DrawInstanced(count, instances, first, 0);
-  if (mode == GL_TRIANGLES && rays.Capturing() && rayMaterial.kind != RayKind::None)
-      CaptureRays(program, vao, first, count, instances);
+  if(streamSemantic>=0)gpu.commands->SOSetTargets(0,1,&stream);
+  gpu.commands->DrawInstanced(count,instances,first,0);
+  if(streamSemantic>=0){
+    const D3D12_STREAM_OUTPUT_BUFFER_VIEW unused{};
+    gpu.commands->SOSetTargets(0,1,&unused);
+  }
 }
 
 bool SceneBridge::StartRays(const RayView& view) {
@@ -1321,53 +1347,20 @@ bool SceneBridge::StartRays(const RayView& view) {
   return rays.Start(gpu.frameIndex, settings, {zeros.first, zeros.resource, zeros.offset, zeros.second});
 }
 
-void SceneBridge::CaptureRays(Program& program, const VertexArray& vao, GLint first, GLsizei count, GLsizei instances) {
-  if (UINT64(count)*UINT64(instances) > UINT_MAX) return;
-  const char* varying = rayMaterial.space == RaySpace::World ? " FragPos " :
-                        rayMaterial.space == RaySpace::RelativeMetres ? " relativeMetres " : " relativePosition ";
-  std::string key(varying);
-  auto inputs = program.inputs;
-  for (auto& input : inputs) {
-    const auto& attribute = vao.attributes[input.InputSlot];
-    input.AlignedByteOffset = static_cast<UINT>(attribute.offset);
-    input.InputSlotClass = attribute.divisor ? D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA
-                                            : D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
-    input.InstanceDataStepRate = attribute.divisor;
-    key += '/' + std::to_string(input.AlignedByteOffset) + ':' + std::to_string(attribute.divisor);
-  }
-  auto pipeline = program.streamPipelines.find(key);
-  if (pipeline == program.streamPipelines.end()) {
-    const auto output = program.vertexHlsl.find("struct SPIRV_Cross_Output");
-    if (output == std::string::npos) return;
-    const auto field = program.vertexHlsl.find(varying, output);
-    if (field == std::string::npos || field > program.vertexHlsl.find("};", output)) return;
-    const auto semantic = program.vertexHlsl.find("TEXCOORD", field);
-    if (semantic == std::string::npos || semantic > program.vertexHlsl.find(';', field)) return;
-    const UINT index = static_cast<UINT>(std::stoi(program.vertexHlsl.substr(semantic + 8)));
-    const D3D12_SO_DECLARATION_ENTRY entry{0, "TEXCOORD", index, 0, 3, 0};
-    const UINT stride = 3*sizeof(float);
-    D3D12_GRAPHICS_PIPELINE_STATE_DESC settings{};
-    settings.pRootSignature = root.Get();
-    settings.VS = {program.vs.code->GetBufferPointer(), program.vs.code->GetBufferSize()};
-    settings.StreamOutput = {&entry, 1, &stride, 1, D3D12_SO_NO_RASTERIZED_STREAM};
-    settings.InputLayout = {inputs.data(), static_cast<UINT>(inputs.size())};
-    settings.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-    settings.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-    settings.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
-    settings.SampleMask = UINT_MAX;
-    settings.SampleDesc.Count = 1;
-    Com<ID3D12PipelineState> state;
-    Check(gpu.device->CreateGraphicsPipelineState(&settings, IID_PPV_ARGS(&state)), "Create ray geometry capture pipeline");
-    pipeline = program.streamPipelines.emplace(key, std::move(state)).first;
-  }
-  const auto output = rays.Append(static_cast<UINT>(UINT64(count)*UINT64(instances)), rayMaterial);
-  if (!output.BufferLocation) return;
-  gpu.commands->SetPipelineState(pipeline->second.Get());
-  gpu.commands->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
-  gpu.commands->SOSetTargets(0, 1, &output);
-  gpu.commands->DrawInstanced(count, instances, first, 0);
-  const D3D12_STREAM_OUTPUT_BUFFER_VIEW unused{};
-  gpu.commands->SOSetTargets(0, 1, &unused);
+int SceneBridge::RayStreamSemantic(Program& program,bool liquid) {
+  auto& index=liquid?program.rayLiquidSemantic:program.raySemantics[static_cast<unsigned>(rayMaterial.space)];
+  if(index!=-2)return index;
+  index=-1;
+  const char* varying=liquid ? " rayLiquid " : rayMaterial.space==RaySpace::World ? " FragPos " :
+    rayMaterial.space==RaySpace::RelativeMetres ? " relativeMetres " : " relativePosition ";
+  const auto output=program.vertexHlsl.find("struct SPIRV_Cross_Output");
+  if(output==std::string::npos)return index;
+  const auto field=program.vertexHlsl.find(varying,output);
+  if(field==std::string::npos || field>program.vertexHlsl.find("};",output))return index;
+  const auto semantic=program.vertexHlsl.find("TEXCOORD",field);
+  if(semantic!=std::string::npos && semantic<program.vertexHlsl.find(';',field))
+    index=std::stoi(program.vertexHlsl.substr(semantic+8));
+  return index;
 }
 
 bool SceneBridge::FinishRays(unsigned environment) {
@@ -2273,6 +2266,7 @@ RayCoverage InspectRayCoverage(std::vector<float>* environmentLuminance) {
   auto& scene = C();
   RayCoverage coverage;
   if (!scene.rayOutput.resource) return coverage;
+  coverage.hasWaterNormalTarget=scene.rayNormalsReady;
   if (environmentLuminance)
     environmentLuminance->assign(static_cast<size_t>(scene.raySamples.width)*scene.raySamples.height,-1.f);
   UINT guidePitch = 0, samplePitch = 0, normalPitch = 0;
@@ -2284,7 +2278,7 @@ RayCoverage InspectRayCoverage(std::vector<float>* environmentLuminance) {
       unsigned short g = 0, s = 0;
       std::memcpy(&g, guide.data() + y * guidePitch + x * 8 + 6, 2);
       std::memcpy(&s, samples.data() + y * samplePitch + x * 8 + 6, 2);
-      if (Unhalf(g) <= 0) continue;
+      if (Unhalf(g) == 0) continue;
       ++coverage.receivers;
       if (normalPitch) {
         unsigned short valid = 0;

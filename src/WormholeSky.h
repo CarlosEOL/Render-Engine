@@ -8,7 +8,7 @@
 
 template<int size> class SkyCubeCapture {
 public:
-    template<class Draw> unsigned Capture(Draw draw) {
+    template<class Draw> unsigned Capture(Draw draw, int firstFace=0, int faceCount=6) {
         GLint viewport[4],drawFbo,readFbo,renderbuffer,program,vao,active,depthFunc;
         GLfloat clear[4];GLboolean depthMask;
         glGetIntegerv(GL_VIEWPORT,viewport);glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&drawFbo);
@@ -33,7 +33,7 @@ public:
         const glm::vec3 dirs[]={{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
         const glm::vec3 ups[]={{0,-1,0},{0,-1,0},{0,0,1},{0,0,-1},{0,-1,0},{0,-1,0}};
         bool complete=true;
-        for(int face=0;face<6;++face){
+        for(int face=firstFace;face<firstFace+faceCount;++face){
             glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_CUBE_MAP_POSITIVE_X+face,texture,0);
             if(glCheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE){complete=false;break;}
             glDepthMask(GL_TRUE);glClearColor(0,0,0,0);glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);

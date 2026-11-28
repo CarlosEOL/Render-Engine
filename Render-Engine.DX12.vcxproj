@@ -46,6 +46,13 @@ copy /Y "$(ProjectDir)assets\earth\earth-relief.png" "$(OutDir)assets\earth\eart
 copy /Y "$(ProjectDir)assets\earth\elevation-*.bin" "$(OutDir)assets\earth\" &gt;nul
 copy /Y "$(ProjectDir)assets\earth\earth-color.jpg" "$(OutDir)assets\earth\earth-color.jpg" &gt;nul
 copy /Y "$(ProjectDir)assets\earth\CREDITS.md" "$(OutDir)assets\earth\CREDITS.md" &gt;nul
+if not exist "$(OutDir)assets\nyc" mkdir "$(OutDir)assets\nyc"
+copy /Y "$(ProjectDir)assets\nyc\city.bin" "$(OutDir)assets\nyc\city.bin" &gt;nul
+copy /Y "$(ProjectDir)assets\nyc\relief.png" "$(OutDir)assets\nyc\relief.png" &gt;nul
+copy /Y "$(ProjectDir)assets\nyc\CREDITS.md" "$(OutDir)assets\nyc\CREDITS.md" &gt;nul
+if not exist "$(OutDir)assets\great-wall" mkdir "$(OutDir)assets\great-wall"
+copy /Y "$(ProjectDir)assets\great-wall\routes.bin" "$(OutDir)assets\great-wall\routes.bin" &gt;nul
+copy /Y "$(ProjectDir)assets\great-wall\CREDITS.md" "$(OutDir)assets\great-wall\CREDITS.md" &gt;nul
 copy /Y "$(ProjectDir)..\External_Lib\build\ShaderTranslator\Release\ShaderTranslator.dll" "$(OutDir)" &gt;nul
 copy /Y "$(ProjectDir)..\External_Lib\lib\assimp-vc143-mtd.dll" "$(OutDir)" &gt;nul</Command></PostBuildEvent>
   </ItemDefinitionGroup>

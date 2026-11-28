@@ -2,6 +2,8 @@
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <mmsystem.h>
+#pragma comment(lib,"winmm.lib")
 #define GLFW_EXPOSE_NATIVE_WIN32
 #endif
 #include "glad/glad.h"
@@ -45,6 +47,43 @@ glm::vec3 WindowManager::cameraUp    = glm::vec3(0.0f, 1.0f, 0.0f);
 std::vector<float> WindowManager::currentModelVertices;
 
 namespace {
+#ifdef _WIN32
+    void PlayThunder() {
+        struct ThunderWave {
+            char riff[4]={'R','I','F','F'};
+            uint32_t riffBytes=36+48000*2;
+            char wave[8]={'W','A','V','E','f','m','t',' '};
+            uint32_t formatBytes=16;
+            uint16_t pcm=1,channels=1;
+            uint32_t rate=12000,bytesPerSecond=24000;
+            uint16_t alignment=2,bits=16;
+            char data[4]={'d','a','t','a'};
+            uint32_t sampleBytes=48000*2;
+            std::array<int16_t,48000> samples{};
+        };
+        static_assert(offsetof(ThunderWave,samples)==44);
+        static const ThunderWave thunder=[](){
+            ThunderWave sound;
+            uint32_t seed=918724;
+            float low=0,rumble=0;
+            for(unsigned i=0;i<sound.samples.size();++i){
+                seed=seed*1664525u+1013904223u;
+                const float noise=float(seed>>8)/8388608.f-1.f;
+                low+=.11f*(noise-low);rumble+=.028f*(low-rumble);
+                const float t=i/12000.f;
+                const float attack=glm::smoothstep(0.f,.045f,t);
+                const float echoes=.52f*std::exp(-t*1.2f)+.33f*std::exp(-std::abs(t-.52f)*4.f)
+                    +.27f*std::exp(-std::abs(t-1.38f)*2.3f);
+                const float level=attack*(1-glm::smoothstep(3.f,4.f,t));
+                const float signal=(3.8f*rumble*echoes+low*.52f*std::exp(-t*11.f))*level;
+                sound.samples[i]=static_cast<int16_t>(glm::clamp(signal,-1.f,1.f)*21600.f);
+            }
+            return sound;
+        }();
+        PlaySoundA(reinterpret_cast<const char*>(&thunder),nullptr,SND_MEMORY|SND_ASYNC|SND_NODEFAULT);
+    }
+#endif
+
     void SetApplicationTitle(GLFWwindow* window,const std::string& title) {
 #ifdef RENDER_ENGINE_DX12
         const auto identified=title+" | DX12";glfwSetWindowTitle(window,identified.c_str());
@@ -289,6 +328,9 @@ void WindowManager::KeyCallback(GLFWwindow* window, int key, int, int action, in
     if (manager.mainMenu.Visible()) return;
     if(key==WeatherMenuCommand){
         manager.weatherEnabled=!manager.weatherEnabled;
+#ifdef _WIN32
+        if(!manager.weatherEnabled)PlaySoundA(nullptr,nullptr,0);
+#endif
         manager.starSystem.SetWeatherEnabled(manager.weatherEnabled);
         manager.blackHole.SetWeatherEnabled(manager.weatherEnabled);
 #ifdef _WIN32
@@ -1169,7 +1211,38 @@ void WindowManager::GoToNavigation(const NavigationEntry& entry){
         starSystem.camera=centre+radial*(radius*1.85);
         cameraFront=glm::vec3(-radial);cameraUp=glm::vec3(frame[0]);
         fieldOfView=50;starSystem.speedAu=150000/Astronomy::metresPerAu;
-        if(entry.surfaceView!=NavigationEntry::SurfaceView::Orbit){
+        if(entry.city){
+            const auto east=glm::normalize(glm::cross(glm::dvec3(0,1,0),radial));
+            const auto south=glm::cross(east,radial);
+            const auto ground=PlanetTerrain::EarthGeography(glm::vec3(entry.surfaceNormal)).x;
+            const bool skyline=entry.name=="New York City" || entry.name=="Manhattan";
+            const double rise=skyline?490.0:255.0;
+            const auto base=centre+radial*(radius+ground/Astronomy::metresPerAu);
+            const auto offset=east*(skyline?575.0:350.0)+south*(skyline?670.0:380.0)+radial*rise;
+            starSystem.camera=base+offset/Astronomy::metresPerAu;
+            cameraFront=glm::vec3(glm::normalize(radial*(skyline?108.0:32.0)-offset));cameraUp=glm::vec3(radial);
+            fieldOfView=64;starSystem.speedAu=45/Astronomy::metresPerAu;
+        }else if(entry.earthWonder>=0 && entry.earthWonder<static_cast<int>(EarthWonders::destinationCount)){
+            const auto& site=EarthWonders::Destination(entry.earthWonder);
+            const auto localFrame=site.Frame();
+            const double elevation=site.Elevation(),metres=Astronomy::metresPerAu;
+            const auto origin=localFrame[1]*(radius+elevation/metres);
+            const auto eye=origin+localFrame*site.viewpoint/metres;
+            const auto eyeDirection=glm::normalize(eye);
+            const auto target=centre+frame*(origin+localFrame*site.focus/metres);
+            if(site.submerged){
+                starSystem.camera=centre+frame*eyeDirection*(radius*1.001);
+                starSystem.ToggleLanding(simulationTime,cameraFront,cameraUp);
+                const double depth=std::max(0.0,-elevation-site.viewpoint.y);
+                starSystem.MoveOnSurface({},Astronomy::observerClearanceAu*metres+depth,cameraFront,cameraUp);
+            }else{
+                const double ground=PlanetTerrain::EarthGeography(glm::vec3(eyeDirection),true).x;
+                const double minimumRadius=radius+(ground+12)/metres;
+                starSystem.camera=centre+frame*eyeDirection*std::max(glm::length(eye),minimumRadius);
+            }
+            cameraFront=glm::vec3(glm::normalize(target-starSystem.camera));cameraUp=glm::vec3(frame*eyeDirection);
+            fieldOfView=57;starSystem.speedAu=(site.submerged?4.0:35.0)/metres;
+        }else if(entry.surfaceView!=NavigationEntry::SurfaceView::Orbit){
             const auto geography=PlanetTerrain::EarthGeography(glm::vec3(entry.surfaceNormal));
             const auto tangent=glm::normalize(glm::cross(frame[1],radial));
             if(entry.surfaceView==NavigationEntry::SurfaceView::Terrain){
@@ -1247,6 +1320,16 @@ void WindowManager::RefreshObjectEditor(){
     });
 }
 
+namespace {
+std::string ElapsedClock(double elapsed) {
+    const auto seconds = static_cast<std::uint64_t>(std::max(0.0, elapsed));
+    std::ostringstream label;
+    label << std::setfill('0') << std::setw(2) << seconds / 3600
+        << ':' << std::setw(2) << seconds / 60 % 60 << ':' << std::setw(2) << seconds % 60;
+    return label.str();
+}
+}
+
 void WindowManager::RefreshPanel() {
     RefreshObjectEditor();
     scenePanel.SetMagnitude(EffectiveMagnitudeLimit(),limitingMagnitude,CameraZoom::MagnitudeLimit(galaxyLimitingMagnitude,CameraMagnification()));
@@ -1254,9 +1337,10 @@ void WindowManager::RefreshPanel() {
     std::ostringstream playback;
     if(quantumMode)playback<<"STATE t = "<<std::fixed<<std::setprecision(3)<<quantum.Time()<<"\r\n"<<(simulationPlaying?"PLAYING":"PAUSED")<<"  |  "<<quantumRates[quantumRateIndex]<<"x";
     else{
-        const auto local=static_cast<std::uint64_t>(std::max(0.0,localTime)),world=static_cast<std::uint64_t>(std::max(0.0,simulationTime));
-        const auto clock=[&](std::uint64_t t){playback<<std::setfill('0')<<std::setw(2)<<t/3600<<':'<<std::setw(2)<<t/60%60<<':'<<std::setw(2)<<t%60;};
-        playback<<"LOCAL ";clock(local);playback<<"   WORLD ";clock(world);
+        const auto calendar = inStarSystem ? starSystem.LocalCalendar(simulationTime) : std::string{};
+        if (!calendar.empty()) playback << "LOCAL " << calendar << "\r\n";
+        playback << (calendar.empty() ? "LOCAL " : "OBSERVER ") << ElapsedClock(localTime)
+            << "   WORLD " << ElapsedClock(simulationTime);
         playback<<"\r\n"<<(simulationPlaying?"PLAYING":"PAUSED")<<"  |  "<<timeRates[timeRateIndex]<<"x time";
     }
     scenePanel.SetPlayback(simulationPlaying,playback.str());
@@ -1378,8 +1462,7 @@ void WindowManager::UpdateTitle() {
         SetApplicationTitle(window,title.str()); return;
     }
     std::ostringstream title;
-    const auto seconds = static_cast<std::uint64_t>(localTime);
-    const auto worldSeconds = static_cast<std::uint64_t>(simulationTime);
+    const auto calendar = inStarSystem ? starSystem.LocalCalendar(simulationTime) : std::string{};
     title << "Render-Engine | " << (inStarSystem ? starSystem.Host().name : showBlackHole ? "Gargantua-inspired" : "Model")
           << (blackHoleJourney.tesseract?" | Tesseract":"")
           << " | " << CameraOptics::Name(visionProfile)
@@ -1397,11 +1480,9 @@ void WindowManager::UpdateTitle() {
           << (photonView ? " | Photon samples: fly aside to inspect" : "")
           << (showBlackHole && selectedTarget >= 0 ? " | Selected " + blackHole.ResolveTarget(selectedTarget, simulationTime).name + " [G]" : "")
           << (simulationPlaying ? " | Playing" : " | Paused")
-          << " | Local " << std::setfill('0') << std::setw(2) << seconds / 3600
-          << ':' << std::setw(2) << seconds / 60 % 60 << ':' << std::setw(2) << seconds % 60
-          << " | World " << std::setw(2) << worldSeconds / 3600
-          << ':' << std::setw(2) << worldSeconds / 60 % 60 << ':' << std::setw(2) << worldSeconds % 60
-          << std::setfill(' ') << " | " << timeRates[timeRateIndex] << "x time"
+          << (calendar.empty() ? " | Local " : " | Local " + calendar + " | Observer ")
+          << ElapsedClock(localTime) << " | World " << ElapsedClock(simulationTime)
+          << " | " << timeRates[timeRateIndex] << "x time"
           << " | Speed " << _UTILITY_::SpeedLabel(InTesseractRoom()?TesseractSpeed()/Astronomy::metresPerAu:
               inStarSystem?starSystem.speedAu:cameraSpeed,inStarSystem || showBlackHole)
           << " | Mag limit "<<std::fixed<<std::setprecision(2)<<EffectiveMagnitudeLimit()
@@ -2020,24 +2101,44 @@ unsigned WindowManager::PrepareReflectionSky(bool catalogue) {
     const bool sameScene=sceneCacheValid && reflectionSkyTexture && reflectionSkyCatalogue==catalogue &&
         (!catalogue || reflectionSkySystem==activeSystemTarget);
     const bool moved=travel>180.0 || std::abs(simulationTime-reflectionSkyTime)>12.0;
-    if(sameScene && travel<50000.0 && (!moved || now-reflectionSkyUpdated<.6))return reflectionSkyTexture;
+    const bool immediate=!sameScene || travel>=50000.0;
+    if(!immediate && pendingReflectionFace<0 && (!moved || now-reflectionSkyUpdated<.6))return reflectionSkyTexture;
+    if(immediate || pendingReflectionFace<0){
+        pendingReflectionFace=0;
+        pendingReflectionCamera=catalogue?starSystem.camera:cameraPos;
+        pendingReflectionTime=simulationTime;
+    }
 
     // This is linear HDR scene radiance in world directions, without camera
     // exposure, postprocessing or screen overlays.
     const auto projection=glm::perspective(glm::half_pi<float>(),1.f,
         static_cast<float>(.1/Astronomy::metresPerAu),20000.f);
-    reflectionSkyTexture=reflectedEnvironment.Capture([&](const glm::vec3& direction,const glm::vec3& up){
+    // Build routine refreshes one face per frame. Keep using the complete
+    // cube until all directions from the new camera and time are ready.
+    const auto sampleOrigin=catalogue?systemOriginAu+pendingReflectionCamera:pendingReflectionCamera;
+    const auto savedCamera=starSystem.camera;
+    if(catalogue)starSystem.camera=pendingReflectionCamera;
+    const int faceCount=immediate?6:1;
+    const unsigned texture=pendingReflectionEnvironment.Capture([&](const glm::vec3& direction,const glm::vec3& up){
         const auto vp=projection*glm::lookAt(glm::vec3(0),direction,up);
         if(catalogue){
-            blackHole.RenderBackground(vp,origin,false,0,glm::dvec3(0),true,2.f);
-            starSystem.Render(90.f,1.f,direction,up,simulationTime,false,false,false,
+            blackHole.RenderBackground(vp,sampleOrigin,false,0,glm::dvec3(0),true,2.f);
+            starSystem.Render(90.f,1.f,direction,up,pendingReflectionTime,false,
                 starSystem.IsSolarSystem()?gargantuaPortalSky:0,0,true);
         }else{
-            blackHole.Render(vp,origin,simulationTime,glm::vec3(0),false,-1,0,glm::vec3(0),false,false,0,0,true);
+            blackHole.Render(vp,sampleOrigin,pendingReflectionTime,glm::vec3(0),false,-1,0,glm::vec3(0),false,false,0,0,true);
         }
-    });
-    reflectionSkyOrigin=origin;
-    reflectionSkyTime=simulationTime;
+    },pendingReflectionFace,faceCount);
+    if(catalogue)starSystem.camera=savedCamera;
+    if(!texture){pendingReflectionFace=-1;return immediate?0:reflectionSkyTexture;}
+    pendingReflectionFace+=faceCount;
+    if(pendingReflectionFace<6)return reflectionSkyTexture;
+
+    std::swap(reflectedEnvironment,pendingReflectionEnvironment);
+    pendingReflectionFace=-1;
+    reflectionSkyTexture=texture;
+    reflectionSkyOrigin=sampleOrigin;
+    reflectionSkyTime=pendingReflectionTime;
     reflectionSkyUpdated=now;
     reflectionSkyCatalogue=catalogue;
     reflectionSkySystem=activeSystemTarget;
@@ -2079,13 +2180,6 @@ void WindowManager::Update(float& dT) {
         const double interval = static_cast<double>(dT) * timeRates[timeRateIndex];
         simulationTime += interval;
     }
-    titleUpdateElapsed += dT;
-    if (titleUpdateElapsed >= 0.2f) {
-        UpdateTitle();
-        RefreshPanel();
-        titleUpdateElapsed = 0.0f;
-    }
-
     const auto previousFlightCamera=inStarSystem?starSystem.camera:cameraPos;
     const bool falling = observerGravity;
     UpdateObserver(previousTime,dT);
@@ -2144,6 +2238,12 @@ void WindowManager::Update(float& dT) {
             cameraClockRate=1/KerrSpacetime::ObserverTimeComponent(kerrObserver,BlackHole::HorizonRadius(),observerSpin);
         if(simulationTime>previousTime)localTime+=(simulationTime-previousTime)*cameraClockRate;
     }
+    titleUpdateElapsed += dT;
+    if (titleUpdateElapsed >= 0.2f) {
+        UpdateTitle();
+        RefreshPanel();
+        titleUpdateElapsed = 0.0f;
+    }
 
     int framebufferWidth, framebufferHeight;
     glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
@@ -2164,6 +2264,10 @@ void WindowManager::Update(float& dT) {
         showBlackHole ? static_cast<float>(.1/Astronomy::metresPerAu) : .01f, showBlackHole?1e15f:2000.0f);
 
     const auto preciseCamera=inStarSystem?starSystem.camera:cameraPos;
+    optics.SetAtmosphereMetering(inStarSystem ? starSystem.AtmosphereMeteringWeight(simulationTime) : 0.f);
+    const bool millerView=!inStarSystem && showBlackHole && blackHoleReady &&
+        !interiorVehicle && !blackHoleJourney.inside && DepthBelowWater()<=0;
+    optics.SetMarineMetering(millerView?blackHole.MarineMeteringWeight(cameraPos,simulationTime):0.f);
     optics.SetStellarHint(glm::vec3(-1,-1,0));
     optics.SetBlackHoleHint(glm::vec3(-1,-1,0));
     std::array<glm::vec4,8> opticalMembers{};int opticalMemberCount=0;
@@ -2245,10 +2349,12 @@ void WindowManager::Update(float& dT) {
     const float blackHoleScale=adaptiveBlackHoleQuality && blackHoleView && !landed && !simulationPlaying
         && glfwGetTime()-lastBlackHoleCameraChange>=.25?1.f:blackHoleResolution;
     idleFrame=sceneCacheValid && !simulationPlaying && !observerGravity && (showBlackHole || inStarSystem) && signature==lastSceneSignature;
+    if(inStarSystem && (starSystem.CityNeedsFrame() || starSystem.EarthWondersNeedFrame()))idleFrame=false;
     if(blackHoleJourney.inside)idleFrame=false;
     if(blackHoleView && renderedBlackHoleScale!=blackHoleScale)idleFrame=false;
     if(blackHoleReady && blackHole.SkyNeedsFrame(inStarSystem?systemOriginAu+starSystem.camera:cameraPos))idleFrame=false;
 #ifdef RENDER_ENGINE_DX12
+    if(pendingReflectionFace>=0)idleFrame=false;
     const auto reconstructionSize=NativeDX12::PrepareSceneReconstruction(sceneWidth,fullHeight,idleFrame);
     if(NativeDX12::ReconstructionNeedsFrame())idleFrame=false;
 #endif
@@ -2287,12 +2393,15 @@ void WindowManager::Update(float& dT) {
     optics.BeginFrame();
     glClearColor(0.0f,0.0f,0.0f,0.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    unsigned reflectionSky=0;
 
+#ifdef _WIN32
+    double thunder=-1;
+#endif
     if(blackHoleJourney.atLimit){
         optics.SetBlackHoleHint({-1,-1,0});optics.SetStellarHint({-1,-1,0});optics.SetSystemSources({},0);
     }else if (inStarSystem && starSystemReady) {
         glPolygonMode(GL_FRONT_AND_BACK,GL_FILL);
-        unsigned reflectionSky=0;
 #ifdef RENDER_ENGINE_DX12
         if(blackHoleReady && !starSystem.IsCore() && NativeDX12::HardwareRaysEnabled() &&
             starSystem.HasLocalReflectionReceivers(simulationTime))reflectionSky=PrepareReflectionSky(true);
@@ -2310,8 +2419,13 @@ void WindowManager::Update(float& dT) {
             const auto beta=physical?glm::vec3(frame*KerrSpacetime::ObserverBeta(kerrObserver,core.RadiusAu(),core.spin)):glm::vec3(0);
             blackHole.RenderCore(glm::perspective(glm::radians(fieldOfView),aspectRatio,.00001f,20000.f)*glm::lookAt(glm::vec3(0),cameraFront,cameraUp),starSystem.camera,activeSystemTarget,simulationTime,physical,beta);
         }
-        else starSystem.Render(fieldOfView,aspectRatio,cameraFront,cameraUp,simulationTime,trajectories,photonView,pendingSystemTarget==activeSystemTarget,
-            blackHoleReady && starSystem.IsSolarSystem()?gargantuaPortalSky:0,reflectionSky);
+        else {
+            starSystem.Render(fieldOfView,aspectRatio,cameraFront,cameraUp,simulationTime,photonView,
+                blackHoleReady && starSystem.IsSolarSystem()?gargantuaPortalSky:0,reflectionSky);
+#ifdef _WIN32
+            thunder=starSystem.LocalThunder();
+#endif
+        }
         if(pendingSystemTarget>=10 && pendingSystemTarget!=activeSystemTarget)
             blackHole.RenderCatalogueSelection(projection*glm::lookAt(glm::vec3(0),cameraFront,cameraUp),
                 systemOriginAu+starSystem.camera,pendingSystemTarget,simulationTime);
@@ -2320,7 +2434,6 @@ void WindowManager::Update(float& dT) {
         const bool physicalObserver=kerrObserverValid && observerSpin==blackHole.Spin() && (observerGravity || horizonReached) && !interiorVehicle
             && glm::length(cameraPos-InterstellarWorlds::Orientation()*kerrObserver.state.position)<1e-9;
         const auto physicalBeta=physicalObserver?InterstellarWorlds::Orientation()*KerrSpacetime::ObserverBeta(kerrObserver,BlackHole::HorizonRadius(),observerSpin):glm::dvec3(0);
-        unsigned reflectionSky=0;
 #ifdef RENDER_ENGINE_DX12
         if(!blackHoleJourney.inside && DepthBelowWater()<=0 && NativeDX12::HardwareRaysEnabled() &&
             blackHole.HasLocalReflectionReceivers(cameraPos,simulationTime))reflectionSky=PrepareReflectionSky(false);
@@ -2329,6 +2442,9 @@ void WindowManager::Update(float& dT) {
             interiorVehicle?glm::vec3(blackHole.CockpitPose(interiorVehicle,simulationTime).velocity)
                 :observerGravity || horizonReached ? glm::vec3(observer.velocity) : glm::vec3(0.0f),trajectories,selectedTarget,interiorVehicle,glm::vec3(physicalBeta),physicalObserver,hdrMode,
             static_cast<float>(DepthBelowWater()),reflectionSky);
+#ifdef _WIN32
+        if(!interiorVehicle)thunder=blackHole.LocalThunder();
+#endif
         optics.SetDiskForegroundTexture(blackHole.DiskForegroundTexture());
         if(interiorVehicle)vehicleInterior.Render(projection*view,glm::mat3(lastCabinRotation),interiorVehicle>=2,
             static_cast<float>(blackHole.SpacecraftFuelSeconds()/InterstellarWorlds::FuelSeconds));
@@ -2376,6 +2492,10 @@ void WindowManager::Update(float& dT) {
         glBindVertexArray(0);
     }
     
+#ifdef _WIN32
+    if(weatherEnabled && simulationPlaying && timeRateIndex==0 && thunder>=0 &&
+        previousTime<thunder && thunder<=simulationTime && simulationTime-previousTime<.5)PlayThunder();
+#endif
     if(blackHoleJourney.tesseract){
         optics.SetBlackHoleHint({-1,-1,0});optics.SetStellarHint({-1,-1,0});optics.SetSystemSources({},0);
         const auto inverse=glm::transpose(InterstellarWorlds::Orientation());
@@ -2385,6 +2505,9 @@ void WindowManager::Update(float& dT) {
             static_cast<float>(blackHoleJourney.interiorBlend));
     }
     glViewport(0,0,sceneWidth,fullHeight);
+#ifdef RENDER_ENGINE_DX12
+    if(!reflectionSky)pendingReflectionFace=-1;
+#endif
     optics.Render(visionProfile, fieldOfView, exposureEv, hdrMode,lensFlareStrength,false,dT);
     if(inStarSystem && !starSystem.IsCore())starSystem.RenderOverlays(fieldOfView,aspectRatio,cameraFront,cameraUp,simulationTime,trajectories,pendingSystemTarget==activeSystemTarget,visionProfile);
     sceneCacheValid=true;
@@ -2420,14 +2543,17 @@ void WindowManager::InitializeGLFW()
 }
 
 void WindowManager::MakeNewWindow() {
+    std::cout << "[Startup] Creating the application window..." << std::endl;
     window = glfwCreateWindow(WIDTH, HEIGHT, "Render-Engine A0.1 | Playing", nullptr, nullptr);
     if (!window) {
         std::cerr << "Failed to create GLFW window\n";
         glfwTerminate();
     }
 #ifdef RENDER_ENGINE_DX12
+    std::cout << "[Startup] Initializing DirectX 12, DLSS, and ray tracing support..." << std::endl;
     NativeDX12::InitializeSceneBridge(glfwGetWin32Window(window));
 #else
+    std::cout << "[Startup] Initializing OpenGL..." << std::endl;
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
     if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress))) {
@@ -2450,15 +2576,23 @@ void WindowManager::MakeNewWindow() {
     glfwSetCursorPosCallback(window, MouseCallback); // Then read mouse input
     glfwSetDropCallback(window, DropCallback); // Then read dropped files
 
+    std::cout << "[Startup] Compiling the model viewer shaders..." << std::endl;
     flatShader = compileShaderProgram(flatVertexSrc, flatFragmentSrc);
     phongShader = compileShaderProgram(phongVertextSrc, phongFragmentSrc);
     blackHoleReady = blackHole.Initialize();
-    if(blackHoleReady)navigationCatalog.Initialize(blackHole.Catalogue());
+    if (blackHoleReady) {
+        std::cout << "[Startup] Preparing the navigation catalog..." << std::endl;
+        navigationCatalog.Initialize(blackHole.Catalogue());
+    }
+    std::cout << "[Startup] Preparing spacecraft interiors and the Tesseract..." << std::endl;
     if(!vehicleInterior.Initialize())blackHoleReady=false;
     if(!tesseractScene.Initialize())blackHoleReady=false;
+    std::cout << "[Startup] Preparing exposure, camera effects, and overlays..." << std::endl;
     opticsReady=optics.Initialize();
     InitializeOverlay();
+    std::cout << "[Startup] Preparing planet surfaces, atmospheres, and wildlife..." << std::endl;
     starSystemReady = starSystem.Initialize();
+    std::cout << "[Startup] Preparing Quantum Simulation..." << std::endl;
     quantumReady = quantum.Initialize();
     shaderProgram = flatShader;
 
@@ -2501,6 +2635,7 @@ void WindowManager::MakeNewWindow() {
     UpdateTitle();
 
 #ifdef _WIN32
+    std::cout << "[Startup] Creating the launcher menu and controls..." << std::endl;
     const HWND nativeWindow = glfwGetWin32Window(window);
     const HMENU menu = CreateMenu();
     nativeMenu=menu;
@@ -2669,6 +2804,7 @@ void WindowManager::MakeNewWindow() {
         },[this](NavigationPanel::Action action,const NavigationEntry& entry){ActivateNavigation(action,entry);}))std::cerr<<"Navigation panels could not be created\n";
     if(!controlsPanel.Create(nativeWindow))std::cerr<<"Controls panel could not be created\n";
     OpenMainMenu();
+    std::cout << "[Startup] Launcher menu ready." << std::endl;
 #endif
 }
 
@@ -2681,6 +2817,7 @@ void WindowManager::ReleaseGraphics() {
     quantum.Release();
 #ifdef RENDER_ENGINE_DX12
     reflectedEnvironment.Release();
+    pendingReflectionEnvironment.Release();
 #endif
     starSystem.Release();
     solarPortalSystem.Release();

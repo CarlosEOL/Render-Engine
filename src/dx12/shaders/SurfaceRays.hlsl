@@ -1,11 +1,10 @@
 RaytracingAccelerationStructure scene : register(t0);
-StructuredBuffer<float3> positions : register(t1);
+StructuredBuffer<float4> positions : register(t1); // Position and liquid coverage at the vertex.
 
 struct Material {
     float3 color;
     float reflectivity;
     uint firstVertex;
-    uint channels;
     float unitScale;
     uint kind;
 };
@@ -36,6 +35,7 @@ static const uint Transmitted = 4;
 static const uint Shadow = 8;
 static const uint Indirect = 16;
 static const uint Surface = 1;
+static const uint Bottom = 2;
 static const uint Glass = 5;
 
 struct Hit {
@@ -51,10 +51,19 @@ Hit Trace(float3 origin, float3 direction, float limit, uint channel) {
     ray.TMin = .015;
     ray.TMax = limit;
     RayQuery<RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> query;
-    query.TraceRayInline(scene, channel == Shadow ? RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH : 0, 255, ray);
+    const uint flags = channel == Primary ? RAY_FLAG_FORCE_OPAQUE :
+        channel == Shadow ? RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH : 0;
+    query.TraceRayInline(scene, flags, channel, ray);
     while (query.Proceed()) {
-        if (query.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE &&
-            (materials[query.CandidateGeometryIndex()].channels & channel) != 0)
+        const uint geometry = query.CandidateInstanceID() + query.CandidateGeometryIndex();
+        const Material material = materials[geometry];
+        const uint vertex = material.firstVertex + query.CandidatePrimitiveIndex() * 3;
+        const float2 uv = query.CandidateTriangleBarycentrics();
+        const float liquid = dot(float3(positions[vertex].w,positions[vertex+1].w,positions[vertex+2].w),
+                                 float3(1-uv.x-uv.y,uv));
+        // The top of a wet triangle is transparent to secondary rays. The
+        // hidden bottom mesh only represents the seabed on its wet side.
+        if (material.kind == Bottom ? liquid >= .5 : liquid < .5)
             query.CommitNonOpaqueTriangleHit();
     }
     Hit hit;
@@ -62,7 +71,7 @@ Hit Trace(float3 origin, float3 direction, float limit, uint channel) {
     hit.geometry = hit.primitive = 0;
     if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
         hit.distance = query.CommittedRayT();
-        hit.geometry = query.CommittedGeometryIndex();
+        hit.geometry = query.CommittedInstanceID() + query.CommittedGeometryIndex();
         hit.primitive = query.CommittedPrimitiveIndex();
     }
     return hit;
@@ -71,8 +80,8 @@ Hit Trace(float3 origin, float3 direction, float limit, uint channel) {
 float3 Normal(Hit hit, float3 incident) {
     const uint offset = materials[hit.geometry].firstVertex + hit.primitive * 3;
     const float scale = materials[hit.geometry].unitScale;
-    float3 n = normalize(cross((positions[offset + 1] - positions[offset]) * scale,
-                               (positions[offset + 2] - positions[offset]) * scale));
+    float3 n = normalize(cross((positions[offset + 1].xyz - positions[offset].xyz) * scale,
+                               (positions[offset + 2].xyz - positions[offset].xyz) * scale));
     return dot(n, incident) > 0 ? -n : n;
 }
 
@@ -86,6 +95,15 @@ float Depth(float3 location, float4 clip) {
         return log2(1 + au * 1e12) / log2(1 + 20000.0 * 1e12);
     }
     return clip.z / clip.w * .5 + .5;
+}
+
+float RasterDistance(float depth, float3 direction) {
+    if ((options.x & 1) != 0)
+        return (exp2(depth * log2(1 + 20000.0 * 1e12)) - 1) * .1495978707;
+    const float4 start = mul(projection, float4(eyeScale.xyz,1));
+    const float4 step = mul(projection, float4(direction / eyeScale.w,0));
+    const float z = depth * 2 - 1;
+    return (z * start.w - start.z) / (step.z - z * step.w);
 }
 
 bool Lookup(float4 clip, out uint2 pixel) {
@@ -112,6 +130,20 @@ float3 Environment(float3 direction) {
     return ambient+air*sky.w*smoothstep(-.028,.024,elevation);
 }
 
+float3 WaterEnvironment(float3 direction) {
+    // A missed ray below the local tangent sees the horizon through the
+    // water's surface roughness. Sample the sky side of the horizon.
+    if (sky.w > 0) {
+        const float elevation = dot(direction,sky.xyz);
+        // Keep the cube's bilinear footprint above its sky/ground boundary.
+        // A soft lower bound avoids building a hard line into the reflection.
+        const float floor = .009;
+        const float lift = .5 * ((floor-elevation) + sqrt((floor-elevation)*(floor-elevation) + .000012));
+        direction = normalize(direction + sky.xyz * lift);
+    }
+    return Environment(direction);
+}
+
 float3 Radiance(Hit hit, float3 origin, float3 direction) {
     const Material material = materials[hit.geometry];
     const float3 location = origin + direction * hit.distance;
@@ -119,9 +151,12 @@ float3 Radiance(Hit hit, float3 origin, float3 direction) {
     const float3 n = Normal(hit, direction);
     const float3 approximate = material.color * (.14 + .80 * saturate(dot(n, lightRange.xyz)));
     uint2 pixel;
-    if (Lookup(clip, pixel) && abs(rasterDepth[pixel] - Depth(location, clip)) < .00015) {
+    // The bottom is absent from the above-water raster. Its projected depth
+    // can round to the same value as a different surface at long distances.
+    if (material.kind != Bottom && Lookup(clip, pixel) &&
+        abs(rasterDepth[pixel] - Depth(location, clip)) < .00002) {
         const float4 sampleColor = rasterColor[pixel];
-        if (sampleColor.a < .099 || sampleColor.a > .405) {
+        if (sampleColor.a < .049 || sampleColor.a > .405) {
             const float2 uv = clip.xy/clip.w*.5+.5;
             const float2 edge = min(uv,1-uv);
             return lerp(approximate,sampleColor.rgb,smoothstep(0,.055,min(edge.x,edge.y)));
@@ -136,9 +171,12 @@ float3 ViewDirection(uint2 pixelInRegion) {
     return normalize(h.xyz-eyeScale.xyz*h.w);
 }
 
-float3 ReconstructReflection(uint2 pixel, float3 normal) {
+float3 ReconstructReflection(uint2 pixel, float3 normal, bool water) {
     const float4 center = reflectionSamples[pixel];
-    if (center.a >= -1) return center.rgb;
+    if (center.a >= 0 || (!water && center.a >= -1)) return center.rgb;
+    const float3 direction = reflect(ViewDirection(pixel-region.xy),normal);
+    const float3 fallback = water ? WaterEnvironment(direction) : Environment(direction);
+    if (center.a == -1) return fallback;
     const float depth = rasterDepth[pixel];
     float4 combined = 0;
     float referenceHit = -2;
@@ -149,18 +187,20 @@ float3 ReconstructReflection(uint2 pixel, float3 normal) {
             if (any(neighbor < int2(region.xy)) || any(neighbor >= int2(region.xy + region.zw))) continue;
             const float4 candidate = reflectionSamples[neighbor];
             const float4 guide = reflectionGuide[neighbor];
-            if (candidate.a < -1 || guide.a <= 0 ||
+            if (candidate.a < -1 || (water ? guide.a >= 0 : guide.a <= 0) ||
                 abs(rasterDepth[neighbor]-depth) > .0016 || dot(guide.xyz,normal) < .88) continue;
-            if (referenceHit < -1) referenceHit = candidate.a;
-            if ((candidate.a < 0) != (referenceHit < 0)) continue;
+            if (!water) {
+                if (referenceHit < -1) referenceHit = candidate.a;
+                if ((candidate.a < 0) != (referenceHit < 0)) continue;
+            }
             const float weight = exp(-abs(rasterDepth[neighbor]-depth)*2400)
                 * pow(saturate(dot(guide.xyz,normal)),16)
-                * (candidate.a < 0 ? 1 : exp(-abs(candidate.a-referenceHit)/max(2.0,referenceHit*.15)));
-            combined += float4(candidate.rgb,1) * weight;
+                * (water || candidate.a < 0 ? 1 : exp(-abs(candidate.a-referenceHit)/max(2.0,referenceHit*.15)));
+            combined += float4(water && candidate.a < 0 ? fallback : candidate.rgb,1) * weight;
         }
     }
     if (combined.a > .0001) return combined.rgb/combined.a;
-    return Environment(reflect(ViewDirection(pixel-region.xy),normal));
+    return fallback;
 }
 
 [numthreads(8, 8, 1)]
@@ -169,9 +209,9 @@ void main(uint3 id : SV_DispatchThreadID) {
     const uint2 pixel = region.xy + id.xy;
     if (passIndex != 0) {
         const float4 guide = reflectionGuide[pixel];
-        if (guide.a > 0) {
+        if (guide.a != 0) {
             const float4 base = result[pixel];
-            result[pixel] = float4(lerp(base.rgb, ReconstructReflection(pixel,guide.xyz),guide.a),base.a);
+            result[pixel] = float4(lerp(base.rgb, ReconstructReflection(pixel,guide.xyz,guide.a<0),abs(guide.a)),base.a);
         }
         return;
     }
@@ -182,22 +222,45 @@ void main(uint3 id : SV_DispatchThreadID) {
     const float rasterZ = rasterDepth[pixel];
     if (rasterZ < .99999) {
         const float3 direction = ViewDirection(id.xy);
-        const Hit surface = Trace(0, direction, lightRange.w, Primary);
+        const bool waterTag = original.a >= .049 && original.a <= .405;
+        const float4 wave = waterTag ? waterNormal[pixel] : 0;
+        const bool rasterWater = wave.a > 0;
+        Hit surface;
+        if (rasterWater) {
+            // The raster pass already resolved the wave and its exact wet
+            // coverage. Avoid selecting a second surface at the shoreline.
+            surface.distance = RasterDistance(rasterZ,direction);
+            surface.geometry = surface.primitive = 0;
+        } else {
+            surface = Trace(0, direction, lightRange.w, Primary);
+        }
         if (surface.distance >= 0) {
             const float3 location = direction * surface.distance;
-            if (abs(rasterZ - Depth(location, Project(location))) < .0003) {
+            const float depthError = abs(rasterZ - Depth(location, Project(location)));
+            const float agreement = rasterWater ? 1 : 1 - smoothstep(.000002,.000012,depthError);
+            const float geometryInfluence = 1 - smoothstep(lightRange.w*.8,lightRange.w,surface.distance);
+            const float influence = agreement * (rasterWater ? 1 : geometryInfluence);
+            if (influence > 0) {
                 const Material material = materials[surface.geometry];
-                const bool water = material.kind == Surface && original.a >= .099 && original.a <= .405;
-                const bool glass = material.kind == Glass;
-                const float3 geometryNormal = Normal(surface, direction);
-                const float4 wave = water ? waterNormal[pixel] : 0;
-                const float3 normal = wave.a > 0 && dot(wave.xyz, -direction) > .002 ? normalize(wave.xyz) : geometryNormal;
+                const bool water = rasterWater || (material.kind == Surface && waterTag);
+                const bool glass = !water && material.kind == Glass;
+                const float3 geometryNormal = rasterWater ?
+                    (sky.w > 0 ? sky.xyz : normalize(wave.xyz)) : Normal(surface, direction);
+                const float waterCoverage = rasterWater ? saturate(wave.a) :
+                    water && original.a < .099 ? saturate((original.a - .05) / .048) : 1;
+                // Keep the wave normal continuous at grazing angles. A hard
+                // switch to triangle normals is visible as whole mesh facets.
+                const float3 shadingNormal = rasterWater ? normalize(wave.xyz) : geometryNormal;
+                const float3 normal = normalize(shadingNormal-direction*max(.002+dot(shadingNormal,direction),0));
                 const float offset = max(.025, surface.distance * .000015);
                 const float3 exterior = location + geometryNormal * offset;
                 const float3 interior = location - geometryNormal * offset;
-                if (!glass && dot(normal, lightRange.xyz) > .035) {
+                if (!glass && geometryInfluence > 0 && dot(normal, lightRange.xyz) > .035) {
                     const Hit occluder = Trace(exterior, lightRange.xyz, lightRange.w, Shadow);
-                    if (occluder.distance >= 0) color *= .38;
+                    if (occluder.distance >= 0) {
+                        const float shadow = water ? smoothstep(.035,.10,dot(geometryNormal,lightRange.xyz)) : 1;
+                        color *= 1 - .62*shadow*geometryInfluence;
+                    }
                 }
                 if (!water && !glass) {
                     const float3 tangent = normalize(cross(abs(normal.y) < .96 ? float3(0,1,0) : float3(1,0,0), normal));
@@ -214,26 +277,46 @@ void main(uint3 id : SV_DispatchThreadID) {
                 }
                 const float f0 = water ? .0204 : glass ? .04 : material.reflectivity;
                 const float fresnel = f0 + (1 - f0) * pow(1 - saturate(dot(normal, -direction)), 5);
-                if (options.w != 0 && (water || glass)) {
+                if (options.w != 0 && (water || glass) && geometryInfluence > 0) {
                     const float3 bent = refract(direction, normal, water ? 1.0 / 1.333 : 1.0 / 1.5);
                     const Hit through = Trace(interior, bent, water ? 110.0 : lightRange.w, Transmitted);
                     if (through.distance >= 0) {
                         const float3 absorption = water ? exp(-through.distance * float3(.18, .067, .036)) : float3(.92, .96, .99);
                         const float3 light = Radiance(through, interior, bent);
-                        color = lerp(color, light * absorption + color * (1 - absorption), (1 - fresnel) * (water ? .86 : .96));
+                        color = lerp(color, light * absorption + color * (1 - absorption),
+                            (1 - fresnel) * geometryInfluence * (water ? .86 * waterCoverage : .96));
                     }
                 }
                 if (options.z != 0 && (water || glass || f0 > .001)) {
-                    const float weight = fresnel * (water || glass ? .94 : .50);
-                    reflectionGuide[pixel] = float4(normal,weight);
+                    const float weight = influence * fresnel * (water ? .94 * waterCoverage : glass ? .94 : .50);
+                    reflectionGuide[pixel] = float4(normal,water ? -weight : weight);
                     if (((id.x + id.y) & 1) == 0) {
                         const float3 reflected = reflect(direction, normal);
-                        const Hit mirror = Trace(exterior, reflected, lightRange.w, Reflective);
-                        const float3 reflectedLight = mirror.distance >= 0 ? Radiance(mirror, exterior, reflected)
-                            : (water || glass || (options.x & 2) != 0 ? Environment(reflected) : color);
+                        Hit mirror;
+                        mirror.distance = -1;
+                        mirror.geometry = mirror.primitive = 0;
+                        if (geometryInfluence > 0) mirror = Trace(exterior, reflected, lightRange.w, Reflective);
+                        float3 reflectedLight;
+                        if (water) {
+                            reflectedLight = WaterEnvironment(reflected);
+                            if (mirror.distance >= 0) {
+                                const bool terrainHit = materials[mirror.geometry].kind == Surface;
+                                // Limit how much coarse, nearly tangent land
+                                // hits can replace the continuous reflected sky.
+                                const float terrainVisibility = terrainHit && sky.w > 0 ?
+                                    smoothstep(.001,.022,dot(reflected,geometryNormal))
+                                    * exp(-mirror.distance*.00012) : 1;
+                                reflectedLight = lerp(reflectedLight,Radiance(mirror,exterior,reflected),
+                                    geometryInfluence * terrainVisibility);
+                            }
+                        } else {
+                            reflectedLight = mirror.distance >= 0 ? Radiance(mirror,exterior,reflected)
+                                : glass || (options.x & 2) != 0 ? Environment(reflected) : color;
+                        }
                         reflectionSamples[pixel] = float4(reflectedLight,min(mirror.distance,65000.0));
                     }
                 }
+                color = lerp(original.rgb,color,influence);
             }
         }
     }

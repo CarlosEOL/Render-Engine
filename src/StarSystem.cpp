@@ -7,6 +7,7 @@
 #include "glad/glad.h"
 #include <GLFW/glfw3.h>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -306,8 +307,9 @@ PlanetWeather::State StarSystem::WeatherState(int planet,double seconds) const {
     const auto& body=planets[planet];
     const PlanetWeather::Profile profile{body.seed,static_cast<float>(body.radiusEarth*6371000),body.seaLevel,
         static_cast<float>(body.temperature),solarSystem && planet==2?8.f:7.f+5*PlanetWeather::Unit(body.seed+17),false,
-        body.atmosphere && !body.gas && !body.wormhole && body.temperature>240 && body.temperature<335,
-        body.metalCore,body.magneticField && aurorasEnabled,body.atmosphere && !body.wormhole,false,body.earthPoles,!solarSystem};
+        body.atmosphere && body.HasSurfaceLiquid() && body.temperature>185 && body.temperature<335,
+        body.metalCore,body.magneticField && aurorasEnabled,body.atmosphere && !body.wormhole,false,body.earthPoles,!solarSystem,
+        body.HasSurfaceLiquid()};
     return PlanetWeather::Make(profile,seconds,weatherEnabled?weatherWindScale:0,weatherEnabled?weatherStormScale:0);
 }
 
@@ -568,6 +570,71 @@ double StarSystem::ObserverClockRate(double seconds) const {
     return std::sqrt(std::max(0.0,1-2*potential/c2))*std::sqrt(std::max(0.0,1-glm::dot(velocity,velocity)/c2));
 }
 
+float StarSystem::AtmosphereMeteringWeight(double seconds) const
+{
+    constexpr int earth = 2;
+    if (!solarSystem || planets.size() <= earth || DepthBelowWater() > 0) return 0;
+    const double radius = planets[earth].radiusEarth * Astronomy::earthRadiusAu;
+    const double altitude = (glm::length(camera - Position(earth, seconds)) - radius) * Astronomy::metresPerAu;
+    return static_cast<float>(1.0 - glm::smoothstep(85000.0, .025 * radius * Astronomy::metresPerAu, altitude));
+}
+
+std::string StarSystem::LocalCalendar(double seconds) const
+{
+    int planet = landed ? landedPlanet : selected;
+    double nearest = std::numeric_limits<double>::infinity();
+    if (!landed) {
+        // In orbit, use the world under the camera before consulting the
+        // catalogue selection. Distant selections use the prime meridian.
+        for (int i = 0; i < static_cast<int>(planets.size()); ++i) {
+            const auto& body = planets[i];
+            if (body.wormhole) continue;
+            const double radius = body.radiusEarth * Astronomy::earthRadiusAu;
+            const double distance = glm::length(camera - Position(i, seconds));
+            if (distance <= 3.0 * radius && distance - radius < nearest) {
+                nearest = distance - radius;
+                planet = i;
+            }
+        }
+    }
+    if (planet < 0 || !std::isfinite(seconds)) return {};
+    const auto& body = planets[planet];
+    if (body.gas || body.wormhole || !body.atmosphere || body.parent >= 0 ||
+        body.palette != Planet::Palette::Climate || body.daySeconds <= 0) return {};
+
+    const double day = Astronomy::secondsPerDay;
+    const double solarRate = body.earthPoles ? 1.0 : day *
+        (1.0 / body.daySeconds - OrbitalMechanics::MeanMotion(GravityFor(planet), body.orbit.semiMajorAxis) /
+            glm::two_pi<double>());
+    // Similar worlds have a regular day between 12 and 48 Earth hours.
+    if (solarRate < .5 || solarRate > 2.0) return {};
+    double longitude = 0;
+    if (landed || std::isfinite(nearest)) {
+        const auto radial = glm::transpose(RotationDouble(planet, seconds)) * (camera - Position(planet, seconds));
+        if (std::hypot(radial.x, radial.z) > glm::length(radial) * 1e-8)
+            longitude = std::atan2(-radial.z, radial.x);
+    }
+
+    using namespace std::chrono;
+    // The simulation's J2000 epoch is Greenwich noon. Use longitude for a
+    // mean solar offset and advance the same civil calendar in local days.
+    constexpr auto epoch = sys_days{2000y / January / 1} + hours{12};
+    const auto timestamp = epoch + std::chrono::seconds{
+        static_cast<std::int64_t>(std::floor(seconds * solarRate + std::round(longitude * day / glm::two_pi<double>())))};
+    const auto midnight = floor<days>(timestamp);
+    const hh_mm_ss clock{timestamp - midnight};
+    // Gregorian dates repeat every 400 years, beyond chrono::year's range.
+    constexpr int daysPerCycle = 146097;
+    const auto cycles = midnight.time_since_epoch().count() / daysPerCycle;
+    const year_month_day date{midnight - days{cycles * daysPerCycle}};
+    std::ostringstream label;
+    label << std::setfill('0') << std::setw(4) << (int(date.year()) + cycles * 400)
+        << '/' << std::setw(2) << unsigned(date.month()) << '/' << std::setw(2) << unsigned(date.day())
+        << ' ' << std::setw(2) << clock.hours().count() << ':' << std::setw(2) << clock.minutes().count()
+        << ':' << std::setw(2) << clock.seconds().count();
+    return label.str();
+}
+
 std::string StarSystem::Information(double seconds) const
 {
     if(IsCore())return GalacticCores::Information(coreId);
@@ -619,12 +686,17 @@ std::string StarSystem::Information(double seconds) const
 
 bool StarSystem::Initialize()
 {
-    const std::string vertex = std::string("#version 330 core\n") + PlanetTerrain::ShaderFunctions() + R"(
+    const std::string vertex = std::string("#version 330 core\n#define RENDER_EARTH_CITY\n"
+#ifdef RENDER_ENGINE_DX12
+        "#define WRITE_RAY_LIQUID_MASK\n"
+#endif
+    ) + PlanetTerrain::ShaderFunctions() + R"(
 layout(location=0) in vec3 position;
 uniform mat4 model;
 uniform mat4 viewProjection;
 uniform int bodyKind;
 uniform float phase;
+uniform vec3 surfPhase;
 uniform float bodyRadiusKm;
 uniform bool seabedRendering;
 uniform bool guideOverlay;
@@ -634,6 +706,28 @@ uniform vec2 guideRadiusScale;
 out vec3 localPosition;
 out vec3 relativePosition;
 out vec3 patchDeltaMetres;
+out vec2 patchTangentMetres;
+out vec3 patchSurfaceNormal;
+#ifdef WRITE_RAY_LIQUID_MASK
+uniform bool rayCaptureLiquid;
+out float rayLiquid;
+#endif
+float mappedPatchLevel(vec2 tangent,vec3 radial,out vec4 geography){
+    bool precise=preciseEarthPatch();
+    vec2 offset=precise?earthPatchMapOffset(tangent):vec2(0);
+    geography=precise?earthPatchGeography(offset):earthGeography(radial);
+    float sampled=precise?earthPatchElevation(offset,geography):earthMappedElevation(radial,geography);
+    vec4 city=cityRelief(radial,offset,precise);
+    sampled=cityElevation(sampled,city);
+    geography=cityWaterMask(geography,city);
+    float level=terrainRelief*mappedLandHeight(geography,sampled);
+    return seabedRendering?level-mappedWaterDepth(geography,sampled)/patchRadiusMetres:level;
+}
+vec3 mappedPatchPoint(vec2 tangent){
+    vec4 geography;
+    float elevation=mappedPatchLevel(tangent,surfacePatchDirection(tangent),geography);
+    return surfacePatchDelta(tangent,elevation);
+}
 vec4 guideProjection(vec4 clip){
     if(guideOverlay && clip.w>0.0){
         float radius=length(clip.xy/clip.w*guideRadiusScale),factor=1.0;
@@ -644,12 +738,51 @@ vec4 guideProjection(vec4 clip){
     return clip;
 }
 void main() {
+#ifdef WRITE_RAY_LIQUID_MASK
+    rayLiquid=0.0;
+#endif
     patchDeltaMetres=vec3(0);
+    patchTangentMetres=vec2(0);
+    patchSurfaceNormal=vec3(0);
     if(bodyKind==1 && patchDrawing){
+        patchTangentMetres=position.xy;
         localPosition=surfacePatchDirection(position.xy);
-        float height=terrainHeight(localPosition);
-        float elevation=seabedRendering?seabedElevation(localPosition,height,bodyRadiusKm*1000.0)
-            :surfaceElevation(localPosition,height,phase,false);
+        float elevation;
+        if(earthMapped){
+            vec4 geography;
+            elevation=mappedPatchLevel(position.xy,localPosition,geography);
+            float water=temperateWater(localPosition,smoothstep(.35,.65,max(geography.b,geography.a)));
+            patchSurfaceNormal=localPosition;
+            // Sample a fixed physical neighborhood so the terrain's slope
+            // is independent of screen pixels. Open water uses wave normals.
+            if(seabedRendering || water<.98){
+                float spacing=clamp(length(position.xy)*.006,8.0,128.0);
+                vec2 dx=vec2(spacing,0),dy=vec2(0,spacing);
+                vec3 east=mappedPatchPoint(position.xy+dx)-mappedPatchPoint(position.xy-dx);
+                vec3 north=mappedPatchPoint(position.xy+dy)-mappedPatchPoint(position.xy-dy);
+                patchSurfaceNormal=normalize(cross(east,north));
+            }
+#ifdef WRITE_RAY_LIQUID_MASK
+            rayLiquid=water;
+#endif
+            if(!seabedRendering)
+                elevation+=water*smoothstep(.5,.96,water)*waterWaveHeight*oceanWave(localPosition,phase);
+            if(!seabedRendering && geography.a<.08 && geography.b>.5 && geography.b<.512){
+                float distance=(.5-geography.b)*6.2831853*patchRadiusMetres/float(textureSize(earthReliefMap,0).x);
+                float wind=smoothstep(0.0,20.0,weatherParameters.x);
+                float crest=6.2831853*distance/mix(8.0,16.0,wind)-surfPhase.x;
+                float heightMetres=mix(.065,.22,wind)*smoothstep(.38,.97,sin(crest))
+                    *smoothstep(0.0,3.0,-distance)*(1.0-smoothstep(18.0,40.0,-distance));
+                elevation+=heightMetres/patchRadiusMetres;
+            }
+        }else{
+            float height=terrainHeight(localPosition);
+#ifdef WRITE_RAY_LIQUID_MASK
+            if(rayCaptureLiquid)rayLiquid=temperateWater(localPosition,surfaceWaterCoverage(localPosition,height));
+#endif
+            elevation=seabedRendering?seabedElevation(localPosition,height,bodyRadiusKm*1000.0)
+                :surfaceElevation(localPosition,height,phase,false);
+        }
         patchDeltaMetres=surfacePatchDelta(position.xy,elevation);
         relativePosition=surfacePatchRelative(patchDeltaMetres);
         gl_Position=viewProjection*vec4(relativePosition,1);return;
@@ -664,6 +797,14 @@ void main() {
     if (bodyKind == 1){
         vec3 radial=normalize(position);
         float height=terrainHeight(radial);
+#ifdef WRITE_RAY_LIQUID_MASK
+        if(rayCaptureLiquid){
+            if(earthMapped){
+                vec4 geography=cityWaterMask(earthGeography(radial),cityRelief(radial,vec2(0),false));
+                rayLiquid=temperateWater(radial,smoothstep(.35,.65,max(geography.b,geography.a)));
+            }else rayLiquid=temperateWater(radial,surfaceWaterCoverage(radial,height));
+        }
+#endif
         displaced=seabedRendering?radial*(1.0+seabedElevation(radial,height,bodyRadiusKm*1000.0))
             :planetSurface(radial,height,phase);
     }
@@ -672,7 +813,7 @@ void main() {
 }
 )";
     const std::string fragment =
-        std::string("#version 330 core\n"
+        std::string("#version 330 core\n#define RENDER_EARTH_CITY\n"
 #ifdef RENDER_ENGINE_DX12
             "#define WRITE_RAY_WATER_NORMAL\n"
 #endif
@@ -681,6 +822,8 @@ void main() {
 in vec3 localPosition;
 in vec3 relativePosition;
 in vec3 patchDeltaMetres;
+in vec2 patchTangentMetres;
+in vec3 patchSurfaceNormal;
 layout(location=0) out vec4 color;
 #ifdef WRITE_RAY_WATER_NORMAL
 layout(location=1) out vec4 rayWaterNormal;
@@ -700,10 +843,26 @@ uniform bool waterRefraction;
 uniform bool earthShoreDetail;
 uniform bool seabedRendering;
 uniform sampler2D earthColorMap;
+uniform vec3 surfPhase;
 
-vec3 refractedSeabed(vec3 waterColor,vec3 radial,vec3 normal,float height){
+vec2 beachSurf(float distance,float sandiness,float variation,float footprint){
+    float wind=smoothstep(0.0,20.0,weatherParameters.x);
+    // A crest moves towards land while its thin sheet washes up and drains.
+    float cycle=fract((surfPhase.x+variation*1.1)/6.2831853);
+    float surge=smoothstep(.10,.47,cycle)*(1.0-smoothstep(.46,.94,cycle));
+    float runup=(surge*mix(.85,4.5,wind)-.72*(1.0-surge))*mix(.14,1.0,sandiness);
+    float wavelength=mix(8.0,16.0,wind);
+    float primary=6.2831853*distance/wavelength-surfPhase.x+(variation-.5)*.44;
+    float secondary=distance*.77-surfPhase.y+2.4*variation;
+    float breaker=smoothstep(.59,.95,sin(primary)+.17*sin(secondary)+.07*sin(surfPhase.z+variation*4.0));
+    float detail=1.0-smoothstep(.10,.48,footprint/wavelength);
+    float bar=(1.0-smoothstep(7.0,25.0,-distance))*mix(.19,breaker,detail);
+    float swash=exp(-abs(distance-runup)/(1.2+1.35*wind))*mix(.24,.74,surge);
+    return vec2(runup,max(bar*.72,swash)*mix(.39,.92,wind));
+}
+
+vec3 refractedSeabed(vec3 waterColor,vec3 radial,vec3 normal,float depth){
     float radiusMetres=bodyRadiusKm*1000.0;
-    float depth=liquidDepthMetres(radial,height,radiusMetres);
     if(depth>=45.0)return waterColor;
     vec3 localView=normalize(transpose(mat3(model))*(-relativePosition));
     vec3 downward=refract(-localView,normal,1.0/1.333);
@@ -720,6 +879,10 @@ vec3 refractedSeabed(vec3 waterColor,vec3 radial,vec3 normal,float height){
     vec3 seabed=mix(vec3(.18,.24,.19),vec3(.51,.46,.29),sediment);
     vec3 transmission=exp(-travel*vec3(.16,.080,.058));
     return mix(waterColor,mix(waterColor,seabed,transmission),1.0-smoothstep(26.0,45.0,depth));
+}
+
+float oceanMaskAt(vec3 direction){
+    return cityWaterMask(earthGeography(direction),cityRelief(direction,vec2(0),false)).b;
 }
 
 void main() {
@@ -742,27 +905,60 @@ void main() {
         if (inside != patchDrawing) discard;
     }
     vec3 normal=radial;
+    // Use the flat reference surface for wave phase and filtering. Including
+    // the displaced mesh here makes the shading change at triangle edges.
+    vec3 waveDelta=patchDrawing?surfacePatchDelta(patchTangentMetres,0.0):radial*weatherParameters.w;
+    vec3 wavePosition=patchDrawing?patchTextureOrigin+waveDelta:waveDelta;
+    vec3 waveDx=dFdx(waveDelta);
+    vec3 waveDy=dFdy(waveDelta);
     vec3 material=albedo;
-    float water=0, shoreFoam=0;
+    float water=0, shoreFoam=0, waveEnergy=1.0, shoreOptics=1.0;
     if (bodyKind == 1) {
-        float height=terrainHeight(radial);
-        water=liquidCoverage(radial,height);
-        vec3 surface=seabedRendering?radial*(1.0+seabedElevation(radial,height,bodyRadiusKm*1000.0))
-            :planetSurface(radial,height,phase);
-        // Use the continuous height field to shade larger land features.
-        // The nearby mesh derivatives preserve metre-scale water and ground normals.
-        bool localDetail=(water>.01 && !seabedRendering) || length(relativePosition)*149597870700.0<110.0;
-        vec3 slopePoint=surface;
-        if(patchDrawing && localDetail)slopePoint=patchDeltaMetres;
-        normal=normalize(cross(dFdx(slopePoint),dFdy(slopePoint)));
-        if (dot(normal,radial)<0) normal=-normal;
-        if(seabedRendering && water>.5){
-            vec3 metres=patchDrawing?patchTextureOrigin+patchRight*patchDeltaMetres.x+
-                patchUp*patchDeltaMetres.y+patchCenter*patchDeltaMetres.z:radial*bodyRadiusKm*1000.0;
-            float detail=1.0-smoothstep(.45,3.0,max(length(dFdx(metres)),length(dFdy(metres))));
-            float sediment=mix(.5,groundNoise(metres*.39),detail);
-            vec3 floorColor=mix(vec3(.12,.20,.16),vec3(.51,.42,.29),sediment);
-            groundDetail(floorColor,normal,patchDeltaMetres,0.0,length(relativePosition)*149597870700.0,phase);
+        vec4 geography=vec4(0);
+        float height,depth,sampled=0.0,terrainOcean,cityCoverage=0.0,fieldElevation;
+        if(earthMapped){
+            bool precise=preciseEarthPatch();
+            vec2 uvOffset=precise?earthPatchMapOffset(patchTangentMetres):vec2(0);
+            geography=precise?earthPatchGeography(uvOffset):earthGeography(radial);
+            sampled=precise?earthPatchElevation(uvOffset,geography):earthMappedElevation(radial,geography);
+            vec4 city=cityRelief(radial,uvOffset,precise);
+            sampled=cityElevation(sampled,city);
+            geography=cityWaterMask(geography,city);
+            cityCoverage=city.a;
+            height=mappedLandHeight(geography,sampled);
+            depth=mappedWaterDepth(geography,sampled);
+            terrainOcean=smoothstep(.35,.65,max(geography.b,geography.a));
+            water=temperateWater(radial,terrainOcean);
+            fieldElevation=seabedRendering?terrainRelief*height-depth/(bodyRadiusKm*1000.0)
+                :mappedSurfaceElevation(radial,height,phase,water);
+        }else{
+            height=terrainHeight(radial);
+            terrainOcean=surfaceWaterCoverage(radial,height);
+            water=temperateWater(radial,terrainOcean);
+            depth=liquidDepthMetres(radial,height,bodyRadiusKm*1000.0);
+            fieldElevation=seabedRendering?seabedElevation(radial,height,bodyRadiusKm*1000.0)
+                :surfaceElevation(radial,height,phase,false);
+        }
+        waveEnergy=earthMapped?smoothstep(.5,.96,water):1.0;
+        float cameraDistance=length(relativePosition)*149597870700.0;
+        vec3 fieldPoint=patchDrawing?surfacePatchDelta(patchTangentMetres,fieldElevation)
+            :radial*(1.0+fieldElevation)*bodyRadiusKm*1000.0;
+        if(patchDrawing && earthMapped)normal=normalize(patchSurfaceNormal);
+        else normal=terrainNormal(fieldPoint,radial);
+        if(patchDrawing && !earthMapped){
+            float meshWeight=1.0-smoothstep(72.0,145.0,cameraDistance);
+            if(!seabedRendering)meshWeight*=1.0-smoothstep(.05,.9,water);
+            normal=normalize(mix(normal,terrainNormal(patchDeltaMetres,radial),meshWeight));
+        }
+        if(seabedRendering){
+            vec3 metres=patchDrawing?patchTextureOrigin+patchDeltaMetres:radial*bodyRadiusKm*1000.0;
+            float footprint=max(length(dFdx(metres)),length(dFdy(metres)));
+            float sediment=mix(.5,groundNoise(metres*.39),1.0-smoothstep(.45,3.0,footprint));
+            vec3 dry=earthMapped?pow(texture(earthColorMap,earthMapUv(radial)).rgb,vec3(2.2)):albedo;
+            vec3 shelf=mix(vec3(.29,.22,.13),vec3(.49,.39,.23),sediment);
+            vec3 deep=mix(vec3(.12,.20,.16),vec3(.51,.42,.29),sediment);
+            vec3 floorColor=mix(dry,mix(shelf,deep,smoothstep(3.0,25.0,depth)),smoothstep(0.0,1.4,depth));
+            groundDetail(floorColor,normal,patchDeltaMetres,0.0,cameraDistance,phase);
             vec3 worldNormal=normalize(mat3(model)*normal);
             float daylight=max(0.0,dot(worldNormal,normalize(starPosition-relativePosition)));
             color=vec4(floorColor*(.07+.62*daylight),0);return;
@@ -775,7 +971,7 @@ void main() {
             material*=.90+.15*(.5+.5*terrainNoise(radial*120.0));
             water=0.0;
         }else{
-        float oceanCoverage=surfaceWaterCoverage(radial,height);
+        float oceanCoverage=terrainOcean;
         if(!earthMapped && !earthPoles){
             float shoreWidth=max(.000015,fwidth(height));
             oceanCoverage=1.0-smoothstep(seaLevel-shoreWidth,seaLevel+shoreWidth,height);
@@ -783,7 +979,7 @@ void main() {
         }
         if(earthMapped){
             material=pow(texture(earthColorMap,earthMapUv(radial)).rgb,vec3(2.2));
-            vec4 geography=earthGeography(radial);
+            material=mix(material,mix(vec3(.076,.092,.057),material,.4),cityCoverage);
             float coast=geography.b;
             vec3 dx=dFdx(relativePosition)*149597870700.0,dy=dFdy(relativePosition)*149597870700.0;
             float footprint=max(length(dx),length(dy));
@@ -796,18 +992,19 @@ void main() {
                 vec3 north=cross(radial,east);
                 float offset=36.0/(bodyRadiusKm*1000.0);
                 vec2 change=vec2(
-                    earthGeography(normalize(radial+east*offset)).b-earthGeography(normalize(radial-east*offset)).b,
-                    earthGeography(normalize(radial+north*offset)).b-earthGeography(normalize(radial-north*offset)).b);
+                    oceanMaskAt(normalize(radial+east*offset))-oceanMaskAt(normalize(radial-east*offset)),
+                    oceanMaskAt(normalize(radial+north*offset))-oceanMaskAt(normalize(radial-north*offset)));
                 // Estimate metres from the mapped shoreline without screen-space quantization.
                 float coastDistance=(.5-coast)*72.0/max(length(change),.0001);
-                float elevation=earthMappedElevation(radial,geography);
+                float elevation=sampled;
                 float slope=1.0-clamp(dot(radial,normal),0.0,1.0);
                 float sandiness=(1.0-smoothstep(.002,.023,slope))*(1.0-smoothstep(9.0,39.0,abs(elevation)));
                 vec3 shorePoint=patchTextureOrigin+patchDeltaMetres;
                 float grain=groundNoise(shorePoint*.51), variation=groundNoise(shorePoint*.036);
                 float width=mix(13.0,41.0,variation)*mix(.6,1.0,sandiness);
-                float edgeAA=max(.65,footprint*.48);
-                float wet=1.0-smoothstep(1.0,9.0,max(0.0,coastDistance));
+                float edgeAA=max(2.5,footprint*.85);
+                vec2 surf=beachSurf(coastDistance,sandiness,variation,footprint);
+                float wet=1.0-smoothstep(1.0,9.0,max(0.0,coastDistance-max(0.0,surf.x)));
                 vec3 drySand=mix(vec3(.52,.36,.185),vec3(.76,.61,.37),.34+.55*grain);
                 vec3 sand=mix(drySand,drySand*vec3(.50,.59,.65),wet);
                 vec3 rocky=mix(vec3(.15,.13,.11),vec3(.32,.29,.22),grain);
@@ -815,14 +1012,13 @@ void main() {
                 material=mix(material,mix(rocky,sand,sandiness),shore*detail*(1.0-smoothstep(25.0,50.0,-coastDistance)));
                 float shallow=1.0-smoothstep(3.0,45.0,-coastDistance);
                 ocean=mix(ocean,mix(vec3(.020,.19,.22),sand*.62,.44),shallow*detail*(.46+.43*sandiness));
-                float newCoverage=1.0-smoothstep(-edgeAA,edgeAA,coastDistance);
+                float newCoverage=1.0-smoothstep(-edgeAA,edgeAA,coastDistance-surf.x);
                 float coastBlend=detail*(1.0-smoothstep(75.0,130.0,abs(coastDistance)));
                 oceanCoverage=mix(oceanCoverage,newCoverage,coastBlend);
                 water=mix(water,newCoverage,coastBlend);
-                float wave=6.2831853*coastDistance/mix(4.8,10.5,variation)+phase+variation*3.5;
-                float whitewater=smoothstep(.70,.98,sin(wave)+.14*(grain-.5));
-                shoreFoam=newCoverage*coastBlend*(1.0-smoothstep(1.8,17.0,-coastDistance))*whitewater
-                    *mix(.34,.74,smoothstep(0.0,13.0,weatherParameters.x));
+                shoreOptics=mix(1.0,smoothstep(-1.0,11.0,surf.x-coastDistance),coastBlend);
+                float bubbles=mix(.73,1.0,grain)*(1.0-smoothstep(1.0,6.0,coastDistance-surf.x));
+                shoreFoam=newCoverage*coastBlend*surf.y*bubbles;
             }
             material=mix(material,ocean,oceanCoverage);
         }else{
@@ -861,12 +1057,17 @@ void main() {
             }
         }
         }
-        if(water>.5 && weatherParameters.w>0.0){
-            vec3 wavePosition=patchDrawing?patchTextureOrigin+patchDeltaMetres:radial*weatherParameters.w;
-            normal=normalize(radial-weatherWaveGradient(wavePosition,radial,true));
-        }else groundDetail(material,normal,patchDeltaMetres,water,length(relativePosition)*149597870700.0,phase);
-        if(waterRefraction && water>.5)
-            material=mix(material,refractedSeabed(material,radial,normal,height),smoothstep(.5,.97,water));
+        if(water>.08 && weatherParameters.w>0.0){
+            // Form land and water normals separately, then blend through the
+            // wet edge so a narrow pixel band cannot become a row of spikes.
+            float wetness=smoothstep(.12,.96,water);
+            vec3 waterNormal=normalize(radial-weatherFilteredWaveGradient(wavePosition,radial,waveDx,waveDy)*waveEnergy);
+            if(wetness<1.0)groundDetail(material,normal,patchDeltaMetres,0.0,cameraDistance,phase);
+            normal=normalize(mix(normal,waterNormal,wetness));
+        }else groundDetail(material,normal,patchDeltaMetres,water,cameraDistance,phase);
+        if(waterRefraction && water>.5){
+            material=mix(material,refractedSeabed(material,radial,normal,depth),smoothstep(.5,.97,water));
+        }
     } else {
         float bands=.5+.5*sin(70.0*radial.y+7.0*terrainFbm(radial*5.0));
         material=mix(albedo*.4,min(vec3(1),albedo*1.5+vec3(.15)),bands);
@@ -884,12 +1085,16 @@ void main() {
         }
     }
     float highlight=max(dot(normal,normalize(light+view)),0.0);
-    float specular=water*(.82*pow(highlight,100.0)+.18*pow(highlight,27.0));
-    float foam=max(shoreFoam,water*weatherOceanFoam(patchDrawing?patchTextureOrigin+patchDeltaMetres:radial*weatherParameters.w,radial));
+    float specular=water*shoreOptics*(.82*pow(highlight,100.0)+.18*pow(highlight,27.0));
+    float foam=max(shoreFoam,water*waveEnergy*weatherFilteredOceanFoam(wavePosition,radial,waveDx,waveDy));
     material=mix(material,vec3(.72,.80,.82),foam);specular*=1.0-.85*foam;
-    color=vec4(material*(.012+diffuse)+specular,water>.95?.1+.3*specular:0.0);
+    // The lower water tag carries partial optical coverage at the beach.
+    // Fully wet pixels retain the specular channel used by the sky reflection.
+    float optics=smoothstep(.35,.97,water)*shoreOptics;
+    float waterTag=optics<.002?0.0:optics<.998?.05+.048*optics:.1+.3*specular;
+    color=vec4(material*(.012+diffuse)+specular,waterTag);
 #ifdef WRITE_RAY_WATER_NORMAL
-    if(water>.95)rayWaterNormal=vec4(normal,1);
+    if(optics>.002)rayWaterNormal=vec4(normal,optics);
 #endif
 }
 )";
@@ -914,7 +1119,12 @@ void main() {
     sphereCount = static_cast<int>(sphere.size());
     upload(sphereVao, sphereBuffer, sphere);
     upload(lineVao, lineBuffer, {{0, 0, 0}});
-    upload(patchVao, patchBuffer, {{0, 0, 0}});
+    glGenVertexArrays(1,&patchVao);
+    glGenBuffers(1,&patchBuffer);
+    glBindVertexArray(patchVao);
+    glBindBuffer(GL_ARRAY_BUFFER,patchBuffer);
+    glVertexAttribPointer(0,2,GL_FLOAT,GL_FALSE,sizeof(glm::vec2),nullptr);
+    glEnableVertexAttribArray(0);
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     if (!atmosphere.Initialize() || !stellarActivity.Initialize() || !saturnRings.Initialize() || !wormhole.Initialize()
@@ -931,7 +1141,7 @@ void StarSystem::UpdatePatch(const glm::dvec3 &direction,double radiusMetres)
         const auto vertices=PlanetTerrain::SurfaceLodVertices(radiusMetres);
         patchCount=static_cast<int>(vertices.size());patchRadiusMetres=radiusMetres;
         glBindBuffer(GL_ARRAY_BUFFER,patchBuffer);
-        glBufferData(GL_ARRAY_BUFFER,vertices.size()*sizeof(glm::vec3),vertices.data(),GL_STATIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER,vertices.size()*sizeof(glm::vec2),vertices.data(),GL_STATIC_DRAW);
         patchDirection=direction;
     }else if(glm::length(direction-patchDirection)*radiusMetres>2.0)patchDirection=direction;
 }
@@ -940,20 +1150,25 @@ void StarSystem::BindEarthMaps() const {
     glUniform1i(glGetUniformLocation(program,"earthReliefMap"),4);
     glUniform1i(glGetUniformLocation(program,"earthColorMap"),5);
     glUniform1i(glGetUniformLocation(program,"earthDetailMap"),6);
+    glUniform1i(glGetUniformLocation(program,"cityReliefMap"),7);
     glActiveTexture(GL_TEXTURE4);glBindTexture(GL_TEXTURE_2D,earthReliefTexture);
     glActiveTexture(GL_TEXTURE5);glBindTexture(GL_TEXTURE_2D,earthColorTexture);
     glActiveTexture(GL_TEXTURE6);glBindTexture(GL_TEXTURE_2D,earthDetailTexture);
+    glActiveTexture(GL_TEXTURE7);glBindTexture(GL_TEXTURE_2D,cityReliefTexture);
     glActiveTexture(GL_TEXTURE0);
 }
 
 void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front, const glm::vec3 &up, double seconds,
-                        bool trajectories, bool photonView, bool showSelection, unsigned int wormholeSky,
+                        bool photonView, unsigned int wormholeSky,
                         unsigned reflectionSky, bool captureReflectionSky)
 {
     if(!captureReflectionSky){
         vegetation.ClearCounts();
         birds.ClearCounts();
         fish.ClearCount();
+        earthWonders.ResetVisibility();
+        newYork.ResetVisibility();
+        atmosphere.ResetLocalThunder();
     }
     if (!program || planets.empty())
         return;
@@ -964,6 +1179,7 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
     double clearance = glm::length(camera) - star.radiusSolar * Astronomy::solarRadiusAu;
 #ifdef RENDER_ENGINE_DX12
     glm::vec4 raySky(0);
+    constexpr float rayRangeMetres=125000.f;
 #endif
     for (int planet = 0; planet < static_cast<int>(planets.size()); ++planet)
     {
@@ -990,7 +1206,7 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
     const auto vp = projection * view;
 #ifdef RENDER_ENGINE_DX12
     const bool rayScene=!captureReflectionSky && closeRays && NativeDX12::BeginRayScene(
-        {vp,glm::vec3(0),glm::normalize(glm::vec3(-camera)),125000.f,true,divePlanet>=0,oceanReflectionsEnabled,waterRefractionEnabled,raySky});
+        {vp,glm::vec3(0),glm::normalize(glm::vec3(-camera)),rayRangeMetres,true,divePlanet>=0,oceanReflectionsEnabled,waterRefractionEnabled,raySky});
 #endif
     int viewport[4];glGetIntegerv(GL_VIEWPORT,viewport);
     const double pixelsPerRadian=viewport[3]/(2.0*std::tan(glm::radians(static_cast<double>(fieldOfView))*.5));
@@ -1001,11 +1217,9 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
     glUniform3fv(glGetUniformLocation(program, "starPosition"), 1, glm::value_ptr(glm::vec3(-camera)));
     glUniform1f(glGetUniformLocation(program, "phase"),
                 static_cast<float>(std::remainder(seconds, glm::two_pi<double>())));
-    glUniform1i(glGetUniformLocation(program,"waterRefraction"),waterRefractionEnabled
-#ifdef RENDER_ENGINE_DX12
-        && !rayScene
-#endif
-    );
+    const auto surfPhase=[&](double rate){return static_cast<float>(std::remainder(seconds*rate,glm::two_pi<double>()));};
+    glUniform3f(glGetUniformLocation(program,"surfPhase"),surfPhase(.82),surfPhase(1.31),surfPhase(.46));
+    glUniform1i(glGetUniformLocation(program,"waterRefraction"),waterRefractionEnabled);
     glUniform1i(glGetUniformLocation(program,"earthShoreDetail"),earthShoreDetail);
     glUniform1i(glGetUniformLocation(program,"layeredTerrain"),!solarSystem);
     const auto setModel = [&](const glm::mat4 &model) {
@@ -1054,6 +1268,7 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
         if(body.earthPoles && !earthMapsLoaded){
             earthMapsLoaded=true;
             earthReliefTexture=PlanetTerrain::LoadEarthReliefTexture();
+            cityReliefTexture=PlanetTerrain::LoadCityReliefTexture();
             const auto path=PlanetTerrain::EarthAssetPath("earth-color.jpg");
             earthColorTexture=AssetManager::LoadTexture(path.string().c_str());
             if(earthColorTexture){
@@ -1063,6 +1278,7 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
             BindEarthMaps();
         }
         glUniform1i(glGetUniformLocation(program,"earthMapped"),body.earthPoles && earthReliefTexture!=0);
+        glUniform1i(glGetUniformLocation(program,"cityMapped"),body.earthPoles && cityReliefTexture!=0);
         glUniform1f(glGetUniformLocation(program,"arcticWinter"),arcticWinter);
         glUniform1f(glGetUniformLocation(program, "terrainRelief"), .003f);
         glUniform1f(glGetUniformLocation(program, "waterWaveHeight"),
@@ -1087,12 +1303,26 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
                 static_cast<float>(std::remainder(seconds,glm::two_pi<double>())),body.seaLevel,.003f,static_cast<float>(2/metres),
                 false,seabed?nullptr:&weather,body.earthPoles,arcticWinter,!solarSystem);
             if(seabed)elevation-=static_cast<float>(WaterDepth(planet,glm::vec3(patchDirection),seconds)/metres);
-            PlanetTerrain::ConfigureSurfacePatch(program,patchDirection,RotationDouble(planet,seconds),center-camera,metres,elevation);
+            PlanetTerrain::ConfigureSurfacePatch(program,patchDirection,RotationDouble(planet,seconds),center-camera,metres,elevation,
+                body.earthPoles && earthReliefTexture!=0);
         }
         glBindVertexArray(sphereVao);
 #ifdef RENDER_ENGINE_DX12
-        const bool rayBody=rayScene && groundClearance<125000 && !body.gas;
-        const NativeDX12::RayMaterial raySurface{NativeDX12::RayKind::Surface,NativeDX12::RaySpace::RelativeAu,body.color,.02f};
+        const bool rayBody=rayScene && groundClearance<rayRangeMetres && !body.gas;
+        bool frozenRayArea=false;
+        if(rayBody && body.earthPoles && localDirection.y>.90){
+            // Bound the liquid-free cap over the full primary-ray range.
+            const double sinAngle=glm::clamp(2*rayRangeMetres/(radius*Astronomy::metresPerAu),0.0,1.0);
+            const double horizontal=glm::length(glm::dvec2(localDirection.x,localDirection.z));
+            const double minLatitude=localDirection.y*std::sqrt(1-sinAngle*sinAngle)-horizontal*sinAngle;
+            const double maxIceEdge=glm::mix(.977,.944,static_cast<double>(arcticWinter))+.007+.009+
+                std::hypot(.026,.016)*std::sqrt(std::max(0.0,1-minLatitude*minLatitude));
+            frozenRayArea=minLatitude>std::max(.90,maxIceEdge);
+        }
+        const bool traceWater=!seabed && body.HasSurfaceLiquid() && !frozenRayArea;
+        glUniform1i(glGetUniformLocation(program,"rayCaptureLiquid"),rayBody && traceWater);
+        const NativeDX12::RayMaterial raySurface{NativeDX12::RayKind::Surface,NativeDX12::RaySpace::RelativeAu,
+            body.color,.02f,true,traceWater};
         if(rayBody && !patch)NativeDX12::SetRayMaterial(raySurface);
 #endif
         glDrawArrays(GL_TRIANGLES, 0, sphereCount);
@@ -1108,7 +1338,7 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
 #endif
             glDrawArrays(GL_TRIANGLES, 0, patchCount);
 #ifdef RENDER_ENGINE_DX12
-            if(rayBody && !seabed && body.HasSurfaceLiquid() && waterRefractionEnabled){
+            if(rayBody && traceWater && waterRefractionEnabled){
                 glUniform1i(glGetUniformLocation(program,"seabedRendering"),true);
                 NativeDX12::SetRayMaterial({NativeDX12::RayKind::Bottom,NativeDX12::RaySpace::RelativeAu,{.27f,.31f,.21f},0},true);
                 glDrawArrays(GL_TRIANGLES,0,patchCount);
@@ -1131,7 +1361,7 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
         glPointSize(size);
         glDrawArrays(mode, 0, static_cast<int>(vertices.size()));
     };
-    if (trajectories && !asteroids.empty())
+    if (!captureReflectionSky && !asteroids.empty())
     {
         if(cachedAsteroids.size()!=asteroids.size() || !std::isfinite(cachedAsteroidTime)
             || std::abs(seconds-cachedAsteroidTime)>=300) {
@@ -1185,7 +1415,9 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
         const auto rotation=RotationDouble(livingPlanet,seconds);
         const auto weather=WeatherState(livingPlanet,seconds);
         const auto radiusMetres=body.radiusEarth*Astronomy::earthRadiusAu*Astronomy::metresPerAu;
-        if(vegetationEnabled && divePlanet<0){
+        const bool urban=body.earthPoles && cityReliefTexture &&
+            glm::length((camera-centre)*Astronomy::metresPerAu-rotation*NewYorkCity::Frame()[1]*radiusMetres)<14500;
+        if(vegetationEnabled && divePlanet<0 && !urban){
             vegetation.SetSunlight(light);
             vegetation.Render({body.seed,radiusMetres,body.temperature,body.seaLevel,body.HasMulticellularLife(),body.earthPoles},
                 rotation,centre-camera,vp,front,seconds,weather);
@@ -1205,6 +1437,14 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
                 [&](const glm::vec3& direction){return WaterDepth(livingPlanet,direction,seconds);});
         }
     }
+    if(solarSystem && !captureReflectionSky && planets.size()>2 && planets[2].earthPoles){
+        constexpr int earth=2;
+        const auto centre=Position(earth,seconds);
+        earthWonders.Render(vp,RotationDouble(earth,seconds),centre-camera,
+            planets[earth].radiusEarth*Astronomy::earthRadiusAu,glm::vec3(glm::normalize(-centre)),divePlanet==earth);
+        newYork.Render(vp,RotationDouble(earth,seconds),centre-camera,
+            planets[earth].radiusEarth*Astronomy::earthRadiusAu,glm::vec3(glm::normalize(-centre)));
+    }
 #ifdef RENDER_ENGINE_DX12
     if(rayScene)NativeDX12::ResolveRayScene(reflectionSky);
 #endif
@@ -1214,12 +1454,13 @@ void StarSystem::Render(float fieldOfView, float aspect, const glm::vec3 &front,
         const auto& body=planets[planet];
         const bool reflectOcean=!captureReflectionSky && oceanReflectionsEnabled && body.HasSurfaceLiquid();
         if(!body.atmosphere && !reflectOcean)continue;
-        const auto center = glm::vec3(Position(planet, seconds) - camera);
+        const auto relative = Position(planet, seconds) - camera;
         const auto weather=WeatherState(planet,seconds);
-        atmosphere.Render(vp, glm::vec3(0), center,
+        const auto scattering=body.earthPoles?Atmosphere::EarthScattering(glm::length(relative)):Atmosphere::Scattering::Standard;
+        atmosphere.Render(vp, glm::vec3(0), glm::vec3(relative),
                           static_cast<float>(body.radiusEarth * Astronomy::earthRadiusAu), true,
                           glm::vec3(-camera),weatherEnabled && earthCloudsEnabled && weather.parameters.w>0,seconds,glm::mat3(Rotation(planet,seconds)),
-                          reflectOcean,1,&weather,glm::vec2(0),false,body.atmosphere);
+                          reflectOcean,1,&weather,glm::vec2(0),false,body.atmosphere,0,captureReflectionSky,scattering);
     }
     for(int body=0;body<static_cast<int>(planets.size());++body)
         if(planets[body].wormhole)wormhole.Render(vp,Position(body,seconds)-camera,
@@ -1250,6 +1491,7 @@ bool StarSystem::HasLocalReflectionReceivers(double seconds) const {
 
 void StarSystem::RenderOverlays(float fieldOfView,float aspect,const glm::vec3& front,const glm::vec3& up,
                                 double seconds,bool trajectories,bool showSelection,int lensProfile){
+    drawnAsteroidMarkers=0;
     if(!program || planets.empty() || !InDetailRange())return;
     // UI guides must not erase a subpixel stellar emitter, enter exposure
     // metering, or appear as opaque geometry in screen-space reflections.
@@ -1282,10 +1524,11 @@ void StarSystem::RenderOverlays(float fieldOfView,float aspect,const glm::vec3& 
     for(int planet=0;planet<static_cast<int>(planets.size());++planet)
         if(!planets[planet].wormhole)markers.push_back(glm::vec3(Position(planet,seconds)-camera));
     drawLines(markers,GL_POINTS,glm::vec3(.15f,.45f,.65f),3);
-    if(trajectories && !cachedAsteroids.empty()){
+    if(!cachedAsteroids.empty()){
         std::vector<glm::vec3> points;points.reserve(cachedAsteroids.size());
         for(const auto& p:cachedAsteroids)points.push_back(glm::vec3(p-camera));
         drawLines(points,GL_POINTS,glm::vec3(.13f,.10f,.07f),1);
+        drawnAsteroidMarkers=points.size();
     }
     if(trajectories){
         if(cachedOrbits.size()!=planets.size()){
@@ -1328,10 +1571,12 @@ void StarSystem::RenderOverlays(float fieldOfView,float aspect,const glm::vec3& 
 
 void StarSystem::Release()
 {
-    for(auto texture:{earthReliefTexture,earthColorTexture,earthDetailTexture})if(texture)glDeleteTextures(1,&texture);
-    earthReliefTexture=earthColorTexture=earthDetailTexture=0;
+    for(auto texture:{earthReliefTexture,earthColorTexture,earthDetailTexture,cityReliefTexture})if(texture)glDeleteTextures(1,&texture);
+    earthReliefTexture=earthColorTexture=earthDetailTexture=cityReliefTexture=0;
     earthMapsLoaded=false;
     wormholeSkyCache.Release();
+    earthWonders.Release();
+    newYork.Release();
     vegetation.Release();
     birds.Release();
     fish.Release();

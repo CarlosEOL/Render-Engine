@@ -17,87 +17,110 @@ uniform vec3 stellarHint;
 uniform vec3 blackHoleHint;
 uniform sampler2D history;
 uniform bool initialize;
+uniform bool cachedTarget;
+uniform bool cameraMetering;
+uniform float atmosphereMetering;
+uniform float marineMetering;
 uniform float realSeconds;
 layout(location=0) out vec4 state;
+
+float adapt(float previous,float target){
+    float speed=target<previous?4.5:2.25;
+    float result=mix(previous,target,1.0-exp(-realSeconds*speed));
+    return abs(result-target)<.001?target:result;
+}
+
 void main(){
-    float logSum=0,weightSum=0,highlight=0;vec2 highlightPosition=vec2(.5);
-    int hotCells=0;
-    int diskHistogram[32];for(int i=0;i<32;++i)diskHistogram[i]=0;
+    vec4 previous=texelFetch(history,ivec2(0),0);
+    if(cachedTarget){
+        state=vec4(adapt(previous.r,previous.g),previous.gba);
+        return;
+    }
+    float average=0.0,target=0.0;
+    float hotLog=0.0,logSum=0.0,ambientLogSum=0.0;int hotCells=0;
+    float marineHighlightLog=0.0,marineHighlightWeight=0.0,marineCoverage=0.0;
+    int diskHistogram[32];float diskLog[32];
+    for(int i=0;i<32;++i){diskHistogram[i]=0;diskLog[i]=0.0;}
     int diskSamples=0;
-    vec2 dimensions=vec2(textureSize(scene,0));
-    float level=max(0.0,ceil(log2(max(dimensions.x/64.0,dimensions.y/36.0))));
-    ivec2 size=textureSize(scene,int(level));
-    // Every coarse texel is metered once, with uniform spatial weighting.
-    // Lens-flare sources, acceptance, radius and strength never enter this pass.
-    for(int y=0;y<36;++y)for(int x=0;x<64;++x){
-        if(x>=size.x || y>=size.y)continue;
-        vec2 uv=(vec2(x,y)+.5)/vec2(size);
-        vec4 sample=textureLod(scene,uv,level);vec3 c=sample.rgb;
-        float luminance=dot(c,vec3(.2126,.7152,.0722));
-        // Dark sky participates in adaptation. Dropping these pixels makes a
-        // handful of distant points act like a frame-filling light source.
-        logSum+=log2(max(luminance,.000001));weightSum+=1.0;
-        float peak=max(c.r,max(c.g,c.b));
-        if(peak>highlight){highlight=peak;highlightPosition=uv;}
-        if(peak>8.0)++hotCells;
-        float diskDistance=length((uv-blackHoleHint.xy)*vec2(dimensions.x/dimensions.y,1));
-        if(blackHoleHint.z>0 && (sample.a>1.5 || diskDistance<blackHoleHint.z) && peak>.5 && c.g<max(c.r,c.b)*1.15){
-            int bin=clamp(int(floor(log2(peak)))+16,0,31);++diskHistogram[bin];++diskSamples;
+    ivec2 resolution=textureSize(scene,0);
+    vec2 dimensions=vec2(resolution);
+    if(cameraMetering){
+        int level=max(0,int(ceil(log2(max(dimensions.x/64.0,dimensions.y/36.0)))));
+        ivec2 size=textureSize(scene,level);
+        // Meter every coarse texel once. Dark sky contributes to the same
+        // average as the lit scene, independent of optical glare.
+        for(int y=0;y<size.y;++y)for(int x=0;x<size.x;++x){
+            vec3 color=texelFetch(scene,ivec2(x,y),level).rgb;
+            float luminance=max(dot(color,vec3(.2126,.7152,.0722)),.000001);
+            float peak=max(color.r,max(color.g,color.b));
+            logSum+=log2(luminance);
+            if(atmosphereMetering>0.0)ambientLogSum+=log2(min(luminance,.65));
+            if(peak>8.0){
+                hotLog+=log2(peak);
+                ++hotCells;
+            }
+            if(marineMetering>0.0){
+                float highlight=smoothstep(.55,1.25,peak);
+                marineHighlightLog+=highlight*log2(max(peak,.55));
+                marineHighlightWeight+=highlight;
+            }
+        }
+        float count=float(size.x*size.y);
+        marineCoverage=marineHighlightWeight/count;
+        average=exp2(logSum/count);
+        ambientLogSum/=count;
+        target=log2(.22/max(average,.0001));
+        if(hotCells>0){
+            // Broad highlights protect themselves from clipping. A hot pixel
+            // inside a bright region cannot set the exposure for that region.
+            float influence=smoothstep(.004,.016,float(hotCells)/count);
+            target=mix(target,min(target,log2(.90)-hotLog/float(hotCells)),influence);
         }
     }
-    float average=weightSum>0?exp2(logSum/weightSum):.0007;
-    float target=log2(.22/max(average,.0001));
-    // Follow the brightest coarse region down to source pixels. This is a
-    // radiance-only meter, independent of flare extraction and lens profile.
-    for(int mip=12;mip>=0;--mip){
-        if(float(mip)>=level)continue;
-        vec2 dimensionsAtMip=vec2(textureSize(scene,mip));
-        vec2 cell=floor(highlightPosition*dimensionsAtMip);float best=-1.0;
-        vec2 position=highlightPosition;
-        for(int y=-1;y<=1;++y)for(int x=-1;x<=1;++x){
-            vec2 uv=(cell+vec2(x,y)+.5)/dimensionsAtMip;
-            vec3 sample=textureLod(scene,uv,float(mip)).rgb;
-            float peak=max(sample.r,max(sample.g,sample.b));
-            if(peak>best){best=peak;position=uv;}
-        }
-        highlightPosition=position;highlight=max(highlight,best);
-    }
-    if(highlight>0 && hotCells>=8)target=min(target,log2(.90/highlight));
-    // Resolve small disks in their own screen rectangle, at native texels.
-    // A whole-screen mip can dilute a distant disk below the histogram cutoff.
-    int localHistogram[32];for(int i=0;i<32;++i)localHistogram[i]=0;
-    int localSamples=0;
+    float diskWeight=0.0;
     if(blackHoleHint.z>0){
         vec2 radius=max(vec2(blackHoleHint.z*dimensions.y/dimensions.x,blackHoleHint.z)*1.5,2.0/dimensions);
-        vec2 lower=max(vec2(0),blackHoleHint.xy-radius),upper=min(vec2(1),blackHoleHint.xy+radius);
-        if(all(greaterThan(upper,lower)))for(int y=0;y<64;++y)for(int x=0;x<64;++x){
-            vec2 uv=mix(lower,upper,(vec2(x,y)+.5)/64.0);
-            vec4 sample=texelFetch(scene,clamp(ivec2(uv*dimensions),ivec2(0),ivec2(dimensions)-1),0);
+        vec2 lower=clamp(blackHoleHint.xy-radius,0.0,1.0);
+        vec2 upper=clamp(blackHoleHint.xy+radius,0.0,1.0);
+        ivec2 first=ivec2(floor(lower*dimensions)),last=ivec2(ceil(upper*dimensions));
+        ivec2 range=last-first,grid=min(range,ivec2(64));
+        // A small source gets one vote per covered texel. For larger sources
+        // use a bounded grid over their visible area.
+        for(int y=0;y<grid.y;++y)for(int x=0;x<grid.x;++x){
+            ivec2 pixel=first+ivec2((vec2(x,y)+.5)*vec2(range)/vec2(grid));
+            vec4 sample=texelFetch(scene,pixel,0);
             float peak=max(sample.r,max(sample.g,sample.b));
-            if(sample.a>2.001 && peak>.00001){int bin=clamp(int(floor(log2(peak)))+16,0,31);++localHistogram[bin];++localSamples;}
+            if(sample.a>2.001 && peak>.00001){
+                float value=log2(peak);
+                int bin=clamp(int(floor(value))+16,0,31);
+                ++diskHistogram[bin];diskLog[bin]+=value;++diskSamples;
+            }
         }
+        // Release the disk's control of the camera smoothly as it leaves
+        // the frame. A centered, distant disk still meters at full weight.
+        vec2 occupied=min(radius*2.0,vec2(1.0));
+        vec2 visible=(upper-lower)/occupied;
+        diskWeight=smoothstep(.025,.48,visible.x*visible.y);
+        float edge=min(min(blackHoleHint.x,1.0-blackHoleHint.x)/radius.x,
+                       min(blackHoleHint.y,1.0-blackHoleHint.y)/radius.y);
+        diskWeight*=mix(.35,1.0,smoothstep(-1.0,.25,edge));
     }
-    if(localSamples>0){diskSamples=localSamples;for(int i=0;i<32;++i)diskHistogram[i]=localHistogram[i];}
     float diskEv=0.0;
-    // A beamed disk can span many stops. Meter its resolved emitting area,
-    // allowing a small hot core to clip instead of hiding the entire disk.
     if(diskSamples>0){
-        int accumulated=0;float percentile=.5,median=.5;bool foundMedian=false;
+        int accumulated=0;float upperLog=0.0,medianLog=0.0;bool foundMedian=false;
         for(int i=0;i<32;++i){
-            accumulated+=diskHistogram[i];
-            if(!foundMedian && accumulated*2>=diskSamples){median=exp2(float(i)-15.5);foundMedian=true;}
-            if(accumulated*4>=diskSamples*3){percentile=exp2(float(i)-15.5);break;}
+            int count=diskHistogram[i];
+            if(count==0)continue;
+            accumulated+=count;
+            float logPeak=diskLog[i]/float(count);
+            if(!foundMedian && accumulated*2>=diskSamples){medianLog=logPeak;foundMedian=true;}
+            if(accumulated*4>=diskSamples*3){upperLog=logPeak;break;}
         }
-        // Meter the resolved luminous object, allowing its extreme beamed
-        // pixels to clip. A single hot pixel must not hide the rest of a disk.
-        // Keep most of the emitting disk luminous. The former 90th-percentile
-        // calibration let a small beamed rim underexpose the broad warm clouds.
-        diskEv=clamp(log2(.90/percentile),-18.0,8.0);
-        // Auto exposes the body of the disk brightly; HDR separately preserves
-        // its highlight detail. A tiny beamed knot may clip in Auto Exposure.
-        target=log2(2.4/max(median,.00001));
+        diskEv=clamp(log2(.90)-upperLog,-18.0,8.0);
+        float diskTarget=mix(log2(2.4)-medianLog,diskEv,marineMetering);
+        target=mix(target,diskTarget,diskWeight);
     }
-    if(stellarHint.z*dimensions.y>=2.0){
+    if(cameraMetering && atmosphereMetering<1.0 && stellarHint.z*dimensions.y>=2.0){
         float samples[16];int count=0;
         float aspect=dimensions.x/dimensions.y;
         for(int i=0;i<16;++i){
@@ -127,11 +150,21 @@ void main(){
             target=min(log2(.22/max(average,.0001)),log2(.60/surface));
         }
     }
+    if(marineHighlightWeight>0.0){
+        // Reflected light and haze count even when the disk is out of frame.
+        float highlightEv=log2(.76)-marineHighlightLog/marineHighlightWeight;
+        float influence=marineMetering*smoothstep(.015,.10,marineCoverage);
+        target=mix(target,min(target,highlightEv),influence);
+    }
     target=clamp(target,-18.0,8.0);
-    float previous=texelFetch(history,ivec2(0),0).r;
-    float speed=target<previous?4.0:2.0;
-    float adapted=initialize?target:mix(previous,target,1.0-exp(-realSeconds*speed));
-    if(abs(adapted-target)<.001)adapted=target;
+    if(cameraMetering && atmosphereMetering>0.0){
+        // Meter the sky and landscape together, capping the Sun's influence.
+        // Limit the gain range so bright daylight and dark twilight keep
+        // their character when automatic exposure is enabled.
+        float ambientEv=clamp(log2(.22)-ambientLogSum,-.25,1.25);
+        target=mix(target,ambientEv,atmosphereMetering);
+    }
+    float adapted=initialize?target:adapt(previous.r,target);
     state=vec4(adapted,target,diskEv,average);
 })";
   program = compileShaderProgram(vertex, fragment);
@@ -168,9 +201,20 @@ void main(){
 }
 
 void ExposureMeter::Update(unsigned int scene, const glm::vec3 &stellarHint,
-                           float seconds,const glm::vec3& blackHoleHint) const {
+                           float seconds,const glm::vec3& blackHoleHint,
+                           bool reuseScene,bool cameraMetering,float atmosphereMetering,float marineMetering) const {
   if (!program)
     return;
+  const bool initialize=!valid || lastCameraMetering!=cameraMetering;
+  const bool cachedTarget=reuseScene && !initialize && lastAtmosphereMetering==atmosphereMetering &&
+      lastMarineMetering==marineMetering;
+  const float elapsed=std::clamp(seconds,0.f,.25f);
+  // The maximum EV span has converged to the shader cutoff by this time.
+  if(cachedTarget && (!cameraMetering || settlingSeconds>=5.f || elapsed==0))return;
+  settlingSeconds=initialize?5.f:cachedTarget?settlingSeconds+elapsed:0.f;
+  lastCameraMetering=cameraMetering;
+  lastAtmosphereMetering=atmosphereMetering;
+  lastMarineMetering=marineMetering;
   int viewport[4], oldFramebuffer, oldProgram, oldVao, activeTexture,
       polygon[2] = {};
   glGetIntegerv(GL_VIEWPORT, viewport);
@@ -204,9 +248,12 @@ void ExposureMeter::Update(unsigned int scene, const glm::vec3 &stellarHint,
   glUniform3fv(glGetUniformLocation(program, "stellarHint"), 1,
                glm::value_ptr(stellarHint));
   glUniform1i(glGetUniformLocation(program, "history"), 2);
-  glUniform1i(glGetUniformLocation(program, "initialize"), !valid);
-  glUniform1f(glGetUniformLocation(program, "realSeconds"),
-              std::clamp(seconds, 0.f, .25f));
+  glUniform1i(glGetUniformLocation(program, "initialize"), initialize);
+  glUniform1i(glGetUniformLocation(program, "cachedTarget"), cachedTarget);
+  glUniform1i(glGetUniformLocation(program, "cameraMetering"), cameraMetering);
+  glUniform1f(glGetUniformLocation(program, "atmosphereMetering"), atmosphereMetering);
+  glUniform1f(glGetUniformLocation(program, "marineMetering"), marineMetering);
+  glUniform1f(glGetUniformLocation(program, "realSeconds"), elapsed);
   glBindVertexArray(vao);
   glDrawArrays(GL_TRIANGLES, 0, 3);
   current = next;

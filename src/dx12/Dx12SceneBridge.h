@@ -19,6 +19,7 @@ struct RayMaterial {
     glm::vec3 color{.4f};
     float reflectivity = 0;
     bool visibleInReflections = true;
+    bool capturesWaterNormal = false;
 };
 struct RayView {
     glm::mat4 viewProjection{1.f};
@@ -41,6 +42,7 @@ struct RayCoverage {
     unsigned receivers = 0, sampled = 0, reflectedHits = 0, waterNormals = 0;
     double meanEnvironmentLuminance = 0;
     float brightestEnvironment = 0;
+    bool hasWaterNormalTarget = false;
 };
 RayCoverage InspectRayCoverage(std::vector<float>* environmentLuminance = nullptr);
 void SetDlssMode(DlssMode mode);

@@ -20,6 +20,7 @@ struct Profile {
     bool thinPolarClouds=false;
     bool mappedEarth=false;
     bool layeredTerrain=false;
+    bool waterCycle=true;
 };
 struct State {
     glm::vec4 parameters{}; // ambient wind m/s, humidity, seed offset, radius m
@@ -32,6 +33,8 @@ struct State {
     float foamPhase=0;
     glm::vec4 auroraAxis{},auroraMotion{};
     bool thinPolarClouds=false;
+    Profile climate{};
+    float stormActivity=0;
 };
 inline float Unit(unsigned value){value^=value>>16;value*=0x7feb352du;value^=value>>15;value*=0x846ca68bu;value^=value>>16;return (value&0xffffffu)/16777215.f;}
 inline constexpr glm::vec4 rippleFrequencies{8,21,55,144};
@@ -57,6 +60,7 @@ inline std::array<glm::vec3,3> Centres(const Profile& p){
 }
 inline State Make(const Profile& p,double seconds,float windScale=1,float stormScale=1){
     State s;
+    s.climate=p;
     s.thinPolarClouds=p.thinPolarClouds;
     if(!std::isfinite(seconds))seconds=0;
     if(p.metalCore && p.magneticField && p.atmosphere){
@@ -68,6 +72,7 @@ inline State Make(const Profile& p,double seconds,float windScale=1,float stormS
     if(!p.enabled)return s;
     windScale=std::isfinite(windScale)?glm::clamp(windScale,0.f,4.f):1.f;
     stormScale=std::isfinite(stormScale)?glm::clamp(stormScale,0.f,2.f):1.f;
+    s.stormActivity=stormScale;
     const float wind=glm::clamp(p.wind*windScale,0.f,60.f);
     const float humidity=p.oceanOnly?.62f:p.seaLevel>-.2f?.58f:.28f;
     s.parameters={wind,humidity,Unit(p.seed)*127,p.radiusMetres};
@@ -142,6 +147,68 @@ inline glm::vec3 SurfaceWind(const State& s,const glm::vec3& n){
     }
     return wind*(85.f/std::max(glm::length(wind),85.f));
 }
+
+struct LocalConditions {
+    float rain=0,snow=0,flash=0;
+    glm::vec3 wind{},bolt{};
+    double thunderTime=-1;
+};
+
+inline LocalConditions Conditions(const State& s,const glm::vec3& n,float altitude,double seconds) {
+    LocalConditions result;
+    const auto& climate=s.climate;
+    if(!climate.atmosphere || !climate.waterCycle || s.stormActivity<=0 ||
+        altitude>13500 || !std::isfinite(seconds))return result;
+    const float ground=climate.oceanOnly?0.f:climate.mappedEarth?
+        std::max(0.f,PlanetTerrain::EarthGeography(n).x):
+        PlanetTerrain::SurfaceElevation(n,climate.seed,0,climate.seaLevel,.003f,0,
+            false,nullptr,false,0,climate.layeredTerrain)*climate.radiusMetres;
+    const float height=altitude-ground;
+    if(height>3400)return result;
+
+    const float latitude=std::abs(n.y);
+    const float season=float(std::cos(std::remainder(seconds/(365.25*86400.),1.0)*glm::two_pi<double>()));
+    const float temperature=climate.temperature+(climate.oceanOnly?9.f*(.3f-latitude):
+        23.f-52.f*std::pow(latitude,1.65f)-n.y*season*11.f)-.0062f*std::max(0.f,altitude);
+    const float seed=s.parameters.z;
+    const float day=float(std::remainder(seconds/86400.,200*glm::two_pi<double>()));
+    const glm::vec3 advected=n+SurfaceWind(s,n)*day*.00025f;
+    const float front=.50f+.27f*std::sin(glm::dot(advected,glm::vec3(19,-33,14))+day*.65f+seed)
+        +.16f*std::sin(glm::dot(n,glm::vec3(-35,53,42))-day*1.3f+seed*1.7f)
+        +.07f*std::sin(glm::dot(n,glm::vec3(211,114,-134))+day*2.5f);
+    const float tropics=1-glm::smoothstep(.05f,.42f,latitude);
+    const float dryBelt=std::exp(-std::pow((latitude-.43f)/.13f,2));
+    const float upland=glm::smoothstep(250.f,2400.f,ground)*(1-.55f*latitude);
+    const float humidity=glm::clamp(s.parameters.y+.13f*tropics+.13f*upland-.13f*dryBelt-.18f*latitude*latitude,0.f,1.f);
+    float storm=0;
+    for(int i=0;i<3;++i)storm+=StormWind(s,i,n)/42.f;
+    const float wetness=glm::smoothstep(.73f,1.06f,front+.53f*humidity+.40f*storm);
+    const float amount=glm::clamp(wetness*s.stormActivity,0.f,1.f)
+        *(1-glm::smoothstep(1900.f,3400.f,height));
+    const float liquid=glm::smoothstep(272.f,275.f,temperature);
+    result.rain=amount*liquid;
+    result.snow=amount*(1-liquid);
+    if(amount<.012f)return result;
+    result.wind=SurfaceWind(s,n);
+
+    // A seeded electrical cell produces repeatable lightning and delayed thunder.
+    const float electric=glm::smoothstep(.66f,.98f,wetness)*glm::smoothstep(278.f,297.f,temperature)
+        *glm::clamp(.35f+.60f*tropics+storm,0.f,1.f);
+    if(electric<.18f)return result;
+    const glm::ivec3 cell(glm::floor(n*(climate.radiusMetres/18000.f)));
+    const unsigned key=climate.seed+unsigned(cell.x)*73856093u+unsigned(cell.y)*19349663u+unsigned(cell.z)*83492791u;
+    const double period=23.+25.*Unit(key+11),offset=period*Unit(key+17);
+    const double start=std::floor((seconds+offset)/period)*period-offset;
+    if(Unit(key+31+unsigned(std::fmod(std::abs(std::floor(start/period)),16777216.)))>electric)return result;
+    const float age=float(seconds-start);
+    const float range=1300.f+4200.f*Unit(key+57);
+    const glm::vec3 east=glm::normalize(glm::cross(glm::vec3(0,std::abs(n.y)<.99f?1.f:0.f,std::abs(n.y)<.99f?0.f:1.f),n));
+    const float heading=glm::two_pi<float>()*Unit(key+89);
+    result.bolt=(east*std::cos(heading)+glm::cross(n,east)*std::sin(heading))*range+n*(2200.f-height);
+    result.flash=electric*(std::exp(-age*31.f)+.40f*std::exp(-std::abs(age-.092f)*85.f));
+    result.thunderTime=start+std::sqrt(range*range+(2200.f-height)*(2200.f-height))/343.;
+    return result;
+}
 inline double WaveHeight(const State& s,const glm::dvec3& metres,const glm::vec3& n){
     const float wind=WindSpeed(s,n);double height=0;
     const auto p=glm::mod(metres,glm::dvec3(4096));
@@ -194,26 +261,32 @@ float weatherWaveHeight(vec3 metres,vec3 n){
 inline const char* SurfaceShaderFunctions(){return R"(
 uniform vec4 weatherRipplePhases,weatherRippleFrequencies;
 uniform float weatherFoamPhase;
-vec3 weatherWaveGradient(vec3 metres,vec3 n,bool filtering){
+float weatherWaveFootprint(vec3 k,vec3 dx,vec3 dy){
+    return abs(dot(k,dx))+abs(dot(k,dy));
+}
+vec3 weatherFilteredWaveGradient(vec3 metres,vec3 n,vec3 dx,vec3 dy){
     vec3 gradient=vec3(0),p=mod(metres,4096.0);float wind=weatherWind(n);
     for(int i=0;i<4;++i){
         vec3 k=weatherSpectrum[i].xyz;if(length(k)<1e-6)continue;float a=dot(p,k)+weatherPhases[i];
-        float visible=filtering?1.0-smoothstep(.7,3.0,fwidth(dot(metres,k))):1.0;
+        float visible=1.0-smoothstep(.7,3.0,weatherWaveFootprint(k,dx,dy));
         float amplitude=weatherWaveAmplitude(i,wind),steepness=min(.20,.5*length(k)*amplitude);
         gradient+=amplitude*k*(cos(a)+2.0*steepness*sin(2.0*a))*visible;
         // Fine capillary/wind detail remains in the material, not coarse mesh
         // displacement. Integer frequency multiples retain coordinate wrapping.
         vec3 rippleK=k*weatherRippleFrequencies[i];float ripple=dot(p,rippleK)+weatherRipplePhases[i];
-        float rippleVisible=filtering?1.0-smoothstep(.7,3.0,fwidth(dot(metres,rippleK))):1.0;
+        float rippleVisible=1.0-smoothstep(.7,3.0,weatherWaveFootprint(rippleK,dx,dy));
         gradient+=normalize(rippleK)*(.025+.025*float(i))*smoothstep(0.0,14.0,wind)*cos(ripple)*rippleVisible;
     }
     return gradient-n*dot(gradient,n);
 }
-float weatherOceanFoam(vec3 metres,vec3 n){
+vec3 weatherWaveGradient(vec3 metres,vec3 n,bool filtering){
+    return weatherFilteredWaveGradient(metres,n,filtering?dFdx(metres):vec3(0),filtering?dFdy(metres):vec3(0));
+}
+float weatherFilteredOceanFoam(vec3 metres,vec3 n,vec3 dx,vec3 dy){
     vec3 p=mod(metres,4096.0);float wind=weatherWind(n),compression=0.0;
     for(int i=0;i<4;++i){
         vec3 k=weatherSpectrum[i].xyz;float a=dot(p,k)+weatherPhases[i];
-        float visible=1.0-smoothstep(.8,3.0,fwidth(dot(metres,k)));
+        float visible=1.0-smoothstep(.8,3.0,weatherWaveFootprint(k,dx,dy));
         compression+=weatherWaveAmplitude(i,wind)*length(k)*pow(max(sin(a),0.0),3.0)*visible;
     }
     // Whole cycles per spatial tile keep the breakup continuous at its edges.
@@ -221,6 +294,9 @@ float weatherOceanFoam(vec3 metres,vec3 n){
     float breakup=.65+.35*sin(dot(p,vec3(476,189,346)*tileFrequency)+weatherFoamPhase)
         *sin(dot(p,vec3(-202,398,150)*tileFrequency));
     return smoothstep(.09,.34,compression)*smoothstep(7.0,22.0,wind)*breakup;
+}
+float weatherOceanFoam(vec3 metres,vec3 n){
+    return weatherFilteredOceanFoam(metres,n,dFdx(metres),dFdy(metres));
 }
 )";}
 }

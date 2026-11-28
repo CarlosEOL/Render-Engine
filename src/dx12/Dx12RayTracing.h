@@ -19,10 +19,11 @@ public:
     };
     static constexpr UINT maxGeometry = 96;
     static constexpr UINT counterBytes = maxGeometry * sizeof(UINT64);
+    static constexpr UINT vertexStride = 4 * sizeof(float);
     bool Initialize(ID3D12Device* device, ID3D12GraphicsCommandList* commands);
     bool Available() const { return pipeline != nullptr; }
     bool Start(UINT frameIndex, const RayView& view, const Upload& zero);
-    D3D12_STREAM_OUTPUT_BUFFER_VIEW Append(UINT vertices, const RayMaterial& material);
+    D3D12_STREAM_OUTPUT_BUFFER_VIEW Append(UINT vertices, const RayMaterial& material, bool liquidMask);
     bool Resolve(const std::function<Upload(UINT64)>& allocateUpload,
                  ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* sky, ID3D12Resource* normals, ID3D12Resource* output,
                  ID3D12Resource* samples, ID3D12Resource* guides,
@@ -40,6 +41,7 @@ private:
     struct Geometry {
         UINT vertices, firstVertex;
         RayMaterial material;
+        bool liquidMask;
     };
     struct Frame {
         Com<ID3D12Resource> stream, scratch, bottom, top;

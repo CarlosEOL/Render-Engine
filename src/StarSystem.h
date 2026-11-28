@@ -1,5 +1,7 @@
 #pragma once
 #include "Atmosphere.h"
+#include "EarthWonders.h"
+#include "NewYorkCity.h"
 #include "StellarActivity.h"
 #include "SaturnRings.h"
 #include "KerrWormhole.h"
@@ -84,6 +86,7 @@ class StarSystem
     unsigned VisibleBirdSpecies() const {return birds.VisibleSpecies();}
     void SetBirdsEnabled(bool value){birdsEnabled=value;}
     PlanetWeather::State WeatherState(int planet,double seconds) const;
+    double LocalThunder() const { return atmosphere.LocalThunder(); }
     glm::dmat3 WeatherFrame(int planet,double seconds) const {return RotationDouble(planet,seconds);}
     void SetWormholeEnabled(bool enabled){wormhole.SetEnabled(enabled);}
     void SetWormholeDiagnostic(bool enabled){wormhole.SetDiagnostic(enabled);}
@@ -97,6 +100,15 @@ class StarSystem
     void Move(GLFWwindow *window, float realSeconds, glm::vec3 &front, glm::vec3 &up);
     void MoveOnSurface(const glm::dvec3& displacementAu,double descentMetres,glm::vec3& front,glm::vec3& up);
     double DepthBelowWater() const {return landed?landing.DepthBelowWater():0;}
+    unsigned VisibleEarthWonders() const {return earthWonders.VisibleSites();}
+    unsigned VisibleEarthLandmarks() const {return earthWonders.VisibleLandmarks();}
+    unsigned VisibleGreatWallTiles() const {return earthWonders.VisibleWallTiles();}
+    bool EarthWondersNeedFrame() const {return earthWonders.NeedsFrame();}
+    size_t DrawnAsteroidMarkers() const {return drawnAsteroidMarkers;}
+    unsigned VisibleCityTiles() const {return newYork.VisibleTiles();}
+    unsigned DetailedCityTiles() const {return newYork.DetailedTiles();}
+    bool CityNeedsFrame() const {return newYork.NeedsFrame();}
+    std::size_t CityBuildingFootprints() const {return newYork.BuildingFootprints();}
     bool CanDive() const {return landed && landingWaterDepth>.40;}
     size_t VisibleFish() const {return fish.LastDrawn();}
     size_t VisibleSharks() const {return fish.LastSharks();}
@@ -104,7 +116,7 @@ class StarSystem
     unsigned FishCaught() const {return fish.FishCaught();}
     void SetFishEnabled(bool value){fishEnabled=value;}
     void Render(float fieldOfView, float aspect, const glm::vec3 &front, const glm::vec3 &up, double seconds,
-                bool trajectories, bool photonView, bool showSelection = true, unsigned int wormholeSky = 0,
+                bool photonView, unsigned int wormholeSky = 0,
                 unsigned reflectionSky = 0, bool captureReflectionSky = false);
 #ifdef RENDER_ENGINE_DX12
     bool HasLocalReflectionReceivers(double seconds) const;
@@ -159,6 +171,8 @@ class StarSystem
         return following;
     }
     std::string Information(double seconds) const;
+    std::string LocalCalendar(double seconds) const;
+    float AtmosphereMeteringWeight(double seconds) const;
     double ObserverClockRate(double seconds) const;
     glm::dvec3 camera = glm::dvec3(0, 0, 3);
     double speedAu = 0.1;
@@ -178,7 +192,7 @@ class StarSystem
     bool earthCloudsEnabled=true;
     bool earthMapsLoaded=false;
     unsigned earthReliefTexture=0,earthColorTexture=0;
-    unsigned earthDetailTexture=0;
+    unsigned earthDetailTexture=0,cityReliefTexture=0;
     glm::ivec2 earthDetailOrigin{0};
     bool weatherEnabled=true;
     bool oceanReflectionsEnabled=true;
@@ -196,6 +210,7 @@ class StarSystem
     mutable std::vector<glm::dvec3> cachedPositions;
     std::vector<std::vector<glm::dvec3>> cachedOrbits;
     std::vector<glm::dvec3> cachedAsteroids;
+    size_t drawnAsteroidMarkers=0;
     double cachedAsteroidTime = std::numeric_limits<double>::quiet_NaN();
     int selected = -1;
     int landedPlanet = -1;
@@ -219,6 +234,8 @@ class StarSystem
     glm::dvec3 patchDirection = glm::dvec3(0);
     double patchRadiusMetres = 0;
     Atmosphere atmosphere;
+    EarthWonders::Renderer earthWonders;
+    NewYorkCity::Renderer newYork;
     StellarActivity stellarActivity;
     SaturnRings saturnRings;
     KerrWormhole wormhole;

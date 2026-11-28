@@ -32,11 +32,12 @@
 #include <source_location>
 #include <chrono>
 #include <functional>
+#include <map>
 #include <tuple>
 unsigned int compileShaderProgram(const char*,const char*);
 
 // Optional hidden-window GPU smoke checks; normal application startup never runs this.
-bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,bool galaxyOnly,bool lensingOnly,bool wormholeOnly,bool weatherOnly,bool rayOnly)
+bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,bool galaxyOnly,bool lensingOnly,bool wormholeOnly,bool weatherOnly,bool rayOnly,bool wondersOnly,bool precipitationOnly,bool shorelineOnly,bool cityOnly,bool earthAtmosphereOnly,bool exposureOnly)
 {
     if (!blackHoleReady || !starSystemReady || !quantumReady || !opticsReady)
         return false;
@@ -205,6 +206,35 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,boo
         KeyCallback(window,GLFW_KEY_F4,0,GLFW_PRESS,GLFW_MOD_CONTROL);
         const bool opens=scenePanel.IsBrowserVisible() && !scenePanel.IsCurrentSystemBrowser();
         float dt=.016f;Update(dt);captureUi("ui-star-browser-and-clock");
+        const auto orbitCamera=starSystem.camera;
+        const auto moveAboveEarth=[&](double longitude) {
+            const double angle=glm::radians(longitude);
+            const auto radial=starSystem.WeatherFrame(2,simulationTime)*
+                glm::dvec3(std::cos(angle),0,-std::sin(angle));
+            starSystem.camera=starSystem.Position(2,simulationTime)+radial*(2*Astronomy::earthRadiusAu);
+        };
+        moveAboveEarth(-75);
+        if(starSystem.LocalCalendar(simulationTime)!="2000/01/01 07:00:00")fail();
+        simulationTime=58.5*Astronomy::secondsPerDay;
+        moveAboveEarth(0);
+        if(starSystem.LocalCalendar(simulationTime)!="2000/02/29 00:00:00")fail();
+        simulationTime+=1;
+        moveAboveEarth(90);
+        RefreshPanel();
+        UpdateTitle();
+        const auto hwnd=glfwGetWin32Window(window);
+        if(UiTheme::Label(GetDlgItem(hwnd,2108)).find(L"LOCAL 2000/02/29 06:00:01")==std::wstring::npos ||
+            UiTheme::Label(hwnd).find(L"Local 2000/02/29 06:00:01")==std::wstring::npos)fail();
+        captureUi("ui-earth-local-calendar");
+        starSystem.camera=orbitCamera;
+        starSystem.SelectPlanet(3);
+        const auto mars=starSystem.LocalCalendar(Astronomy::secondsPerDay);
+        if(!mars.starts_with("2000/01/02 11:") || mars.size()!=19)fail();
+        starSystem.SelectPlanet(4);
+        if(!starSystem.LocalCalendar(simulationTime).empty())fail();
+        simulationTime=0;
+        starSystem.SelectPlanet(-1);
+        std::cout<<"Local calendars: Earth longitude and leap day, Mars solar day, and gas giant fallback checked\n";
         KeyCallback(window,GLFW_KEY_F4,0,GLFW_PRESS,GLFW_MOD_CONTROL);
         const bool closes=!scenePanel.IsBrowserVisible();
         std::cout<<"Ctrl+F4 browser: starts hidden="<<startsHidden<<"; opens="<<opens<<"; closes="<<closes<<"\n";
@@ -262,6 +292,359 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,boo
             fail();
         return pixels;
     };
+    if(earthAtmosphereOnly){
+        static_assert(Atmosphere::EarthScattering(.499)==Atmosphere::Scattering::DetailedEarth);
+        static_assert(Atmosphere::EarthScattering(.5)==Atmosphere::Scattering::DetailedEarth);
+        static_assert(Atmosphere::EarthScattering(.501)==Atmosphere::Scattering::Earth);
+        StartSolarSystem();scenePanel.SetVisible(false);ResizeInterface();
+        simulationPlaying=false;trajectories=false;visionProfile=0;lensFlareStrength=0;exposureEv=0;hdrMode=true;
+        starSystem.SetEarthClouds(false);
+        const auto earth=starSystem.Position(2,simulationTime);
+        const auto sun=glm::normalize(-earth);
+        const auto tangent=glm::normalize(glm::cross(sun,glm::dvec3(0,1,0)));
+        const auto view=glm::normalize(sun+.8*tangent);
+        for(double distance:{.501,.499,3.0*Astronomy::earthRadiusAu}){
+            starSystem.camera=earth+view*distance;
+            cameraFront=glm::vec3(-view);cameraUp={0,1,0};
+            // Match the apparent diameter on both sides of the quality boundary.
+            fieldOfView=glm::degrees(2.f*std::atan(float(1.6*Astronomy::earthRadiusAu/distance)));
+            sceneCacheValid=false;
+            const char* name=distance>.5?"earth-atmosphere-outside-0.5-au":
+                distance>.1?"earth-atmosphere-inside-0.5-au":"earth-atmosphere-orbital-limb";
+            capture(name);
+        }
+        const double sunAngle=glm::radians(1.0);
+        const auto localUp=sun*std::sin(sunAngle)+tangent*std::cos(sunAngle);
+        starSystem.camera=earth+localUp*(3.0*Astronomy::earthRadiusAu);
+        starSystem.ToggleLanding(simulationTime,cameraFront,cameraUp);
+        const auto horizon=glm::normalize(sun-localUp*std::sin(sunAngle));
+        cameraFront=glm::vec3(horizon*std::cos(glm::radians(8.0))+localUp*std::sin(glm::radians(8.0)));
+        cameraUp=glm::vec3(localUp);fieldOfView=70;sceneCacheValid=false;
+        capture("earth-atmosphere-surface-sunrise");
+        starSystem.ToggleLanding(simulationTime,cameraFront,cameraUp);
+        const double sunElevation=glm::radians(23.0);
+        const auto dayUp=sun*std::sin(sunElevation)+tangent*std::cos(sunElevation);
+        const auto towardSun=glm::normalize(sun-dayUp*std::sin(sunElevation));
+        starSystem.camera=earth+dayUp*(Astronomy::earthRadiusAu+3500/Astronomy::metresPerAu);
+        cameraFront=glm::vec3(glm::normalize(towardSun+dayUp*.11));
+        cameraUp=glm::vec3(dayUp);
+        SyncCameraAngles();
+        hdrMode=false;
+        sceneCacheValid=false;
+        KeyCallback(window,1203,0,GLFW_PRESS,0);
+        const auto manual=capture("earth-atmosphere-exposure-manual");
+        KeyCallback(window,1202,0,GLFW_PRESS,0);
+        const auto automatic=capture("earth-atmosphere-exposure-auto");
+        exposureEv=-1;
+        const auto biased=capture("earth-atmosphere-exposure-auto-minus-one");
+        exposureEv=0;
+        int exposureWidth,exposureHeight;
+        glfwGetFramebufferSize(window,&exposureWidth,&exposureHeight);
+        const auto meanLinear=[](const std::vector<unsigned char>& pixels,int width,int height,int rowMin,int rowMax){
+            double sum=0;
+            int count=0;
+            const auto linear=[](unsigned char value){
+                const double encoded=value/255.;
+                return encoded<=.04045?encoded/12.92:std::pow((encoded+.055)/1.055,2.4);
+            };
+            for(int y=rowMin*height/100;y<rowMax*height/100;y+=3)
+                for(int x=width/5;x<width*2/5;x+=3){
+                    const auto i=(static_cast<std::size_t>(y)*width+x)*3;
+                    sum+=.2126*linear(pixels[i])+.7152*linear(pixels[i+1])+.0722*linear(pixels[i+2]);
+                    ++count;
+                }
+            return sum/count;
+        };
+        const auto patch=[&](const auto& pixels,int first,int last){
+            return meanLinear(pixels,exposureWidth,exposureHeight,first,last);
+        };
+        const auto autoSky=patch(automatic,66,86),autoGround=patch(automatic,8,25);
+        const auto skyGain=autoSky/patch(manual,66,86),groundGain=autoGround/patch(manual,8,25);
+        const auto skyBias=patch(biased,66,86)/autoSky,groundBias=patch(biased,8,25)/autoGround;
+        std::cout<<"Earth local exposure: auto/manual sky="<<skyGain<<"; terrain="<<groundGain
+            <<"; -1 EV sky="<<skyBias<<"; terrain="<<groundBias<<"\n";
+        if(skyGain<.80 || std::abs(groundGain-skyGain)>.08 ||
+            std::abs(skyBias-.5)>.075 || std::abs(groundBias-.5)>.075)fail();
+        std::cout<<"Earth atmosphere checks "<<(success?"PASSED":"FAILED")<<"\n";
+        return success;
+    }
+    if(cityOnly){
+        StartSolarSystem();scenePanel.SetVisible(false);ResizeInterface();
+        simulationPlaying=false;trajectories=false;visionProfile=0;lensFlareStrength=0;exposureEv=0;hdrMode=true;
+        starSystem.SetEarthClouds(false);
+        const auto city=navigationCatalog.Find("NYC",simulationTime);
+        if(city.size()!=1 || !city[0].city){std::cerr<<"New York City missing from the finder\n";fail();return success;}
+        for(const auto* name:{"Manhattan","The Bronx","Brooklyn","Queens","Staten Island"}){
+            const auto results=navigationCatalog.Find(name,simulationTime);
+            if(results.empty() || !results.front().city)fail();
+        }
+        double best=-2;
+        for(int hour=0;hour<24;++hour){
+            const double time=hour*3600.;
+            const auto frame=starSystem.WeatherFrame(2,time);
+            const double illumination=glm::dot(frame*city[0].surfaceNormal,glm::normalize(-starSystem.Position(2,time)));
+            if(illumination>best){best=illumination;simulationTime=time;}
+        }
+        const auto warm=[&](){
+            sceneCacheValid=false;
+            for(int frame=0;frame<35;++frame){
+                float elapsed=.016f;Update(elapsed);
+                if(!starSystem.CityNeedsFrame())break;
+            }
+        };
+        ActivateNavigation(NavigationPanel::Action::Go,city[0]);warm();capture("new-york-city-skyline");
+        const auto skyline=starSystem.VisibleCityTiles();
+        const auto footprints=starSystem.CityBuildingFootprints();
+        if(skyline<12 || footprints<1000000 || starSystem.CityNeedsFrame())fail();
+
+        const double lat=glm::radians(40.7577),lon=glm::radians(-73.9856);
+        const glm::dvec3 street(std::cos(lat)*std::cos(lon),std::sin(lat),-std::cos(lat)*std::sin(lon));
+        const auto earthFrame=starSystem.WeatherFrame(2,simulationTime);
+        const auto up=earthFrame*street,centre=starSystem.Position(2,simulationTime);
+        const auto north=glm::normalize(glm::dvec3(0,1,0)-street*street.y);
+        cameraFront=glm::vec3(glm::normalize(earthFrame*north+up*.15));cameraUp=glm::vec3(up);
+        const auto ground=PlanetTerrain::EarthGeography(glm::vec3(street));
+        starSystem.camera=centre+up*(Astronomy::earthRadiusAu+(ground.x+8)/Astronomy::metresPerAu);
+        warm();capture("new-york-city-street");
+        const auto detailed=starSystem.DetailedCityTiles();
+        if(!detailed || ground.y>.5f)fail();
+        starSystem.camera=centre+up*(Astronomy::earthRadiusAu+1550/Astronomy::metresPerAu);
+        cameraFront=glm::vec3(glm::normalize(earthFrame*north-up*.72));
+        warm();capture("new-york-city-distance-lod");
+        if(starSystem.DetailedCityTiles()!=0 || starSystem.VisibleCityTiles()<10)fail();
+        std::cout<<"NYC footprints="<<footprints<<"; skyline tiles="<<skyline<<"; street detail tiles="<<detailed
+            <<"; detail radius="<<NewYorkCity::detailMetres<<" m; distant detail tiles="<<starSystem.DetailedCityTiles()<<"\n";
+        std::cout<<"City checks "<<(success?"PASSED":"FAILED")<<"\n";
+        return success;
+    }
+    if(wondersOnly){
+        StartSolarSystem();scenePanel.SetVisible(false);ResizeInterface();
+        simulationPlaying=false;trajectories=false;visionProfile=0;lensFlareStrength=0;exposureEv=0;hdrMode=true;
+        starSystem.camera={0,8.5,6};
+        cameraFront=glm::normalize(glm::vec3(-starSystem.camera));cameraUp={0,1,0};
+        const auto beltWithoutOrbits=capture("asteroid-belt-orbits-off");
+        const auto markerCount=starSystem.DrawnAsteroidMarkers();
+        KeyCallback(window,GLFW_KEY_F2,0,GLFW_PRESS,0);
+        const auto beltWithOrbits=capture("asteroid-belt-orbits-on");
+        if(!trajectories || starSystem.DrawnAsteroidMarkers()!=markerCount || beltWithoutOrbits==beltWithOrbits)fail();
+        KeyCallback(window,GLFW_KEY_F2,0,GLFW_PRESS,0);
+        capture("asteroid-belt-orbits-off-again");
+        std::cout<<"Asteroid markers after F2 on/off: "<<starSystem.DrawnAsteroidMarkers()<<" (initially "<<markerCount<<")\n";
+        if(trajectories || markerCount!=4096 || starSystem.DrawnAsteroidMarkers()!=markerCount)fail();
+        const auto group=navigationCatalog.Find("Wonders of the World",simulationTime);
+        const auto parent=navigationCatalog.Object(-2,2,simulationTime);
+        const auto children=navigationCatalog.Children(parent,simulationTime);
+        if(group.size()!=EarthWonders::sites.size() || navigationCatalog.Find("Pyrimids",simulationTime).empty())fail();
+        const auto daylight=[&](const EarthWonders::Site& site){
+            double bestLight=-2;
+            for(int hour=0;hour<24;++hour){
+                const double date=hour*3600.;
+                const double light=glm::dot(starSystem.WeatherFrame(2,date)*site.Direction(),glm::normalize(-starSystem.Position(2,date)));
+                if(light>bestLight){bestLight=light;simulationTime=date;}
+            }
+        };
+        for(unsigned i=0;i<EarthWonders::sites.size();++i){
+            const auto& site=EarthWonders::sites[i];
+            daylight(site);
+            const auto matches=navigationCatalog.Find(site.name,simulationTime);
+            const auto result=std::find_if(matches.begin(),matches.end(),[&](const auto& e){return e.earthWonder==static_cast<int>(i);});
+            if(result==matches.end() || std::none_of(children.begin(),children.end(),[&](const auto& e){return e.key==result->key;})){
+                std::cerr<<"Missing Earth navigation entry for "<<site.name<<"\n";fail();continue;
+            }
+            ActivateNavigation(NavigationPanel::Action::Go,*result);
+            capture(site.key);
+            const unsigned visible=starSystem.VisibleEarthWonders();
+            const double depth=DepthBelowWater();
+            std::cout<<site.name<<" visible="<<((visible>>i)&1)<<"; depth="<<depth<<" m\n";
+            if(!(visible & (1u<<i)) || (site.submerged?depth<12:depth>0) || !inStarSystem || activeSystemTarget!=-2)fail();
+            if(site.submerged){
+                starSystem.MoveOnSurface(glm::dvec3(cameraFront)*3.0/Astronomy::metresPerAu,-1,cameraFront,cameraUp);
+                sceneCacheValid=false;capture("atlantis-diving-route");
+                if(!(starSystem.VisibleEarthWonders() & (1u<<i)) || DepthBelowWater()>=depth)fail();
+            }
+        }
+        StartSolarSystem();scenePanel.SetVisible(false);ResizeInterface();
+        simulationPlaying=false;trajectories=false;
+        starSystem.SetEarthClouds(false);
+        const auto global=navigationCatalog.Find("Earth landmarks",simulationTime);
+        std::set<std::string> countries;
+        for(const auto& entry:global){
+            const auto& site=EarthWonders::Destination(entry.earthWonder);
+            countries.insert(site.aliases);
+        }
+        std::cout<<"Earth landmarks: "<<global.size()<<" model destinations in "<<countries.size()<<" countries and jurisdictions\n";
+        if(global.size()!=std::size(EarthWonders::landmarks) || countries.size()!=global.size() || global.size()<195)fail();
+        for(const char* name:{"France","United States","United Arab Emirates","Australia",
+                             "Brazil","Ethiopia","United Kingdom","Italy","Saudi Arabia"}){
+            const auto result=navigationCatalog.Find(name,simulationTime);
+            const auto found=std::find_if(result.begin(),result.end(),[&](const auto& entry){
+                return entry.earthWonder>=static_cast<int>(EarthWonders::sites.size()+EarthWonders::wallViews.size()) &&
+                    std::string_view(EarthWonders::Destination(entry.earthWonder).aliases)==name;
+            });
+            if(found==result.end()){fail();continue;}
+            const auto& site=EarthWonders::Destination(found->earthWonder);
+            daylight(site);
+            ActivateNavigation(NavigationPanel::Action::Go,*found);
+            capture(site.key);
+            std::cout<<site.name<<" meshes="<<starSystem.VisibleEarthLandmarks()<<" depth="<<DepthBelowWater()<<" m\n";
+            if(starSystem.VisibleEarthLandmarks()!=1 || DepthBelowWater()>0)fail();
+        }
+        for(const auto& site:EarthWonders::wallViews){
+            daylight(site);
+            const auto result=navigationCatalog.Find(site.name,simulationTime);
+            if(result.empty() || result.front().name!=site.name){fail();continue;}
+            ActivateNavigation(NavigationPanel::Action::Go,result.front());
+            for(int i=0;i<8;++i){float dt=.016f;Update(dt);}
+            capture(site.key);
+            std::cout<<site.name<<" rendered tiles="<<starSystem.VisibleGreatWallTiles()<<"\n";
+            if(!starSystem.VisibleGreatWallTiles() || starSystem.EarthWondersNeedFrame())fail();
+        }
+        std::cout<<"Earth wonder checks "<<(success?"PASSED":"FAILED")<<"\n";
+        return success;
+    }
+    if(precipitationOnly){
+        constexpr double earthRadiusMetres=Astronomy::earthRadiusAu*Astronomy::metresPerAu;
+        const auto terrainMesh=PlanetTerrain::SurfaceLodVertices(earthRadiusMetres);
+        std::map<std::array<float,4>,unsigned> edgeUse;
+        for(std::size_t i=0;i<terrainMesh.size();i+=3){
+            const auto ab=terrainMesh[i+1]-terrainMesh[i],ac=terrainMesh[i+2]-terrainMesh[i];
+            if(ab.x*ac.y-ab.y*ac.x<=0)fail();
+            for(int k=0;k<3;++k){
+                auto a=terrainMesh[i+k],b=terrainMesh[i+(k+1)%3];
+                if(std::tie(b.x,b.y)<std::tie(a.x,a.y))std::swap(a,b);
+                ++edgeUse[{a.x,a.y,b.x,b.y}];
+            }
+        }
+        const double patchRadius=earthRadiusMetres*std::tan(.020);
+        for(const auto& [edge,count]:edgeUse){
+            const glm::dvec2 a(edge[0],edge[1]),b(edge[2],edge[3]);
+            const auto span=b-a;
+            if(count>2 || (count==1 && glm::length(a+span*glm::clamp(-glm::dot(a,span)/glm::dot(span,span),0.,1.))<patchRadius))
+                fail();
+        }
+        if(terrainMesh.empty() || terrainMesh.size()/3>22000)fail();
+        std::cout<<"Earth terrain mesh: "<<terrainMesh.size()/3<<" triangles; "
+            <<terrainMesh.size()*sizeof(terrainMesh.front())<<" vertex bytes\n";
+        StartSolarSystem();scenePanel.SetVisible(false);ResizeInterface();
+        simulationPlaying=false;trajectories=false;visionProfile=0;lensFlareStrength=0;exposureEv=0;hdrMode=true;
+        using SpherePoint=glm::dvec3;
+        const auto normal=[](double latitude,double longitude){
+            const auto lat=glm::radians(latitude),lon=glm::radians(longitude);
+            return SpherePoint(std::cos(lat)*std::cos(lon),std::sin(lat),-std::cos(lat)*std::sin(lon));
+        };
+        const auto localWeather=[&](SpherePoint site,double time,float height){
+            const float surface=std::max(0.f,PlanetTerrain::EarthGeography(glm::vec3(site)).x);
+            return PlanetWeather::Conditions(starSystem.WeatherState(2,time),glm::vec3(site),surface+height,time);
+        };
+        const auto setCamera=[&](SpherePoint site,double time,double height,bool towardSun){
+            simulationTime=time;
+            const auto earth=starSystem.Position(2,time);
+            const auto rotation=starSystem.WeatherFrame(2,time);
+            const auto up=rotation*site;
+            const auto surface=std::max(0.f,PlanetTerrain::EarthGeography(glm::vec3(site)).x);
+            starSystem.camera=earth+up*(Astronomy::earthRadiusAu+(surface+height)/Astronomy::metresPerAu);
+            const auto toward= towardSun ? glm::normalize(-earth) : rotation*glm::normalize(glm::cross(SpherePoint(0,1,0),site));
+            const auto tangent=glm::normalize(toward-up*glm::dot(up,toward));
+            cameraFront=glm::vec3(glm::normalize(tangent+.19*up));cameraUp=glm::vec3(up);
+            sceneCacheValid=false;
+        };
+        const auto tropical=normal(7.3,109.1),alpine=normal(27.9858,86.9239);
+        double rainDate=0,snowDate=0,shaftDate=0,boltDate=0,thunderDelay=0;
+        float rain=0,snow=0,shaftScore=0;
+        for(int step=0;step<1200;++step){
+            const double time=step*1800.0;
+            const auto solarUp=[&](SpherePoint n){
+                return glm::dot(starSystem.WeatherFrame(2,time)*n,glm::normalize(-starSystem.Position(2,time)));
+            };
+            const auto warm=localWeather(tropical,time,96),cold=localWeather(alpine,time,80);
+            if(warm.rain>rain && warm.snow==0 && solarUp(tropical)>.24){rain=warm.rain;rainDate=time;}
+            if(cold.snow>snow && cold.rain==0 && solarUp(alpine)>.24){snow=cold.snow;snowDate=time;}
+            const float sun=static_cast<float>(solarUp(tropical));
+            const float score=warm.rain<.012f && sun>.28f && sun<.65f?1-std::abs(sun-.42f):0.f;
+            if(score>shaftScore){shaftScore=score;shaftDate=time;}
+        }
+        if(rain<.55f || snow<.43f || shaftScore<.5f)fail();
+        setCamera(tropical,rainDate,96,false);
+        const auto rainFrame=capture("weather-tropical-rain");
+        setCamera(tropical,rainDate+.18,96,false);
+        if(capture("weather-tropical-rain-motion")==rainFrame)fail();
+        const float rainWind=glm::length(localWeather(tropical,rainDate,96).wind);
+        starSystem.SetWeather(2.4f,1);
+        setCamera(tropical,rainDate,96,false);
+        if(capture("weather-tropical-rain-gust")==rainFrame || glm::length(localWeather(tropical,rainDate,96).wind)<=rainWind*1.5f)fail();
+        starSystem.SetWeather(1,1);
+        setCamera(alpine,snowDate,80,false);
+        const auto snowFrame=capture("weather-alpine-snow");
+        setCamera(alpine,snowDate+.34,80,false);
+        if(capture("weather-alpine-snow-motion")==snowFrame)fail();
+        const float steadyWind=glm::length(localWeather(alpine,snowDate,80).wind);
+        starSystem.SetWeather(2.4f,1);
+        const float gustWind=glm::length(localWeather(alpine,snowDate,80).wind);
+        setCamera(alpine,snowDate,80,false);
+        if(capture("weather-alpine-snow-gust")==snowFrame || gustWind<=steadyWind*1.5f)fail();
+        starSystem.SetWeather(1,1);
+        setCamera(alpine,snowDate,4,false);
+        const auto mountainUp=glm::dvec3(cameraUp);
+        const auto mountainAhead=glm::normalize(glm::dvec3(cameraFront)-mountainUp*glm::dot(mountainUp,glm::dvec3(cameraFront)));
+        cameraFront=glm::vec3(-mountainUp);
+        cameraUp=glm::vec3(mountainAhead);
+        SyncCameraAngles();
+        const auto mountainSnow=capture("weather-mountain-snow-down");
+        starSystem.SetWeatherEnabled(false);sceneCacheValid=false;
+        const auto mountainClear=capture("weather-mountain-clear-down");
+        if(mountainClear==mountainSnow)fail();
+        int mountainWidth,mountainHeight;
+        glfwGetFramebufferSize(window,&mountainWidth,&mountainHeight);
+        unsigned hardEdges=0,samples=0;
+        // Measure the ground alone so moving flakes cannot hide a mesh seam.
+        for(int y=9*mountainHeight/20;y<3*mountainHeight/4;++y)
+            for(int x=mountainWidth/4;x<3*mountainWidth/4;++x){
+                const auto i=3*(static_cast<std::size_t>(y)*mountainWidth+x)+1;
+                hardEdges+=std::abs(int(mountainClear[i])-mountainClear[i+3])>60 ||
+                    std::abs(int(mountainClear[i])-mountainClear[i+3*mountainWidth])>60;
+                ++samples;
+            }
+        std::cout<<"Mountain ground sharp edges: "<<hardEdges<<" of "<<samples<<" pixels\n";
+        if(hardEdges>samples*.008)fail();
+        starSystem.SetWeatherEnabled(true);
+        setCamera(alpine,snowDate,24,false);
+        cameraFront=glm::normalize(cameraFront-.44f*cameraUp);
+        SyncCameraAngles();
+        capture("weather-mountain-snow-slope");
+        setCamera(alpine,snowDate,80,false);
+        starSystem.SetWeatherEnabled(false);sceneCacheValid=false;
+        if(capture("weather-alpine-weather-off")==snowFrame || localWeather(alpine,snowDate,80).snow>0)fail();
+        starSystem.SetWeatherEnabled(true);
+        for(int step=0;step<24000;++step){
+            const double time=rainDate+step*.025;
+            const auto storm=localWeather(tropical,time,96);
+            if(storm.flash>.24f && storm.thunderTime>time){
+                boltDate=time;thunderDelay=storm.thunderTime-time;break;
+            }
+        }
+        if(thunderDelay<2 || thunderDelay>20)fail();
+        if(thunderDelay>0){
+            setCamera(tropical,boltDate,96,false);
+            const auto conditions=localWeather(tropical,boltDate,96);
+            cameraFront=glm::normalize(glm::vec3(starSystem.WeatherFrame(2,boltDate)*glm::dvec3(conditions.bolt)));
+            const auto flash=capture("weather-lightning");
+            setCamera(tropical,boltDate+.5,96,false);
+            cameraFront=glm::normalize(glm::vec3(starSystem.WeatherFrame(2,boltDate+.5)*glm::dvec3(conditions.bolt)));
+            if(capture("weather-lightning-after")==flash)fail();
+        }
+        setCamera(tropical,shaftDate,120,true);
+        cameraFront=glm::normalize(cameraFront+.28f*cameraUp);
+        capture("weather-cloud-sunbeams");
+        setCamera(tropical,shaftDate,17400,true);
+        cameraFront=glm::normalize(cameraFront-1.40f*cameraUp);
+        capture("weather-cloud-layers-from-above");
+        setCamera(alpine,snowDate,14600,true);
+        cameraFront=glm::normalize(cameraFront-.78f*cameraUp);
+        capture("weather-alpine-cloud-tops");
+        std::cout<<"Tropical rain="<<rain<<"; alpine snow="<<snow<<"; thunder delay="<<thunderDelay<<" s\n";
+        std::cout<<"Precipitation checks "<<(success?"PASSED":"FAILED")<<"\n";
+        return success;
+    }
     if(rayOnly){
 #ifdef RENDER_ENGINE_DX12
         using namespace NativeDX12;
@@ -330,6 +713,51 @@ bool WindowManager::RunRenderChecks(const std::string &directory,bool uiOnly,boo
         std::cout<<"DXR reflected Earth clouds: clear="<<rays.meanEnvironmentLuminance
             <<"; clouded="<<cloudy.meanEnvironmentLuminance<<"; changed reflection samples="<<cloudPixels<<"\n";
         if(!reflectionSkyTexture || cloudPixels<100)fail();
+
+        // A grazing view near the coast exposes proxy-mesh seams and
+        // screen-space reconstruction mistakes that a downward view hides.
+        const auto shorePoint=[](double longitude){
+            const double lat=glm::radians(24.91),lon=glm::radians(longitude);
+            return glm::dvec3(std::cos(lat)*std::cos(lon),std::sin(lat),-std::cos(lat)*std::sin(lon));
+        };
+        glm::dvec3 shore(0);
+        for(double lon=-80.72;lon<-79.82;lon+=.012){
+            const auto a=shorePoint(lon),b=shorePoint(lon+.012);
+            if(PlanetTerrain::EarthGeography(glm::vec3(a)).y>=.5f ||
+                PlanetTerrain::EarthGeography(glm::vec3(b)).y<.5f)continue;
+            auto land=a,water=b;
+            for(int step=0;step<20;++step){
+                const auto middle=glm::normalize(land+water);
+                if(PlanetTerrain::EarthGeography(glm::vec3(middle)).y<.5f)land=middle;else water=middle;
+            }
+            shore=glm::normalize(shorePoint(lon+.012)*.36+water*.64);
+            break;
+        }
+        if(shore==glm::dvec3(0)){std::cerr<<"No coastal ray-tracing test location\n";fail();}
+        else{
+            float best=2;
+            for(int hour=0;hour<144;++hour){
+                const double date=hour*600.;
+                const auto radial=starSystem.WeatherFrame(2,date)*shore;
+                const float error=static_cast<float>(std::abs(glm::dot(radial,glm::normalize(-starSystem.Position(2,date)))-.04));
+                if(error<best){best=error;simulationTime=date;}
+            }
+            const auto radial=starSystem.WeatherFrame(2,simulationTime)*shore;
+            const auto tangent=glm::normalize(glm::cross(glm::dvec3(0,1,0),radial));
+            starSystem.camera=starSystem.Position(2,simulationTime)+radial*(Astronomy::earthRadiusAu+3.5/Astronomy::metresPerAu);
+            cameraUp=glm::vec3(radial);
+            cameraFront=glm::vec3(glm::normalize(-tangent+glm::cross(radial,tangent)*.72-radial*.035));
+            SyncCameraAngles();SetHardwareRays(false);sceneCacheValid=false;
+            capture("earth-dxr-shoreline-raster");
+            SetHardwareRays(true);SetDlssMode(DlssMode::Off);sceneCacheValid=false;
+            capture("earth-dxr-shoreline-native");
+            if(InspectRayCoverage().receivers<1000)fail();
+            if(DlssAvailable()){
+                SetDlssMode(DlssMode::Balanced);sceneCacheValid=false;
+                capture("earth-dxr-shoreline-balanced");
+                SetDlssMode(DlssMode::Off);
+            }
+        }
 
         // A reflected red panel is behind the camera and a blue panel is
         // below the water. Neither panel is present in the raster image.
@@ -413,6 +841,71 @@ void main(){color=vec4(vec3(.028+relativeMetres.x*.0001),.22);}
             <<"; unlit disk peak="<<darkDisk.brightestEnvironment<<"\n";
         if(brightDisk.brightestEnvironment-darkDisk.brightestEnvironment<.1f)fail();
 
+        if(DlssAvailable()){
+            SetDlssMode(DlssMode::Balanced);
+            const auto modeEvaluations=DlssEvaluationCount();
+            const auto aimed=cameraFront;
+            const float originalFov=fieldOfView;
+            const auto sizeOf=[](unsigned texture){
+                GLint w=0,h=0;
+                glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,texture);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_WIDTH,&w);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_HEIGHT,&h);
+                return glm::ivec2(w,h);
+            };
+            sceneCacheValid=false;capture("miller-dlss-facing-gargantua");
+            const auto raster=sizeOf(optics.SceneInputTexture()),resolved=sizeOf(optics.SceneTexture());
+            const auto graded=sizeOf(optics.HdrDiskTexture());
+            cameraFront=-aimed;SyncCameraAngles();capture("miller-dlss-away-from-gargantua");
+            const auto away=sizeOf(optics.SceneTexture());
+            std::cout<<"Miller DLSS sizing: raster="<<raster.x<<"x"<<raster.y<<"; resolved="<<resolved.x<<"x"<<resolved.y
+                <<"; HDR grade="<<graded.x<<"x"<<graded.y<<"; facing away="<<away.x<<"x"<<away.y<<"\n";
+            if(DlssEvaluationCount()<modeEvaluations+2 || graded!=resolved || away!=resolved || resolved.x<=raster.x || fieldOfView!=originalFov)fail();
+        }
+
+        StartSolarSystem();scenePanel.SetVisible(false);ResizeInterface();
+        simulationTime=.20*365.2422*Astronomy::secondsPerDay;simulationPlaying=false;trajectories=false;
+        if(DlssAvailable())SetDlssMode(DlssMode::Balanced);
+        const auto arcticFrame=starSystem.WeatherFrame(2,simulationTime);
+        const auto arcticCentre=starSystem.Position(2,simulationTime);
+        const auto arcticFlyover=[&](bool ray){
+            SetHardwareRays(ray);sceneCacheValid=false;
+            std::array<double,12> times{};
+            const auto passes=RayPassCount();
+            for(size_t i=0;i<=times.size();++i){
+                const auto worldUp=arcticFrame*glm::normalize(glm::dvec3(.025,1,.035+i*.00012));
+                const auto forward=glm::normalize(glm::cross(arcticFrame[0],worldUp));
+                starSystem.camera=arcticCentre+worldUp*(Astronomy::earthRadiusAu+16/Astronomy::metresPerAu);
+                cameraUp=glm::vec3(worldUp);cameraFront=glm::vec3(glm::normalize(forward-worldUp*.21));
+                float dt=.016f;
+                const auto start=std::chrono::steady_clock::now();
+                Update(dt);glFinish();
+                if(i)times[i-1]=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
+            }
+            std::sort(times.begin(),times.end());
+            std::cout<<"Arctic flyover RT="<<ray<<": median="<<times[times.size()/2]<<" ms; max="<<times.back()
+                <<" ms; ray frames="<<RayPassCount()-passes<<"\n";
+            if(ray && (RayPassCount()-passes<times.size() || !RayGeometryCount(RayKind::Surface) || RayGeometryCount(RayKind::Bottom)))fail();
+        };
+        arcticFlyover(false);
+        arcticFlyover(true);
+        const bool arcticWaterTarget=InspectRayCoverage().hasWaterNormalTarget;
+        std::cout<<"Arctic ray tracing water-normal target="<<arcticWaterTarget<<"\n";
+        if(arcticWaterTarget)fail();
+        const unsigned oldCube=reflectionSkyTexture;
+        const auto shifted=arcticFrame*glm::normalize(glm::dvec3(.025,1,.039));
+        starSystem.camera=arcticCentre+shifted*(Astronomy::earthRadiusAu+16/Astronomy::metresPerAu);
+        pendingReflectionFace=-1;
+        reflectionSkyUpdated=glfwGetTime()-1;
+        for(int face=0;face<6;++face){
+            float dt=.016f;
+            Update(dt);
+            if(face<5 && (reflectionSkyTexture!=oldCube || pendingReflectionFace!=face+1))fail();
+        }
+        const bool rollComplete=reflectionSkyTexture && reflectionSkyTexture!=oldCube && pendingReflectionFace<0;
+        std::cout<<"Arctic reflection sky: one face per frame; complete cube swapped="<<rollComplete<<"\n";
+        if(!rollComplete)fail();
+
         KeyCallback(window,RayTracingMenuCommand,0,GLFW_PRESS,0);
         if(HardwareRaysEnabled() || !ScreenSpaceReflectionsEnabled())fail();
         std::cout<<"Ray tracing checks "<<(success?"PASSED":"FAILED")<<"\n";
@@ -491,7 +984,7 @@ void main(){color=vec4(vec3(.028+relativeMetres.x*.0001),.22);}
             cameraFront=glm::normalize(cameraFront-cameraUp*.12f);fieldOfView=100;visionProfile=0;exposureEv=0;
             starSystem.SetOceanReflections(false);starSystem.SetEarthClouds(false);sceneCacheValid=false;float dt=.016f;Update(dt);
             const auto water=readWaterScene();size_t receivers=0;
-            for(size_t p=0;p<water.size();p+=4)if(water[p+3]>=.099f && water[p+3]<=.405f)++receivers;
+            for(size_t p=0;p<water.size();p+=4)if(water[p+3]>=.049f && water[p+3]<=.405f)++receivers;
             oceanFound=receivers>10000;
         }
         if(!oceanFound){std::cerr<<"No ocean receiver found for weather reflection check\n";fail();}
@@ -501,7 +994,7 @@ void main(){color=vec4(vec3(.028+relativeMetres.x*.0001),.22);}
             starSystem.SetEarthClouds(true);starSystem.SetOceanReflections(false);sceneCacheValid=false;capture("earth-ocean-clouds-ssr-off");const auto cloudsOff=readWaterScene();
             starSystem.SetOceanReflections(true);sceneCacheValid=false;capture("earth-ocean-clouds-ssr-on");const auto cloudsOn=readWaterScene();
             size_t reflectedWeather=0;
-            for(size_t p=0;p<clearOff.size();p+=4)if(clearOff[p+3]>=.099f && clearOff[p+3]<=.405f){
+            for(size_t p=0;p<clearOff.size();p+=4)if(clearOff[p+3]>=.049f && clearOff[p+3]<=.405f){
                 float change=0;for(int c=0;c<3;++c)change+=std::abs((cloudsOn[p+c]-cloudsOff[p+c])-(clearOn[p+c]-clearOff[p+c]));
                 if(change>.0001f)++reflectedWeather;
             }
@@ -517,7 +1010,7 @@ void main(){color=vec4(vec3(.028+relativeMetres.x*.0001),.22);}
         if(starSystem.IsLanded())starSystem.ToggleLanding(simulationTime,cameraFront,cameraUp);
     };
     const auto checkLiquidOptics=[&](){
-        const auto waterTag=[](float alpha){return alpha>=.099f && alpha<=.405f;};
+        const auto waterTag=[](float alpha){return alpha>=.049f && alpha<=.405f;};
         const auto compare=[&](const std::string& label,auto toggle,bool onlyWater){
             toggle(false);sceneCacheValid=false;capture((label+"-off").c_str());const auto before=readWaterScene();
             toggle(true);sceneCacheValid=false;capture((label+"-on").c_str());const auto after=readWaterScene();
@@ -1793,6 +2286,78 @@ void main(){
         const auto beachPixels=changed(original,shoreline);
         std::cout<<"Earth shoreline detail: changed pixels="<<beachPixels<<"\n";
         if(beachPixels<1000)fail();
+        if(shorelineOnly){
+            const auto& earth=starSystem.Planets()[2];
+            const double radius=Astronomy::earthRadiusAu*Astronomy::metresPerAu;
+            const auto across=glm::normalize(glm::cross(glm::dvec3(0,1,0),coast));
+            const auto offshore=[&](double metres){return glm::normalize(coast+across*(metres/radius));};
+            const auto depthAt=[&](double metres){
+                return PlanetTerrain::WaterDepthMetres(glm::vec3(offshore(metres)),earth.seed,earth.seaLevel,radius,true);
+            };
+            const auto floorAt=[&](double metres){
+                const auto d=glm::vec3(offshore(metres));
+                return PlanetTerrain::SurfaceElevation(d,earth.seed,0,earth.seaLevel,.003f,0,false,nullptr,true)*radius-depthAt(metres);
+            };
+            const double waterlineDepth=depthAt(1);
+            const double floorStep=std::abs(floorAt(-1)-floorAt(1));
+            if(depthAt(-2)>.001 || waterlineDepth>.18 || floorStep>.25)fail();
+
+            const auto centre=starSystem.Position(2,simulationTime);
+            const auto horizontal=frame*across;
+            const auto alongCoast=glm::cross(up,horizontal);
+            starSystem.camera=centre+frame*offshore(7)*(Astronomy::earthRadiusAu+2.2/Astronomy::metresPerAu);
+            cameraFront=glm::vec3(glm::normalize(alongCoast-horizontal*.21-up*.11));cameraUp=glm::vec3(up);
+            sceneCacheValid=false;const auto waterline=capture("earth-shore-waterline");
+            const auto fixedOffset=glm::transpose(frame)*(starSystem.camera-centre);
+            const auto fixedLook=glm::transpose(frame)*glm::dvec3(cameraFront);
+            simulationTime+=1.85;
+            const auto afterFrame=starSystem.WeatherFrame(2,simulationTime);
+            starSystem.camera=starSystem.Position(2,simulationTime)+afterFrame*fixedOffset;
+            cameraFront=glm::vec3(afterFrame*fixedLook);cameraUp=glm::vec3(afterFrame*coast);
+            sceneCacheValid=false;
+            const auto surfPixels=changed(waterline,capture("earth-shore-surf-runup"));
+            if(surfPixels<300)fail();
+
+            // Florida's tidal flats can stay too shallow for a diver within
+            // view of the waterline. Pick a Pacific transect with a visible bed.
+            glm::dvec3 diveCoast(0),seaward(0);
+            double distance=0;
+            for(double lat=33.0;lat<37.2 && distance==0;lat+=.055){
+                for(double lon=-117.0;lon>-123.0 && distance==0;lon-=.025){
+                    auto inland=normal(lat,lon),ocean=normal(lat,lon-.025);
+                    if(PlanetTerrain::EarthGeography(glm::vec3(inland),false).y>=.5 ||
+                        PlanetTerrain::EarthGeography(glm::vec3(ocean),false).y<.5)continue;
+                    for(int step=0;step<17;++step){
+                        const auto mid=glm::normalize(inland+ocean);
+                        if(PlanetTerrain::EarthGeography(glm::vec3(mid),false).y<.5)inland=mid;else ocean=mid;
+                    }
+                    const auto edge=glm::normalize(inland+ocean);
+                    const auto west=glm::normalize(glm::cross(edge,glm::dvec3(0,1,0)));
+                    for(double offset=12;offset<=180;offset+=12){
+                        const auto direction=glm::vec3(glm::normalize(edge+west*(offset/radius)));
+                        const double depth=PlanetTerrain::WaterDepthMetres(direction,earth.seed,earth.seaLevel,radius,true);
+                        if(depth>=1.8 && depth<=8.0){diveCoast=edge;seaward=west;distance=offset;break;}
+                    }
+                }
+            }
+            if(distance==0){std::cerr<<"No coastal site with a shallow dive near shore\n";fail();return;}
+            simulationTime=earthDay(diveCoast);
+            const auto diveFrame=starSystem.WeatherFrame(2,simulationTime);
+            const auto diveDirection=glm::normalize(diveCoast+seaward*(distance/radius));
+            const auto diveUp=diveFrame*diveDirection;
+            const auto shoreward=-diveFrame*seaward;
+            starSystem.SelectPlanet(2);
+            starSystem.camera=starSystem.Position(2,simulationTime)+diveUp*(Astronomy::earthRadiusAu+5.0/Astronomy::metresPerAu);
+            starSystem.ToggleLanding(simulationTime,cameraFront,cameraUp);
+            starSystem.MoveOnSurface({},Astronomy::observerClearanceAu*Astronomy::metresPerAu+.9,cameraFront,cameraUp);
+            cameraFront=glm::vec3(glm::normalize(shoreward+glm::cross(diveUp,shoreward)*.45-diveUp*.10));cameraUp=glm::vec3(diveUp);
+            sceneCacheValid=false;capture("earth-shore-submerged");
+            const double dive=starSystem.DepthBelowWater();
+            if(dive<.6)fail();
+            std::cout<<"Earth coast: depth 1 m offshore="<<waterlineDepth<<" m; seabed change across 2 m="<<floorStep
+                <<" m; diver depth="<<dive<<" m; distance from shore="<<distance<<" m; moving surf pixels="<<surfPixels<<"\n";
+            return;
+        }
         starSystem.SetBirdsEnabled(true);
         unsigned species=0;std::size_t birds=0,birdMovement=0;
         for(const auto n:{coast,normal(25.85,-80.72),normal(29.3,-82.3)}){
@@ -2073,7 +2638,126 @@ void main(){
         }
         KeyCallback(window,1200,0,GLFW_PRESS,0);
     };
+    if(exposureOnly){
+        StartGargantua();scenePanel.SetVisible(false);ResizeInterface();
+        simulationPlaying=false;simulationTime=0;selectedTarget=-1;trajectories=false;
+        fieldOfView=65;visionProfile=0;lensFlareStrength=0;exposureEv=0;adaptiveBlackHoleQuality=false;
+        const auto centre=BlackHole::PlanetPosition(0),toward=glm::normalize(-centre);
+        const auto tangent=glm::normalize(glm::cross(toward,glm::dvec3(0,1,0)));
+        const auto radial=glm::normalize(toward*.02+tangent);
+        cameraPos=centre+radial*(blackHole.PlanetSurfaceRadius(glm::vec3(radial),0)+2/Astronomy::metresPerAu);
+        cameraFront=glm::vec3(toward);cameraUp=glm::vec3(radial);SyncCameraAngles();
+        KeyCallback(window,1200,0,GLFW_PRESS,0);sceneCacheValid=false;
+        capture("miller-sea-level-hdr");
+        KeyCallback(window,1201,0,GLFW_PRESS,0);
+        KeyCallback(window,1203,0,GLFW_PRESS,0);
+        const auto manual=capture("miller-sea-level-manual");
+        KeyCallback(window,1202,0,GLFW_PRESS,0);
+        const auto automatic=capture("miller-sea-level-auto");
+        const auto clipped=[](const auto& pixels,double frameFraction=1.0){
+            const auto samples=static_cast<size_t>(pixels.size()/3*frameFraction);
+            size_t count=0;
+            for(size_t i=0;i<samples*3;i+=3)count+=pixels[i]>=254 && pixels[i+1]>=254 && pixels[i+2]>=254;
+            return double(count)/samples;
+        };
+        const auto meter=[](){
+            std::array<float,4> state{};
+            glActiveTexture(GL_TEXTURE2);
+            glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_FLOAT,state.data());
+            glActiveTexture(GL_TEXTURE0);
+            return state;
+        };
+        const auto facing=meter();
+        double highlightMean=0;
+        std::size_t highlightSamples=0;
+        for(size_t i=0;i<manual.size();i+=3)if(manual[i]>=254 && manual[i+1]>=254 && manual[i+2]>=254){
+            highlightMean+=.2126*automatic[i]+.7152*automatic[i+1]+.0722*automatic[i+2];
+            ++highlightSamples;
+        }
+        highlightMean/=std::max<std::size_t>(highlightSamples,1);
+        std::cout<<"Miller sea-level highlights: manual clipped="<<clipped(manual)
+            <<"; auto clipped="<<clipped(automatic)
+            <<"; ocean clipped="<<clipped(automatic,.43)<<"; auto EV="<<facing[0]
+            <<"; former white areas mean display="<<highlightMean<<"\n";
+        if(clipped(automatic)>.018 || facing[0]>=0 || highlightSamples<1000 ||
+            highlightMean<140 || highlightMean>246)fail();
+        cameraFront=glm::vec3(glm::normalize(-toward+radial*glm::dot(toward,radial)));SyncCameraAngles();
+        capture("miller-sea-level-auto-away-first");
+        float settle=.25f;for(int i=0;i<24;++i)Update(settle);
+        const auto away=capture("miller-sea-level-auto-away-adapted");
+        const auto settled=meter();
+        double displayMean=0;for(auto pixel:away)displayMean+=pixel;
+        displayMean/=away.size();
+        std::cout<<"Miller sea-level look-away: EV "<<facing[0]<<" -> "<<settled[0]
+            <<"; mean display value="<<displayMean<<"\n";
+        if(settled[0]<=facing[0]+.3f || std::abs(settled[0]-settled[1])>.10f || displayMean<8)fail();
+#ifdef RENDER_ENGINE_DX12
+        if(NativeDX12::HardwareRaysAvailable()){
+            cameraFront=glm::vec3(toward);SyncCameraAngles();
+            const auto rayPasses=NativeDX12::RayPassCount();
+            NativeDX12::SetHardwareRays(true);
+            for(const auto mode:{NativeDX12::DlssMode::Off,NativeDX12::DlssMode::Balanced}){
+                if(mode==NativeDX12::DlssMode::Balanced && !NativeDX12::DlssAvailable())continue;
+                NativeDX12::SetDlssMode(mode);
+                optics.SetAutoExposure(true);sceneCacheValid=false;
+                const bool balanced=mode==NativeDX12::DlssMode::Balanced;
+                const auto picture=capture(balanced?"miller-sea-level-dxr-balanced":"miller-sea-level-dxr-native");
+                const auto rayMeter=meter();
+                std::cout<<"Miller sea-level DXR "<<(balanced?"Balanced":"native")
+                    <<": auto clipped="<<clipped(picture)<<"; ocean clipped="<<clipped(picture,.43)
+                    <<"; auto EV="<<rayMeter[0]<<"\n";
+                if(clipped(picture)>.018)fail();
+            }
+            if(NativeDX12::RayPassCount()<=rayPasses)fail();
+            NativeDX12::SetHardwareRays(false);
+            NativeDX12::SetDlssMode(NativeDX12::DlssMode::Off);
+        }
+#endif
+        CameraOptics test;
+        if(!test.Initialize())return false;
+        constexpr int width=1600,height=900;
+        const auto draw=[&](bool hdr,bool disk,bool reuse){
+            if(!reuse){
+                glViewport(0,0,width,height);
+                test.BeginFrame();
+                glClearColor(.012f,.016f,.021f,0);
+                glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+                glEnable(GL_SCISSOR_TEST);
+                glScissor(440,300,720,300);
+                glClearColor(2.1f,1.2f,.64f,disk?3.f:0.f);
+                glClear(GL_COLOR_BUFFER_BIT);
+                glScissor(729,408,142,84);
+                glClearColor(18.f,13.f,7.f,disk?3.f:0.f);
+                glClear(GL_COLOR_BUFFER_BIT);
+                glDisable(GL_SCISSOR_TEST);
+            }
+            test.SetBlackHoleHint(disk?glm::vec3(.5f,.5f,.42f):glm::vec3(-1,-1,0));
+            glViewport(0,0,width,height);
+            test.Render(0,45,0,hdr,0,reuse,1.f/60);
+        };
+        for(bool hdr:{false,true})for(bool disk:{false,true})for(bool reuse:{false,true}){
+            draw(hdr,disk,false);
+            for(int i=0;i<4;++i)draw(hdr,disk,reuse);
+            glFinish();
+            std::array<double,3> elapsed;
+            for(auto& ms:elapsed){
+                const auto start=std::chrono::steady_clock::now();
+                for(int i=0;i<16;++i)draw(hdr,disk,reuse);
+                glFinish();
+                ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count()/16.0;
+            }
+            std::sort(elapsed.begin(),elapsed.end());
+            std::cout<<"Optics 1600x900 "<<(hdr?"HDR":"Auto")<<' '<<(disk?"disk":"scene")<<' '
+                     <<(reuse?"cached":"fresh")<<": "<<elapsed[1]<<" ms/frame\n";
+            if(glGetError()!=GL_NO_ERROR)fail();
+        }
+        test.Release();
+        checkGargantua();
+        std::cout<<"Exposure checks "<<(success?"PASSED":"FAILED")<<"\n";
+        return success;
+    }
     if(galaxyOnly){checkGalaxy();checkSagittarius();checkGargantua();return success;}
+    if(shorelineOnly){checkCoastAndBirds();std::cout<<"Shoreline checks "<<(success?"PASSED":"FAILED")<<"\n";return success;}
     if(weatherOnly){checkOceanWeather();checkLiquidOptics();checkWeather();checkCoastAndBirds();checkNatureJourney();checkGargantua();return success;}
     // Check many seeds before GPU captures. A range error must become a
     // named failure, not an interactive CRT assertion hidden behind the app.

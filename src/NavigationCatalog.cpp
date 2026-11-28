@@ -110,6 +110,39 @@ std::vector<NavigationEntry> NavigationCatalog::Bodies(int id,double seconds){
                 region.color=site.view==NavigationEntry::SurfaceView::Seafloor?glm::vec3(.18,.65,.82):glm::vec3(.85,.81,.66);
                 out.push_back(region);
             }
+            for(unsigned wonder=0;wonder<EarthWonders::destinationCount;++wonder){
+                const auto& site=EarthWonders::Destination(wonder);
+                NavigationEntry region;
+                region.kind=Kind::SurfaceRegion;region.system=id;region.body=i;region.earthWonder=static_cast<int>(wonder);
+                region.key=e.key+"/"+site.key;region.parentKey=e.key;region.parent=body.name;
+                region.name=site.name;region.type=site.description;region.surfaceNormal=site.Direction();
+                if(wonder>=EarthWonders::sites.size()+EarthWonders::wallViews.size())
+                    region.type=std::string(site.aliases)+" / procedural landmark";
+                region.surfaceView=site.submerged?NavigationEntry::SurfaceView::Seafloor:NavigationEntry::SurfaceView::Terrain;
+                region.anchorAu=e.anchorAu;
+                region.localAu=e.localAu+model.WeatherFrame(i,seconds)*region.surfaceNormal*(body.radiusEarth*Astronomy::earthRadiusAu);
+                region.color=site.submerged?glm::vec3(.16f,.72f,.68f):glm::vec3(.86f,.73f,.46f);
+                out.push_back(std::move(region));
+            }
+            if(NewYorkCity::HasCity()){
+                struct BoroughView { const char* key;const char* name;double lat,lon; };
+                const BoroughView views[]={{"nyc","New York City",40.7529,-73.9851},
+                    {"manhattan","Manhattan",40.7604,-73.9782},{"bronx","The Bronx",40.8448,-73.8648},
+                    {"brooklyn","Brooklyn",40.6929,-73.9918},{"queens","Queens",40.7447,-73.9572},
+                    {"staten-island","Staten Island",40.6434,-74.0769}};
+                for(const auto& site:views){
+                    const double lat=glm::radians(site.lat),lon=glm::radians(site.lon);
+                    NavigationEntry region;
+                    region.kind=Kind::SurfaceRegion;region.system=id;region.body=i;region.city=true;
+                    region.key=e.key+"/"+site.key;region.parentKey=e.key;region.parent=body.name;
+                    region.name=site.name;region.type="Earth / City";
+                    region.surfaceNormal={std::cos(lat)*std::cos(lon),std::sin(lat),-std::cos(lat)*std::sin(lon)};
+                    region.anchorAu=e.anchorAu;
+                    region.localAu=e.localAu+model.WeatherFrame(i,seconds)*region.surfaceNormal*(body.radiusEarth*Astronomy::earthRadiusAu);
+                    region.color={.70f,.82f,.96f};
+                    out.push_back(std::move(region));
+                }
+            }
         }
     }
     for(auto& body:out)body.satelliteCount=static_cast<int>(std::count_if(out.begin(),out.end(),[&](const auto& child){return child.kind==Kind::Planet && child.parentKey==body.key;}));
@@ -119,7 +152,20 @@ std::vector<NavigationEntry> NavigationCatalog::Find(const std::string& query,do
     const auto normalized=Normalize(query);
     const auto q=normalized=="artic"?std::string("arctic"):normalized;
     std::vector<NavigationEntry> result;
-    const auto matches=[&](const NavigationEntry& entry){auto name=Normalize(entry.name);return q.empty() || name.find(q)!=std::string::npos || (entry.system==-2 && entry.kind==Kind::Star && q=="solarsystem") || (entry.kind==Kind::Core && q=="blackhole") || (entry.name=="Sagittarius A*" && (q=="sgra" || q=="sgra*"));};
+    const auto matches=[&](const NavigationEntry& entry){
+        if(entry.city && q=="nyc")return entry.name=="New York City";
+        if(entry.earthWonder>=0){
+            const auto index=static_cast<unsigned>(entry.earthWonder);
+            const auto& site=EarthWonders::Destination(index);
+            const bool landmark=index>=EarthWonders::sites.size()+EarthWonders::wallViews.size();
+            if((landmark && (q=="landmarks" || q=="worldlandmarks" || q=="earthlandmarks")) ||
+               (index<EarthWonders::sites.size() && (q=="wonders" || q=="wondersoftheworld")) ||
+               Normalize(site.aliases).find(q)!=std::string::npos)return true;
+        }
+        const auto name=Normalize(entry.name);
+        return q.empty() || name.find(q)!=std::string::npos || (entry.system==-2 && entry.kind==Kind::Star && q=="solarsystem") ||
+            (entry.kind==Kind::Core && q=="blackhole") || (entry.name=="Sagittarius A*" && (q=="sgra" || q=="sgra*"));
+    };
     const std::string prefix="proceduralstar";
     const std::string seedPrefix="seedstar";
     if(q.rfind(seedPrefix,0)==0){

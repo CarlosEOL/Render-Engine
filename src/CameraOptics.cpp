@@ -71,15 +71,58 @@ void main() {
     gl_Position = vec4(screenPosition, 0, 1);
 }
 )";
-    const char *fragment = R"(
-#version 330 core
+    const char* sceneGrading=R"(
+uniform sampler2D scene;
+uniform sampler2D localDepth;
+uniform vec3 stellarHint;
+uniform vec2 texel;
+uniform bool hdrMode;
+vec3 gradedScene(vec2 uv,float lod){
+    vec4 source=textureLod(scene,uv,lod);
+    vec3 value=source.rgb;
+    // Compress a resolved HDR photosphere while preserving uncovered sky
+    // in filtered limb pixels, including the samples used for bloom.
+    if(!hdrMode || source.a>1.5 || stellarHint.z<=texel.y*2.0)return value;
+    vec2 offset=(uv-stellarHint.xy)*vec2(texel.y/texel.x,1);
+    float reach=stellarHint.z*1.25+texel.y*exp2(lod)*2.0;
+    if(dot(offset,offset)>=reach*reach)return value;
+    float coverage=clamp(source.a,0.0,1.0);
+    if(lod<.5){
+        coverage=source.a>=.99?1.0:0.0;
+        if(texture(localDepth,uv).r>=.99998)coverage=0.0;
+        else if(max(value.r,max(value.g,value.b))>128.0)coverage=1.0;
+    }
+    if(coverage>0.0){
+        vec2 outward=dot(offset,offset)>1e-16?normalize(offset):vec2(1,0);
+        vec2 beyond=stellarHint.xy+outward*vec2(texel.x/texel.y,1)
+            *(stellarHint.z*1.6+texel.y*exp2(lod)*3.0);
+        vec3 sky=textureLod(scene,beyond,lod).rgb;
+        value=value*.001+sky*(1.0-coverage)*.999;
+    }
+    return value;
+}
+)";
+    const char* hdrCurve=R"(
+const float hdrWhite=.85;
+const float hdrKnee=.20;
+float hdrShoulder(float peak){
+    float excess=max(peak-hdrKnee,0.0);
+    return min(peak,hdrKnee)+excess/(1.0+excess/(hdrWhite-hdrKnee));
+}
+float hdrUnmap(float peak){
+    return min(peak,hdrKnee)+max(peak-hdrKnee,0.0)*(hdrWhite-hdrKnee)/max(hdrWhite-peak,.0001);
+}
+)";
+    const std::string fragment=std::string("#version 330 core\n")+sceneGrading+hdrCurve+R"(
 in vec2 screenPosition;
 out vec4 fragColor;
-uniform sampler2D scene;
+uniform sampler2D bloom;
 uniform sampler2D flareSources;
 uniform bool systemScoped;
 uniform sampler2D exposureState;
 uniform bool automaticExposure;
+uniform float atmosphereMetering;
+uniform float marineMetering;
 uniform bool referenceGlare;
 uniform float flareStrength;
 uniform int profile;
@@ -89,40 +132,7 @@ uniform vec3 redTca;
 uniform vec3 blueTca;
 uniform vec3 vignetting;
 uniform vec2 sensorScale;
-uniform vec2 texel;
 uniform float exposureGain;
-uniform bool hdrMode;
-uniform vec3 blackHoleHint;
-uniform vec3 stellarHint;
-uniform sampler2D localDepth;
-
-vec3 gradedScene(vec2 uv,float lod){
-    vec4 source=textureLod(scene,uv,lod);
-    vec3 value=source.rgb;
-    // HDR is a deliberate multi-exposure presentation. Compress the resolved
-    // host photosphere before bloom so the scene's faint stars remain visible.
-    float distance=length((uv-stellarHint.xy)*vec2(texel.y/texel.x,1));
-    if(hdrMode && source.a<=1.5 && stellarHint.z>texel.y*2.0 && distance<stellarHint.z*1.25+texel.y*exp2(lod)*2.0){
-        float coverage=clamp(source.a,0.0,1.0);
-        if(lod<.5){
-            coverage=source.a>=.99?1.0:0.0;
-            if(texture(localDepth,uv).r>=.99998)coverage=0.0;
-            else if(max(value.r,max(value.g,value.b))>128.0)coverage=1.0;
-        }
-        if(coverage>0.0){
-            vec2 p=(uv-stellarHint.xy)*vec2(texel.y/texel.x,1);
-            vec2 outward=length(p)>1e-8?normalize(p):vec2(1,0);
-            vec2 beyond=stellarHint.xy+outward*vec2(texel.x/texel.y,1)
-                *(stellarHint.z*1.6+texel.y*exp2(lod)*3.0);
-            vec3 sky=textureLod(scene,beyond,lod).rgb;
-            // Grade only covered stellar light. Preserve the uncovered sky in
-            // filtered limb pixels; grading the whole hint circle creates a
-            // black annulus around an otherwise bright photosphere.
-            value=value*.001+sky*(1.0-coverage)*.999;
-        }
-    }
-    return value;
-}
 
 float undoTca(float distorted, vec3 terms) {
     float radius = distorted;
@@ -135,6 +145,7 @@ float undoTca(float distorted, vec3 terms) {
 }
 
 float undoDistortion(float distorted) {
+    if(distortionModel==0)return distorted;
     float radius = distorted;
     for (int i = 0; i < 8; ++i) {
         float value = radius;
@@ -162,10 +173,13 @@ void main() {
         fragColor = vec4(0, 0, 0, 1);
         return;
     }
-    float redScale = radius > 0.00001 ? undoDistortion(undoTca(radius, redTca)) / radius : 1.0;
-    float blueScale = radius > 0.00001 ? undoDistortion(undoTca(radius, blueTca)) / radius : 1.0;
-    vec3 color = vec3(gradedScene(0.5 + 0.5 * screenPosition * redScale,0.0).r,
-        gradedScene(uv,0.0).g, gradedScene(0.5 + 0.5 * screenPosition * blueScale,0.0).b);
+    vec3 color=gradedScene(uv,0.0);
+    if(radius>0.00001 && (any(notEqual(redTca,vec3(0,0,1))) || any(notEqual(blueTca,vec3(0,0,1))))){
+        float redScale=undoDistortion(undoTca(radius,redTca))/radius;
+        float blueScale=undoDistortion(undoTca(radius,blueTca))/radius;
+        color.r=gradedScene(.5+.5*screenPosition*redScale,0.0).r;
+        color.b=gradedScene(.5+.5*screenPosition*blueScale,0.0).b;
+    }
     if (profile == 1) {
         vec2 offset = texel * smoothstep(0.05, 1.0, radiusSquared) * 2.5;
         vec3 peripheral = (gradedScene(uv + vec2(offset.x, 0),0.0)
@@ -178,13 +192,7 @@ void main() {
     float vignetteRadiusSquared = radius * radius / 3.25;
     color *= max(0.01, 1.0 + vignetteRadiusSquared * (vignetting.x
         + vignetteRadiusSquared * (vignetting.y + vignetteRadiusSquared * vignetting.z)));
-    vec3 glow = max(gradedScene(uv, 2.0) - 1.0, vec3(0)) * 0.04;
-    for(int tap=0;tap<8;++tap) {
-        float angle=float(tap)*.78539816;
-        vec2 offset=vec2(cos(angle),sin(angle))*texel*12.0;
-        glow+=max(gradedScene(uv+offset,4.0)-.5,vec3(0))*.0035;
-    }
-    color += glow;
+    color+=texture(bloom,uv).rgb;
     vec3 opticalLight=vec3(0);
     // Analytic optical signatures, not measured coating/internal reflection data.
     if(profile>0 && flareStrength>0) {
@@ -299,18 +307,28 @@ void main() {
     }
     float adaptedGain=automaticExposure?exp2(texelFetch(exposureState,ivec2(0),0).r):1.0;
     float localGain=adaptedGain;
-    vec4 sourceClass=texture(scene,uv);
-    if(automaticExposure && texture(localDepth,uv).r<.99998 && sourceClass.a<.99
-        && max(sourceClass.r,max(sourceClass.g,sourceClass.b))<2.0)
-        localGain=max(adaptedGain,.65);
+    float commonMetering=max(atmosphereMetering,marineMetering);
+    if(automaticExposure && commonMetering<1.0 && adaptedGain<.65 && texture(localDepth,uv).r<.99998){
+        vec4 surface=texture(scene,uv);
+        float peak=max(surface.r,max(surface.g,surface.b));
+        float weight=(1.0-smoothstep(1.0,2.0,peak))*(1.0-smoothstep(.75,.99,surface.a));
+        localGain=mix(adaptedGain,.65,weight*(1.0-commonMetering));
+    }
     color = max(color * exposureGain * localGain, vec3(0));
     if (hdrMode) {
         // Apply the ordinary HDR shoulder once to the surrounding scene.
         float peak=max(color.r,max(color.g,color.b));
-        float mappedPeak=peak/(1.0+peak/.85);
-        color*=mappedPeak/max(peak,.000001);
-    } else
+        color*=hdrShoulder(peak)/max(peak,.000001);
+    } else {
+        if(automaticExposure && marineMetering>0.0){
+            // Preserve hue as the disk, haze and reflections approach white.
+            float peak=max(color.r,max(color.g,color.b));
+            float excess=max(peak-.62,0.0);
+            float rolloff=min(peak,.62)+excess/(1.0+excess/.36);
+            color*=mix(1.0,rolloff/max(peak,1e-6),marineMetering);
+        }
         color = clamp(color, 0.0, 1.0);
+    }
     // Expose/tone-map the scene first. Optical artifacts add bounded local light
     // without entering scene metering or rescaling its RGB highlight shoulder.
     vec3 glare=1.0-exp(-max(opticalLight*exposureGain*adaptedGain,vec3(0)));
@@ -319,7 +337,7 @@ void main() {
     fragColor = vec4(color, 1.0);
 }
 )";
-    program = compileShaderProgram(vertex, fragment);
+    program = compileShaderProgram(vertex, fragment.c_str());
     int linked = 0;
     glGetProgramiv(program, GL_LINK_STATUS, &linked);
     if (!linked)
@@ -328,7 +346,9 @@ void main() {
         return false;
     }
     glGenVertexArrays(1, &vao);
-    glGenTextures(1, &sceneTexture);
+#ifdef RENDER_ENGINE_DX12
+    glGenTextures(1, &reconstructionTexture);
+#endif
     glGenFramebuffers(1, &framebuffer);
     glGenTextures(1, &sceneColor);
     glGenRenderbuffers(1, &sceneDepth);
@@ -500,7 +520,7 @@ void main(){
     }
     // Grade at native texels before creating bloom mips. Filtering a disk tag
     // first gives a dark silhouette surrounded by ungraded bright mip halos.
-    const char* hdrDisk=R"(#version 330 core
+    const std::string hdrDisk=std::string("#version 330 core\n")+hdrCurve+R"(
 uniform sampler2D scene,diskForeground,exposureState;
 uniform bool hasDiskForeground;
 out vec4 result;
@@ -515,16 +535,32 @@ void main(){
         float gain=exp2(texelFetch(exposureState,ivec2(0),0).b);
         float desired=.84*(1.0-exp(-pow(max(peak*gain,0.0),.65)*1.3));
         // Invert the final HDR shoulder, so it is applied exactly once.
-        float encoded=desired/max(1.0-desired/.85,.0001);
+        float encoded=hdrUnmap(desired);
         vec3 graded=transmitted*encoded/max(peak,1e-8);
         value=foreground+mix(transmitted,graded,clamp((source.a-2.0)*4.0,0.0,1.0));
     }
     result=vec4(value,source.a);
 })";
-    hdrDiskProgram=compileShaderProgram(vertex,hdrDisk);
+    hdrDiskProgram=compileShaderProgram(vertex,hdrDisk.c_str());
     glGetProgramiv(hdrDiskProgram,GL_LINK_STATUS,&linked);
     if(!linked){Release();return false;}
     glGenFramebuffers(1,&hdrDiskFramebuffer);glGenTextures(1,&hdrDiskTexture);
+    const std::string bloomShader=std::string("#version 330 core\n")+sceneGrading+R"(
+in vec2 screenPosition;
+out vec4 result;
+const vec2 offsets[8]=vec2[8](vec2(1,0),vec2(.7071,.7071),vec2(0,1),vec2(-.7071,.7071),
+    vec2(-1,0),vec2(-.7071,-.7071),vec2(0,-1),vec2(.7071,-.7071));
+void main(){
+    vec2 uv=screenPosition*.5+.5;
+    vec3 glow=max(gradedScene(uv,2.0)-1.0,vec3(0))*.04;
+    for(int i=0;i<8;++i)glow+=max(gradedScene(uv+offsets[i]*texel*12.0,4.0)-.5,vec3(0))*.0035;
+    result=vec4(glow,0);
+}
+)";
+    bloomProgram=compileShaderProgram(vertex,bloomShader.c_str());
+    glGetProgramiv(bloomProgram,GL_LINK_STATUS,&linked);
+    if(!linked){Release();return false;}
+    glGenFramebuffers(1,&bloomFramebuffer);glGenTextures(1,&bloomTexture);
     if(!exposureMeter.Initialize()) { Release(); return false; }
     return true;
 }
@@ -544,15 +580,12 @@ void CameraOptics::BeginFrame()
     {
         width = viewport[2];
         height = viewport[3];
-        for (const auto texture : {sceneTexture, sceneColor,hdrDiskTexture})
-        {
-            glBindTexture(GL_TEXTURE_2D, texture);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, nullptr);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        }
+        glBindTexture(GL_TEXTURE_2D,sceneColor);
+        glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA16F,width,height,0,GL_RGBA,GL_FLOAT,nullptr);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
         glBindRenderbuffer(GL_RENDERBUFFER, sceneDepth);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
         glBindTexture(GL_TEXTURE_2D,depthTexture);
@@ -563,7 +596,8 @@ void CameraOptics::BeginFrame()
         glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
     }
     glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-    hdrDiskValid=false;
+    hdrDiskValid=sceneMipsValid=false;
+    bloomInput=flareInput=0;
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sceneColor, 0);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, sceneDepth);
     frameActive = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
@@ -573,54 +607,128 @@ void CameraOptics::BeginFrame()
     glBindRenderbuffer(GL_RENDERBUFFER, 0);
 }
 
+void CameraOptics::SetSystemSources(const std::array<glm::vec4,8>& sources,int count) {
+    count=glm::clamp(count,0,8);
+    if(systemSourceCount==count && systemSources==sources)return;
+    systemSources=sources;
+    systemSourceCount=count;
+    flareInput=0;
+}
+
+void CameraOptics::PrepareHdrDisk() const {
+    if(hdrDiskValid)return;
+    glActiveTexture(GL_TEXTURE0);
+    if(hdrDiskExtent!=resolvedExtent){
+        hdrDiskExtent=resolvedExtent;
+        glBindTexture(GL_TEXTURE_2D,hdrDiskTexture);
+        glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA16F,resolvedExtent.x,resolvedExtent.y,0,GL_RGBA,GL_FLOAT,nullptr);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER,hdrDiskFramebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,hdrDiskTexture,0);
+    glViewport(0,0,resolvedExtent.x,resolvedExtent.y);
+    glUseProgram(hdrDiskProgram);
+    glBindTexture(GL_TEXTURE_2D,resolvedScene);
+    glActiveTexture(GL_TEXTURE1);glBindTexture(GL_TEXTURE_2D,diskForegroundTexture);
+    glActiveTexture(GL_TEXTURE2);glBindTexture(GL_TEXTURE_2D,exposureMeter.Texture());
+    glUniform1i(glGetUniformLocation(hdrDiskProgram,"scene"),0);
+    glUniform1i(glGetUniformLocation(hdrDiskProgram,"diskForeground"),1);
+    glUniform1i(glGetUniformLocation(hdrDiskProgram,"hasDiskForeground"),diskForegroundTexture!=0);
+    glUniform1i(glGetUniformLocation(hdrDiskProgram,"exposureState"),2);
+    glDrawArrays(GL_TRIANGLES,0,3);
+    glBindFramebuffer(GL_FRAMEBUFFER,0);
+    glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,hdrDiskTexture);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR_MIPMAP_LINEAR);
+    hdrDiskValid=true;
+}
+
+void CameraOptics::PrepareBloom(unsigned source,bool hdrMode) const {
+    if(bloomInput==source && bloomHdr==hdrMode && (!hdrMode || bloomStellarHint==stellarHint))return;
+    const glm::ivec2 extent=(resolvedExtent+3)/4;
+    glActiveTexture(GL_TEXTURE0);
+    if(extent!=bloomExtent){
+        bloomExtent=extent;
+        glBindTexture(GL_TEXTURE_2D,bloomTexture);
+        glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA16F,extent.x,extent.y,0,GL_RGBA,GL_FLOAT,nullptr);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER,bloomFramebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,bloomTexture,0);
+    glViewport(0,0,extent.x,extent.y);
+    glUseProgram(bloomProgram);
+    glBindTexture(GL_TEXTURE_2D,source);
+    glActiveTexture(GL_TEXTURE3);glBindTexture(GL_TEXTURE_2D,depthTexture);
+    glUniform1i(glGetUniformLocation(bloomProgram,"scene"),0);
+    glUniform1i(glGetUniformLocation(bloomProgram,"localDepth"),3);
+    glUniform1i(glGetUniformLocation(bloomProgram,"hdrMode"),hdrMode);
+    glUniform3fv(glGetUniformLocation(bloomProgram,"stellarHint"),1,glm::value_ptr(stellarHint));
+    glUniform2f(glGetUniformLocation(bloomProgram,"texel"),1.f/resolvedExtent.x,1.f/resolvedExtent.y);
+    glDrawArrays(GL_TRIANGLES,0,3);
+    bloomInput=source;
+    bloomHdr=hdrMode;
+    bloomStellarHint=stellarHint;
+}
+
 void CameraOptics::Render(int profile, float fieldOfView, float exposureEv, bool hdrMode, float flareStrength,
                           bool reuseScene, float realSeconds) const
 {
     if (!program || !frameActive)
         return;
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, sceneTexture);
-    if (!reuseScene)
+    if (!reuseScene || !resolvedScene)
     {
+        glBindFramebuffer(GL_FRAMEBUFFER,framebuffer);
         glBindTexture(GL_TEXTURE_2D,depthTexture);
         glCopyTexSubImage2D(GL_TEXTURE_2D,0,0,0,0,0,width,height);
-        glBindTexture(GL_TEXTURE_2D,sceneTexture);
+        resolvedScene=sceneColor;
+        resolvedExtent={width,height};
 #ifdef RENDER_ENGINE_DX12
-        const bool reconstructed=NativeDX12::ResolveSceneReconstruction(sceneColor,sceneDepth,sceneTexture,realSeconds);
-        glBindTexture(GL_TEXTURE_2D,sceneTexture);
-        if(!reconstructed)
+        if(NativeDX12::ResolveSceneReconstruction(sceneColor,sceneDepth,reconstructionTexture,realSeconds)){
+            resolvedScene=reconstructionTexture;
+            glBindTexture(GL_TEXTURE_2D,resolvedScene);
+            glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_WIDTH,&resolvedExtent.x);
+            glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_HEIGHT,&resolvedExtent.y);
+        }
 #endif
-        glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, width, height);
-        glGenerateMipmap(GL_TEXTURE_2D);
     }
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     int viewport[4];
     glGetIntegerv(GL_VIEWPORT, viewport);
     const bool adaptive=!hdrMode && autoExposure;
-    const glm::vec3 diskHint=blackHoleVisibility?blackHoleHint:glm::vec3(-1,-1,0);
-    if(adaptive || (hdrMode && diskHint.z>0)) exposureMeter.Update(sceneTexture,stellarHint,realSeconds,diskHint);
-    else exposureMeter.Reset();
-    if(hdrMode && diskHint.z>0){
-        if(!reuseScene || !hdrDiskValid){
-            glBindFramebuffer(GL_FRAMEBUFFER,hdrDiskFramebuffer);
-            glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,hdrDiskTexture,0);
-            glViewport(0,0,width,height);glDisable(GL_DEPTH_TEST);glDisable(GL_BLEND);
-            glPolygonMode(GL_FRONT_AND_BACK,GL_FILL);glUseProgram(hdrDiskProgram);
-            glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,sceneTexture);
-            glActiveTexture(GL_TEXTURE1);glBindTexture(GL_TEXTURE_2D,diskForegroundTexture);
-            glActiveTexture(GL_TEXTURE2);glBindTexture(GL_TEXTURE_2D,exposureMeter.Texture());
-            glUniform1i(glGetUniformLocation(hdrDiskProgram,"scene"),0);
-            glUniform1i(glGetUniformLocation(hdrDiskProgram,"diskForeground"),1);
-            glUniform1i(glGetUniformLocation(hdrDiskProgram,"hasDiskForeground"),diskForegroundTexture!=0);
-            glUniform1i(glGetUniformLocation(hdrDiskProgram,"exposureState"),2);
-            glBindVertexArray(vao);glDrawArrays(GL_TRIANGLES,0,3);
-            glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,hdrDiskTexture);
-            glGenerateMipmap(GL_TEXTURE_2D);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR_MIPMAP_LINEAR);
-            hdrDiskValid=true;glViewport(viewport[0],viewport[1],viewport[2],viewport[3]);
-        }
-        glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,hdrDiskTexture);
-    }else{glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,sceneTexture);}
-    if (profile > 0 && flareStrength > 0)
+    const auto diskRadius=1.5f*blackHoleHint.z*glm::vec2(float(resolvedExtent.y)/resolvedExtent.x,1);
+    const auto diskCenter=glm::vec2(blackHoleHint);
+    const bool diskVisible=blackHoleVisibility && blackHoleHint.z>0 &&
+        glm::all(glm::greaterThan(diskCenter+diskRadius,glm::vec2(0))) &&
+        glm::all(glm::lessThan(diskCenter-diskRadius,glm::vec2(1)));
+    const auto diskHint=diskVisible?blackHoleHint:glm::vec3(-1,-1,0);
+    const bool gradeDisk=hdrMode && diskVisible;
+    glBindFramebuffer(GL_FRAMEBUFFER,0);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glPolygonMode(GL_FRONT_AND_BACK,GL_FILL);
+    glBindVertexArray(vao);
+    glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,resolvedScene);
+    if(!sceneMipsValid && !gradeDisk){
+        glGenerateMipmap(GL_TEXTURE_2D);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR_MIPMAP_LINEAR);
+        sceneMipsValid=true;
+    }else if(!sceneMipsValid){
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
+    }
+    if(adaptive || (gradeDisk && !hdrDiskValid))
+        exposureMeter.Update(resolvedScene,stellarHint,realSeconds,diskHint,reuseScene,adaptive,
+            atmosphereMetering,adaptive?marineMetering:0.f);
+    else if(!gradeDisk)exposureMeter.Reset();
+    if(gradeDisk)PrepareHdrDisk();
+    const unsigned source=gradeDisk?hdrDiskTexture:resolvedScene;
+    PrepareBloom(source,hdrMode);
+    glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,source);
+    if (profile > 0 && flareStrength > 0 && (flareInput!=source || flareStellarHint!=stellarHint))
     {
         glBindFramebuffer(GL_FRAMEBUFFER, flareFramebuffer);
         glViewport(0, 0, 16, 1);
@@ -634,11 +742,12 @@ void CameraOptics::Render(int profile, float fieldOfView, float exposureEv, bool
         glUniform4fv(glGetUniformLocation(flareProgram,"systemSources"),8,glm::value_ptr(systemSources[0]));
         glBindVertexArray(vao);
         glDrawArrays(GL_TRIANGLES, 0, 3);
-        glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+        flareInput=source;
+        flareStellarHint=stellarHint;
     }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(viewport[0],viewport[1],viewport[2],viewport[3]);
     glUseProgram(program);
-    glUniform3fv(glGetUniformLocation(program,"blackHoleHint"),1,glm::value_ptr(diskHint));
     glUniform3fv(glGetUniformLocation(program,"stellarHint"),1,glm::value_ptr(stellarHint));
     glUniform1i(glGetUniformLocation(program, "scene"), 0);
     glActiveTexture(GL_TEXTURE1);
@@ -650,9 +759,14 @@ void CameraOptics::Render(int profile, float fieldOfView, float exposureEv, bool
     glBindTexture(GL_TEXTURE_2D,exposureMeter.Texture());
     glUniform1i(glGetUniformLocation(program,"exposureState"),2);
     glUniform1i(glGetUniformLocation(program,"automaticExposure"),adaptive);
+    glUniform1f(glGetUniformLocation(program,"atmosphereMetering"),atmosphereMetering);
+    glUniform1f(glGetUniformLocation(program,"marineMetering"),marineMetering);
     glActiveTexture(GL_TEXTURE3);
     glBindTexture(GL_TEXTURE_2D,depthTexture);
     glUniform1i(glGetUniformLocation(program,"localDepth"),3);
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D,bloomTexture);
+    glUniform1i(glGetUniformLocation(program,"bloom"),4);
     glUniform1i(glGetUniformLocation(program,"referenceGlare"),referenceGlare);
     glActiveTexture(GL_TEXTURE0);
     glUniform1f(glGetUniformLocation(program, "flareStrength"), flareStrength);
@@ -669,7 +783,7 @@ void CameraOptics::Render(int profile, float fieldOfView, float exposureEv, bool
     glUniform2f(glGetUniformLocation(program, "sensorScale"), 1.5f * zoom, 1.5f * zoom / aspect);
     glUniform1f(glGetUniformLocation(program, "exposureGain"), std::exp2(exposureEv));
     glUniform1i(glGetUniformLocation(program, "hdrMode"), hdrMode);
-    glUniform2f(glGetUniformLocation(program, "texel"), 1.0f / width, 1.0f / height);
+    glUniform2f(glGetUniformLocation(program, "texel"), 1.f/resolvedExtent.x, 1.f/resolvedExtent.y);
     glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
@@ -683,10 +797,15 @@ void CameraOptics::Render(int profile, float fieldOfView, float exposureEv, bool
 
 void CameraOptics::Release()
 {
+    if(bloomProgram)glDeleteProgram(bloomProgram);
+    if(bloomFramebuffer)glDeleteFramebuffers(1,&bloomFramebuffer);
+    if(bloomTexture)glDeleteTextures(1,&bloomTexture);
+    bloomProgram=bloomFramebuffer=bloomTexture=bloomInput=flareInput=resolvedScene=0;
+    bloomExtent=resolvedExtent={0,0};sceneMipsValid=false;
     if(hdrDiskProgram)glDeleteProgram(hdrDiskProgram);
     if(hdrDiskFramebuffer)glDeleteFramebuffers(1,&hdrDiskFramebuffer);
     if(hdrDiskTexture)glDeleteTextures(1,&hdrDiskTexture);
-    hdrDiskProgram=hdrDiskFramebuffer=hdrDiskTexture=0;hdrDiskValid=false;
+    hdrDiskProgram=hdrDiskFramebuffer=hdrDiskTexture=0;hdrDiskValid=false;hdrDiskExtent={0,0};
     exposureMeter.Release();
     if (flareProgram)
         glDeleteProgram(flareProgram);
@@ -699,8 +818,8 @@ void CameraOptics::Release()
         glDeleteProgram(program);
     if (vao)
         glDeleteVertexArrays(1, &vao);
-    if (sceneTexture)
-        glDeleteTextures(1, &sceneTexture);
+    if (reconstructionTexture)
+        glDeleteTextures(1, &reconstructionTexture);
     if (sceneColor)
         glDeleteTextures(1, &sceneColor);
     if (sceneDepth)
@@ -708,7 +827,7 @@ void CameraOptics::Release()
     if(depthTexture)glDeleteTextures(1,&depthTexture);
     if (framebuffer)
         glDeleteFramebuffers(1, &framebuffer);
-    program = vao = sceneTexture = sceneColor = sceneDepth = depthTexture = framebuffer = 0;
+    program = vao = reconstructionTexture = sceneColor = sceneDepth = depthTexture = framebuffer = 0;
     frameActive = false;
     width = height = 0;
 }
